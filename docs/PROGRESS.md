@@ -48,7 +48,7 @@ There are currently **8 model-requestable actions**:
 | --- | --- |
 | Core language: Python | Enabled |
 | CLI framework: Typer | Enabled |
-| Model API: OpenAI-compatible chat completions | Enabled |
+| Model API: OpenRouter via OpenAI-compatible chat completions | Enabled |
 | Config: python-dotenv + pydantic-settings | Enabled |
 | File ops: pathlib | Enabled |
 | Diffs: difflib | Enabled |
@@ -57,6 +57,7 @@ There are currently **8 model-requestable actions**:
 | Code parsing: tree-sitter | Enabled as optional parsing extra |
 | Storage: SQLite | Enabled |
 | Testing: pytest | Enabled |
+| Default model: Qwen via OpenRouter | Enabled |
 | Packaging: uv | Enabled |
 | Collaboration: GitHub docs/templates/CI | Enabled |
 

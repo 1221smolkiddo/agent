@@ -9,10 +9,11 @@ uv sync --extra dev --extra parsing
 Copy-Item .env.example .env
 ```
 
-Add your API key to `.env`:
+Add your OpenRouter API key to `.env`:
 
 ```text
-OPENAI_API_KEY=...
+OPENROUTER_API_KEY=...
+AGENT_MODEL=qwen/qwen3-coder
 ```
 
 Run checks:

@@ -7,7 +7,7 @@ import typer
 
 from .agent import CodingAgent
 from .config import Settings
-from .models import OpenAIChatClient
+from .models import OpenAICompatibleChatClient
 from .storage import AgentStorage
 from .tools import ToolRegistry
 
@@ -27,10 +27,11 @@ def run(
     selected_model = model or settings.agent_model
     workspace = cwd.resolve()
 
-    client = OpenAIChatClient(
-        api_key=settings.openai_api_key,
-        base_url=settings.openai_base_url,
+    client = OpenAICompatibleChatClient(
+        api_key=settings.model_api_key,
+        base_url=settings.model_base_url,
         model=selected_model,
+        default_headers=settings.model_headers,
     )
     storage = AgentStorage(settings.agent_db_path)
     agent = CodingAgent(

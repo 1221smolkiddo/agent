@@ -12,6 +12,13 @@ cp .env.example .env
 uv run code-agent run "Inspect this project and suggest the next feature"
 ```
 
+Add your OpenRouter key to `.env` before running the agent:
+
+```text
+OPENROUTER_API_KEY=...
+AGENT_MODEL=qwen/qwen3-coder
+```
+
 If `uv` is not installed yet:
 
 ```bash
@@ -23,7 +30,7 @@ python -m venv .venv
 On macOS/Linux:
 
 ```bash
-export OPENAI_API_KEY="your-api-key"
+export OPENROUTER_API_KEY="your-api-key"
 uv run code-agent run "Create a README section describing this project"
 ```
 
@@ -31,7 +38,7 @@ uv run code-agent run "Create a README section describing this project"
 
 ```bash
 code-agent run "Fix the failing pytest"
-code-agent run --cwd ../some-project --model gpt-4o-mini "Add tests for the parser"
+code-agent run --cwd ../some-project --model qwen/qwen3-coder "Add tests for the parser"
 code-agent run --dry-run "Refactor the CLI argument parser"
 code-agent history
 ```
@@ -44,10 +51,12 @@ uv run code-agent run "Fix the failing pytest"
 
 ## Environment
 
-- `OPENAI_API_KEY` is required.
+- `OPENROUTER_API_KEY` is required.
 - `AGENT_MODEL` is optional. The CLI also accepts `--model`.
-- `OPENAI_BASE_URL` is optional and defaults to `https://api.openai.com/v1`.
+- `OPENROUTER_BASE_URL` is optional and defaults to `https://openrouter.ai/api/v1`.
+- `OPENROUTER_SITE_URL` and `OPENROUTER_APP_NAME` are optional OpenRouter metadata headers.
 - `AGENT_DB_PATH` is optional and defaults to `.code-agent/agent.db`.
+- `OPENAI_API_KEY` and `OPENAI_BASE_URL` are still accepted as a temporary fallback.
 
 ## Project Shape
 
@@ -57,7 +66,7 @@ src/
     agent.py            Agent loop
     cli.py              Typer CLI entrypoint
     config.py           dotenv + pydantic-settings
-    models.py           OpenAI-compatible model client
+    models.py           OpenAI-compatible model client for OpenRouter
     prompts.py          System prompt
     schema.py           Shared action/result models
     storage.py          SQLite run history

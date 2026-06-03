@@ -17,13 +17,18 @@ class ModelClient(Protocol):
 
 
 @dataclass
-class OpenAIChatClient:
+class OpenAICompatibleChatClient:
     api_key: str
     base_url: str
     model: str
+    default_headers: dict[str, str] | None = None
 
     def __post_init__(self) -> None:
-        self._client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+        self._client = OpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            default_headers=self.default_headers,
+        )
 
     def complete(self, messages: list[ChatMessage]) -> str:
         response = self._client.chat.completions.create(
@@ -35,3 +40,6 @@ class OpenAIChatClient:
         if not content:
             raise RuntimeError("Model returned an empty response.")
         return content
+
+
+OpenAIChatClient = OpenAICompatibleChatClient

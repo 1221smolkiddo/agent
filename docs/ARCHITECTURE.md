@@ -17,7 +17,7 @@ Typer CLI
 
 - `code_agent.cli`: command line surface.
 - `code_agent.agent`: agent loop and action parsing.
-- `code_agent.models`: OpenAI-compatible model client.
+- `code_agent.models`: OpenAI-compatible model client pointed at OpenRouter by default.
 - `code_agent.tools`: local filesystem, shell, search, and code summary tools.
 - `code_agent.parsing`: optional tree-sitter based code structure summaries.
 - `code_agent.storage`: SQLite run history.
