@@ -23,6 +23,7 @@ Typer CLI
 - `code_agent.models`: OpenAI-compatible model client pointed at OpenRouter by default.
 - `code_agent.tools`: local filesystem, shell, search, and code summary tools.
 - `code_agent.permissions`: terminal confirmation prompts for risky tools.
+- `code_agent.sandbox`: local workspace copies for isolated agent runs.
 - `code_agent.parsing`: optional tree-sitter based code structure summaries.
 - `code_agent.storage`: SQLite run history.
 - `code_agent.config`: environment and settings.
@@ -38,6 +39,7 @@ We cannot clone any proprietary internals, but we can build the same kind of pro
 - shell/test execution
 - approvals for risky actions
 - approved web search
+- local sandbox runs
 - run history
 - resumable sessions
 - eventually editor integration

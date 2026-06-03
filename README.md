@@ -40,6 +40,7 @@ uv run code-agent run "Create a README section describing this project"
 code-agent run "Fix the failing pytest"
 code-agent run --cwd ../some-project --model qwen/qwen3-coder "Add tests for the parser"
 code-agent run --dry-run "Refactor the CLI argument parser"
+code-agent run --sandbox "Try a risky refactor in an isolated copy"
 code-agent history
 ```
 
@@ -62,6 +63,8 @@ agent47: Inspect this project and suggest the next feature
 agent47: /status
 agent47: /dry-run
 agent47: /write
+agent47: /sandbox
+agent47: /sandbox off
 agent47: /exit
 ```
 
@@ -88,6 +91,25 @@ The agent asks for confirmation before:
 
 Read/list/local search actions are workspace-guarded and do not prompt by default.
 
+## Sandbox
+
+Use sandbox mode when you want the agent to experiment without touching the real project:
+
+```bash
+code-agent run --sandbox "Try changing the CLI flow"
+```
+
+In `agent47`:
+
+```text
+agent47: /sandbox
+agent47: /write
+agent47: Try the change in the sandbox
+agent47: /sandbox off
+```
+
+Sandboxes are copied into `.code-agent/sandboxes/` and exclude `.env`, `.git`, `.venv`, caches, and other local state.
+
 ## Project Shape
 
 ```text
@@ -100,6 +122,7 @@ src/
     config.py           dotenv + pydantic-settings
     models.py           OpenAI-compatible model client for OpenRouter
     prompts.py          System prompt
+    sandbox.py          Local workspace sandbox copies
     schema.py           Shared action/result models
     storage.py          SQLite run history
     parsing.py          Optional tree-sitter code summaries

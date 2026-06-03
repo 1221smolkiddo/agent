@@ -7,14 +7,17 @@ import typer
 from .config import Settings
 from .factory import create_agent
 from .permissions import confirm_permission
+from .sandbox import create_sandbox_workspace
 from .storage import AgentStorage
 
 
 def main() -> None:
     settings = Settings()
-    cwd = Path.cwd()
+    base_cwd = Path.cwd().resolve()
+    cwd = base_cwd
     model: str | None = None
     dry_run = True
+    sandbox_enabled = False
     max_steps = 12
 
     typer.echo("agent47 interactive coding agent")
@@ -33,13 +36,24 @@ def main() -> None:
             continue
 
         if user_input.startswith("/"):
-            command_result = handle_command(user_input, settings, cwd, model, dry_run, max_steps)
+            command_result = handle_command(
+                user_input,
+                settings,
+                base_cwd,
+                cwd,
+                model,
+                dry_run,
+                sandbox_enabled,
+                max_steps,
+            )
             if command_result.exit_requested:
                 typer.echo("bye")
                 return
+            base_cwd = command_result.base_cwd
             cwd = command_result.cwd
             model = command_result.model
             dry_run = command_result.dry_run
+            sandbox_enabled = command_result.sandbox_enabled
             max_steps = command_result.max_steps
             continue
 
@@ -57,15 +71,19 @@ def main() -> None:
 class CommandState:
     def __init__(
         self,
+        base_cwd: Path,
         cwd: Path,
         model: str | None,
         dry_run: bool,
+        sandbox_enabled: bool,
         max_steps: int,
         exit_requested: bool = False,
     ) -> None:
+        self.base_cwd = base_cwd
         self.cwd = cwd
         self.model = model
         self.dry_run = dry_run
+        self.sandbox_enabled = sandbox_enabled
         self.max_steps = max_steps
         self.exit_requested = exit_requested
 
@@ -73,9 +91,11 @@ class CommandState:
 def handle_command(
     raw: str,
     settings: Settings,
+    base_cwd: Path,
     cwd: Path,
     model: str | None,
     dry_run: bool,
+    sandbox_enabled: bool,
     max_steps: int,
 ) -> CommandState:
     parts = raw.split(maxsplit=1)
@@ -83,7 +103,7 @@ def handle_command(
     value = parts[1].strip() if len(parts) > 1 else ""
 
     if command in {"/exit", "/quit", "/q"}:
-        return CommandState(cwd, model, dry_run, max_steps, exit_requested=True)
+        return CommandState(base_cwd, cwd, model, dry_run, sandbox_enabled, max_steps, exit_requested=True)
     if command == "/help":
         print_help()
     elif command == "/dry-run":
@@ -94,8 +114,22 @@ def handle_command(
         typer.echo("Mode: write-enabled")
     elif command == "/cwd":
         if value:
-            cwd = Path(value).expanduser().resolve()
+            base_cwd = Path(value).expanduser().resolve()
+            cwd = base_cwd
+            sandbox_enabled = False
         typer.echo(f"Workspace: {cwd}")
+    elif command == "/sandbox":
+        if value.lower() == "off":
+            cwd = base_cwd
+            sandbox_enabled = False
+            typer.echo("Sandbox: off")
+            typer.echo(f"Workspace: {cwd}")
+        else:
+            sandbox_workspace = create_sandbox_workspace(base_cwd)
+            cwd = sandbox_workspace.path
+            sandbox_enabled = True
+            typer.echo("Sandbox: on")
+            typer.echo(f"Sandbox workspace: {cwd}")
     elif command == "/model":
         if value:
             model = value
@@ -107,15 +141,17 @@ def handle_command(
     elif command == "/history":
         print_history(settings)
     elif command == "/status":
+        typer.echo(f"Base workspace: {base_cwd}")
         typer.echo(f"Workspace: {cwd}")
         typer.echo(f"Model: {model or settings.agent_model}")
         typer.echo(f"Mode: {'dry-run' if dry_run else 'write-enabled'}")
+        typer.echo(f"Sandbox: {'on' if sandbox_enabled else 'off'}")
         typer.echo(f"Max steps: {max_steps}")
     else:
         typer.echo(f"Unknown command: {command}")
         typer.echo("Use /help to see available commands.")
 
-    return CommandState(cwd, model, dry_run, max_steps)
+    return CommandState(base_cwd, cwd, model, dry_run, sandbox_enabled, max_steps)
 
 
 def print_help() -> None:
@@ -127,6 +163,7 @@ Commands:
   /dry-run           Inspect only; skip writes and shell commands.
   /write             Allow writes and shell commands.
   /cwd <path>        Change workspace.
+  /sandbox [off]     Create and use a sandbox copy, or turn it off.
   /model <name>      Change model for this session.
   /max-steps <n>     Change max agent loop steps.
   /history           Show recent saved agent runs.

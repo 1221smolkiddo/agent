@@ -25,11 +25,12 @@ Common examples:
 ```powershell
 uv run code-agent run "Inspect this project and suggest next steps"
 uv run code-agent run --dry-run "Find risky areas in the codebase"
+uv run code-agent run --sandbox "Try a risky change in an isolated copy"
 uv run code-agent history
 agent47
 ```
 
-Inside `agent47`, there are currently **9 slash commands**:
+Inside `agent47`, there are currently **10 slash commands**:
 
 | Slash command | Purpose |
 | --- | --- |
@@ -38,6 +39,7 @@ Inside `agent47`, there are currently **9 slash commands**:
 | `/dry-run` | Inspect only; skip writes and shell commands. |
 | `/write` | Allow writes and shell commands. |
 | `/cwd <path>` | Change workspace. |
+| `/sandbox [off]` | Create and use a sandbox copy, or return to the base workspace. |
 | `/model <name>` | Change model for this session. |
 | `/max-steps <n>` | Change max agent loop steps. |
 | `/history` | Show recent saved agent runs. |
@@ -73,6 +75,7 @@ There are currently **9 model-requestable actions**:
 | Shell execution: subprocess | Enabled |
 | Project search: ripgrep | Enabled |
 | Web search | Enabled with user approval |
+| Local workspace sandbox | Enabled |
 | Code parsing: tree-sitter | Enabled as optional parsing extra |
 | Storage: SQLite | Enabled |
 | Testing: pytest | Enabled |
@@ -85,18 +88,20 @@ There are currently **9 model-requestable actions**:
 The next major milestones are:
 
 1. Replace direct file writes with patch preview and patch apply.
-2. Add streaming output in the terminal.
-3. Add stronger repo context gathering.
-4. Add planner state and visible step progress.
-5. Add automatic test command detection and verification loops.
-6. Add resumable sessions.
-7. Add multi-model/provider support.
-8. Add VS Code extension frontend.
-9. Improve reliability, docs, and examples.
+2. Add stronger sandbox isolation for processes and network policy.
+3. Add streaming output in the terminal.
+4. Add stronger repo context gathering.
+5. Add planner state and visible step progress.
+6. Add automatic test command detection and verification loops.
+7. Add resumable sessions.
+8. Add multi-model/provider support.
+9. Add VS Code extension frontend.
+10. Improve reliability, docs, and examples.
 
 ## Current Safety Notes
 
 - Paths are guarded so tools cannot access files outside the workspace.
+- Sandbox mode copies the workspace into `.code-agent/sandboxes/` and excludes secrets/local state.
 - `.env`, `.venv`, caches, and local agent databases are ignored by git.
 - `--dry-run` skips writes and shell commands.
 - Human approval prompts are implemented for write/edit/shell/web-search actions.
