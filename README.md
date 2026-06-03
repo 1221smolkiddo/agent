@@ -49,6 +49,22 @@ With `uv`:
 uv run code-agent run "Fix the failing pytest"
 ```
 
+Interactive mode:
+
+```bash
+copilot
+```
+
+Inside interactive mode, type freely:
+
+```text
+copilot: Inspect this project and suggest the next feature
+copilot: /status
+copilot: /dry-run
+copilot: /write
+copilot: /exit
+```
+
 ## Environment
 
 - `OPENROUTER_API_KEY` is required.
@@ -66,6 +82,8 @@ src/
   code_agent/
     agent.py            Agent loop
     cli.py              Typer CLI entrypoint
+    interactive.py      Copilot-style terminal session
+    factory.py          Shared agent construction
     config.py           dotenv + pydantic-settings
     models.py           OpenAI-compatible model client for OpenRouter
     prompts.py          System prompt

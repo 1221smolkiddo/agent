@@ -12,12 +12,13 @@ The project currently has a working Python CLI foundation with a reusable agent 
 
 ## Enabled CLI Commands
 
-There are currently **2 user-facing CLI commands**:
+There are currently **3 user-facing CLI commands**:
 
 | Command | Purpose |
 | --- | --- |
 | `code-agent run "task"` | Run the agent on a coding task. |
 | `code-agent history` | Show recent saved agent runs from SQLite. |
+| `copilot` | Open an interactive terminal session for free-form prompts. |
 
 Common examples:
 
@@ -25,7 +26,22 @@ Common examples:
 uv run code-agent run "Inspect this project and suggest next steps"
 uv run code-agent run --dry-run "Find risky areas in the codebase"
 uv run code-agent history
+copilot
 ```
+
+Inside `copilot`, there are currently **9 slash commands**:
+
+| Slash command | Purpose |
+| --- | --- |
+| `/help` | Show interactive help. |
+| `/status` | Show workspace, model, mode, and max steps. |
+| `/dry-run` | Inspect only; skip writes and shell commands. |
+| `/write` | Allow writes and shell commands. |
+| `/cwd <path>` | Change workspace. |
+| `/model <name>` | Change model for this session. |
+| `/max-steps <n>` | Change max agent loop steps. |
+| `/history` | Show recent saved agent runs. |
+| `/exit` | Quit interactive mode. |
 
 ## Enabled Agent Actions
 

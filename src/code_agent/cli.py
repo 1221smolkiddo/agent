@@ -5,11 +5,9 @@ from typing import Optional
 
 import typer
 
-from .agent import CodingAgent
 from .config import Settings
-from .models import OpenAICompatibleChatClient
+from .factory import create_agent
 from .storage import AgentStorage
-from .tools import ToolRegistry
 
 app = typer.Typer(help="A CLI-first coding agent.")
 
@@ -24,26 +22,7 @@ def run(
 ) -> None:
     """Run the coding agent on a task."""
     settings = Settings()
-    selected_model = model or settings.agent_model
-    workspace = cwd.resolve()
-
-    client = OpenAICompatibleChatClient(
-        api_key=settings.model_api_key,
-        base_url=settings.model_base_url,
-        model=selected_model,
-        max_tokens=settings.agent_max_tokens,
-        default_headers=settings.model_headers,
-    )
-    storage = AgentStorage(settings.agent_db_path)
-    agent = CodingAgent(
-        cwd=workspace,
-        dry_run=dry_run,
-        max_steps=max_steps,
-        model_client=client,
-        tools=ToolRegistry(workspace=workspace, dry_run=dry_run),
-        storage=storage,
-    )
-
+    agent = create_agent(settings=settings, cwd=cwd, model=model, dry_run=dry_run, max_steps=max_steps)
     result = agent.run(task)
     typer.echo(result)
 

@@ -7,6 +7,7 @@ This project is CLI-first, but the code is split so other frontends can reuse th
 ```text
 Typer CLI
   -> Settings
+  -> Agent factory
   -> CodingAgent
   -> ModelClient
   -> ToolRegistry
@@ -16,6 +17,8 @@ Typer CLI
 ## Modules
 
 - `code_agent.cli`: command line surface.
+- `code_agent.interactive`: Copilot-style interactive terminal session.
+- `code_agent.factory`: shared agent construction.
 - `code_agent.agent`: agent loop and action parsing.
 - `code_agent.models`: OpenAI-compatible model client pointed at OpenRouter by default.
 - `code_agent.tools`: local filesystem, shell, search, and code summary tools.
