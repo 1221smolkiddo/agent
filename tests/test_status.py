@@ -1,5 +1,6 @@
 from code_agent.schema import EditFileAction, RunShellAction, SearchAction, WebSearchAction
 from code_agent.status import format_action_status, format_shell_status
+from code_agent.interactive import is_casual_greeting
 
 
 def test_format_action_status_for_editing() -> None:
@@ -38,3 +39,9 @@ def test_format_shell_status_for_generic_shell() -> None:
     action = RunShellAction(type="run_shell", command="git status")
 
     assert format_action_status(action) == "RUNNING shell command git status"
+
+
+def test_is_casual_greeting() -> None:
+    assert is_casual_greeting("hey")
+    assert is_casual_greeting(" Hello ")
+    assert not is_casual_greeting("hey inspect this project")

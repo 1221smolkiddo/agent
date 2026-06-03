@@ -109,6 +109,7 @@ The next major milestones are:
 - Paths are guarded so tools cannot access files outside the workspace.
 - Sandbox mode copies the workspace into `.code-agent/sandboxes/` and excludes secrets/local state.
 - `.env`, `.venv`, caches, and local agent databases are ignored by git.
+- Read/list/project-search/code-summary actions now ask for user approval.
 - `--dry-run` skips writes and shell commands.
 - Human approval prompts are implemented for write/edit/shell/web-search actions.
 - Failed tool calls are automatically fed back to the model for recovery until the failure budget is exhausted.

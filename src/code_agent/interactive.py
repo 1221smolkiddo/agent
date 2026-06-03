@@ -37,6 +37,10 @@ def main() -> None:
         if not user_input:
             continue
 
+        if is_casual_greeting(user_input):
+            typer.echo("Hey! I am ready. Ask me a question, or use /help to see commands.")
+            continue
+
         if user_input.startswith("/"):
             command_result = handle_command(
                 user_input,
@@ -209,3 +213,8 @@ def print_history(settings: Settings) -> None:
         return
     for row in rows:
         typer.echo(f"{row['id']} | {row['created_at']} | {row['model']} | {row['task']}")
+
+
+def is_casual_greeting(user_input: str) -> bool:
+    normalized = user_input.strip().lower()
+    return normalized in {"hey", "hi", "hello", "yo", "sup", "hiya"}

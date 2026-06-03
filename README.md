@@ -88,12 +88,16 @@ agent47: /exit
 
 The agent asks for confirmation before:
 
+- listing files
+- reading files
+- searching the project
+- summarizing code structure
 - writing files
 - editing files
 - running shell commands
 - searching the web
 
-Read/list/local search actions are workspace-guarded and do not prompt by default.
+All file access remains workspace-guarded.
 
 ## Failure Recovery
 

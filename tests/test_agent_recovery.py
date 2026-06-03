@@ -77,3 +77,25 @@ def test_agent_retries_after_invalid_model_action(tmp_path: Path) -> None:
     assert result == "done"
     assert tools.calls == 1
     assert "parse_failure" in model.messages_seen[1][-1]["content"]
+
+
+def test_agent_can_finalize_after_dry_run_skip(tmp_path: Path) -> None:
+    model = FakeModel(
+        [
+            '{"type":"write_file","path":"FEATURES.md","content":"features"}',
+            '{"type":"final","message":"Enable write mode first."}',
+        ]
+    )
+
+    class DryRunWriteTools(RecoveringTools):
+        def run(self, action: AgentAction) -> ToolResult:
+            self.calls += 1
+            return ToolResult(ok=False, output="Dry-run mode skipped write_file.")
+
+    dry_run_tools = DryRunWriteTools()
+    agent = make_agent(tmp_path, model, dry_run_tools)
+
+    result = agent.run("create a features file")
+
+    assert result == "Enable write mode first."
+    assert dry_run_tools.calls == 1

@@ -60,6 +60,8 @@ class ToolRegistry:
         return target
 
     def _list_files(self, requested_path: str | None) -> ToolResult:
+        if not self._approve("list_files", f"List files in {requested_path or '.'}"):
+            return ToolResult(ok=False, output="Permission denied for list_files.")
         target = self.resolve_inside_workspace(requested_path)
         entries = []
         for entry in sorted(target.iterdir(), key=lambda item: item.name.lower()):
@@ -81,12 +83,20 @@ class ToolRegistry:
         return ToolResult(ok=True, output="\n".join(entries) or "<empty>")
 
     def _read_file(self, requested_path: str) -> ToolResult:
+        if not self._approve("read_file", requested_path):
+            return ToolResult(ok=False, output="Permission denied for read_file.")
         target = self.resolve_inside_workspace(requested_path)
         return ToolResult(ok=True, output=target.read_text(encoding="utf-8"))
 
     def _write_file(self, requested_path: str, content: str) -> ToolResult:
         if self.dry_run:
-            return ToolResult(ok=False, output="Dry-run mode skipped write_file.")
+            return ToolResult(
+                ok=False,
+                output=(
+                    "Dry-run mode skipped write_file. Tell the user to run /write, "
+                    "/sandbox plus /write, or use --sandbox/without --dry-run before editing files."
+                ),
+            )
         target = self.resolve_inside_workspace(requested_path)
         before = target.read_text(encoding="utf-8") if target.exists() else ""
         diff = self._diff(requested_path, before, content)
@@ -98,7 +108,13 @@ class ToolRegistry:
 
     def _edit_file(self, requested_path: str, find: str, replace: str) -> ToolResult:
         if self.dry_run:
-            return ToolResult(ok=False, output="Dry-run mode skipped edit_file.")
+            return ToolResult(
+                ok=False,
+                output=(
+                    "Dry-run mode skipped edit_file. Tell the user to run /write, "
+                    "/sandbox plus /write, or use --sandbox/without --dry-run before editing files."
+                ),
+            )
         target = self.resolve_inside_workspace(requested_path)
         before = target.read_text(encoding="utf-8")
         if find not in before:
@@ -112,7 +128,13 @@ class ToolRegistry:
 
     def _run_shell(self, command: str) -> ToolResult:
         if self.dry_run:
-            return ToolResult(ok=False, output="Dry-run mode skipped run_shell.")
+            return ToolResult(
+                ok=False,
+                output=(
+                    "Dry-run mode skipped run_shell. Tell the user to run /write, "
+                    "/sandbox plus /write, or use --sandbox/without --dry-run before shell commands."
+                ),
+            )
         if not self._approve("run_shell", command):
             return ToolResult(ok=False, output="Permission denied for run_shell.")
         completed = subprocess.run(
@@ -128,6 +150,8 @@ class ToolRegistry:
         return ToolResult(ok=completed.returncode == 0, output=output or "<no output>")
 
     def _search(self, query: str, requested_path: str | None) -> ToolResult:
+        if not self._approve("search", f"Search {requested_path or '.'} for {query}"):
+            return ToolResult(ok=False, output="Permission denied for search.")
         target = self.resolve_inside_workspace(requested_path)
         completed = subprocess.run(
             ["rg", "--line-number", "--hidden", "--glob", "!.git", query, str(target)],
@@ -142,6 +166,8 @@ class ToolRegistry:
         return ToolResult(ok=True, output=completed.stdout.strip() or "<no matches>")
 
     def _summarize_code(self, requested_path: str) -> ToolResult:
+        if not self._approve("summarize_code", requested_path):
+            return ToolResult(ok=False, output="Permission denied for summarize_code.")
         target = self.resolve_inside_workspace(requested_path)
         return ToolResult(ok=True, output=summarize_code_file(target))
 

@@ -41,6 +41,7 @@ class CodingAgent:
         run_id = self.storage.create_run(task=task, model=self.model_client.model, cwd=self.cwd)
         consecutive_failures = 0
         previous_tool_failed = False
+        previous_failure_allows_final = False
         messages: list[ChatMessage] = [
             {"role": "system", "content": system_prompt(self.cwd, self.dry_run)},
             {"role": "user", "content": task},
@@ -66,12 +67,17 @@ class CodingAgent:
                 messages.append({"role": "assistant", "content": response})
                 messages.append({"role": "user", "content": json.dumps(payload)})
                 previous_tool_failed = True
+                previous_failure_allows_final = False
                 continue
 
             self.storage.add_step(run_id, "assistant", action.model_dump())
 
             if isinstance(action, FinalAction):
-                if previous_tool_failed and consecutive_failures < self.max_failures:
+                if (
+                    previous_tool_failed
+                    and not previous_failure_allows_final
+                    and consecutive_failures < self.max_failures
+                ):
                     consecutive_failures += 1
                     payload = self._failure_payload(
                         step=step,
@@ -92,9 +98,11 @@ class CodingAgent:
             if result.ok:
                 consecutive_failures = 0
                 previous_tool_failed = False
+                previous_failure_allows_final = False
             else:
                 consecutive_failures += 1
                 previous_tool_failed = True
+                previous_failure_allows_final = self._can_finalize_after_failure(result)
 
             tool_payload = {
                 "type": "tool_result",
@@ -141,6 +149,11 @@ class CodingAgent:
                 "The user denied permission. Respect the denial, choose a read-only alternative, "
                 "or explain why the task cannot proceed without permission."
             )
+        if "Dry-run mode skipped" in result.output:
+            return (
+                "Dry-run prevented the requested action. Explain that the user must enable /write, "
+                "or use sandbox plus write mode, then finalize with clear next steps."
+            )
         return (
             "The tool failed. Diagnose the failure from the output, inspect more context if needed, "
             "then try a different action. Do not finalize until the task is solved or the failure budget is exhausted."
@@ -171,6 +184,10 @@ class CodingAgent:
             f"Stopped after {consecutive_failures} consecutive failures. "
             f"Last failure: {output}"
         )
+
+    @staticmethod
+    def _can_finalize_after_failure(result: ToolResult) -> bool:
+        return "Permission denied" in result.output or "Dry-run mode skipped" in result.output
 
     def _report_thinking(self, step: int) -> None:
         if self.reporter:

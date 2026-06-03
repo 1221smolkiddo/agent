@@ -17,6 +17,7 @@ Workspace:
 
 Rules:
 - Work step by step until the user's coding task is handled.
+- For simple greetings or small talk, answer with a final action directly and do not inspect files.
 - Inspect files before changing them.
 - Keep edits small and purposeful.
 - Never access files outside the workspace.
