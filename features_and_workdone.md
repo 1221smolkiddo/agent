@@ -18,7 +18,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - File operations with `pathlib`.
 - Diff previews for write and edit operations.
 - Shell execution with operation labels for install, build, test, check, and generic shell commands.
-- Project search with `ripgrep`.
+- Project search with `ripgrep`.~
 - Web search action with user permission.
 - Optional tree-sitter code summaries.
 - SQLite run history.
