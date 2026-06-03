@@ -55,6 +55,7 @@ uv run code-agent run "Fix the failing pytest"
 - `AGENT_MODEL` is optional. The CLI also accepts `--model`.
 - `OPENROUTER_BASE_URL` is optional and defaults to `https://openrouter.ai/api/v1`.
 - `OPENROUTER_SITE_URL` and `OPENROUTER_APP_NAME` are optional OpenRouter metadata headers.
+- `AGENT_MAX_TOKENS` is optional and defaults to `4096`.
 - `AGENT_DB_PATH` is optional and defaults to `.code-agent/agent.db`.
 - `OPENAI_API_KEY` and `OPENAI_BASE_URL` are still accepted as a temporary fallback.
 

@@ -49,6 +49,7 @@ There are currently **8 model-requestable actions**:
 | Core language: Python | Enabled |
 | CLI framework: Typer | Enabled |
 | Model API: OpenRouter via OpenAI-compatible chat completions | Enabled |
+| Model output cap: configurable `AGENT_MAX_TOKENS` | Enabled |
 | Config: python-dotenv + pydantic-settings | Enabled |
 | File ops: pathlib | Enabled |
 | Diffs: difflib | Enabled |

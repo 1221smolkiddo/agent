@@ -31,6 +31,7 @@ def run(
         api_key=settings.model_api_key,
         base_url=settings.model_base_url,
         model=selected_model,
+        max_tokens=settings.agent_max_tokens,
         default_headers=settings.model_headers,
     )
     storage = AgentStorage(settings.agent_db_path)

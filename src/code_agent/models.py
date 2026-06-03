@@ -21,6 +21,7 @@ class OpenAICompatibleChatClient:
     api_key: str
     base_url: str
     model: str
+    max_tokens: int = 4096
     default_headers: dict[str, str] | None = None
 
     def __post_init__(self) -> None:
@@ -35,6 +36,7 @@ class OpenAICompatibleChatClient:
             model=self.model,
             messages=messages,  # type: ignore[arg-type]
             temperature=0.2,
+            max_tokens=self.max_tokens,
         )
         content = response.choices[0].message.content
         if not content:
