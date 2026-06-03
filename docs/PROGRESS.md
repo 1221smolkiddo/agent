@@ -19,7 +19,6 @@ There are currently **3 user-facing CLI commands**:
 | `code-agent run "task"` | Run the agent on a coding task. |
 | `code-agent history` | Show recent saved agent runs from SQLite. |
 | `agent47` | Open an interactive terminal session for free-form prompts. |
-| `copilot` | Backward-compatible alias for `agent47`. |
 
 Common examples:
 
@@ -46,7 +45,7 @@ Inside `agent47`, there are currently **9 slash commands**:
 
 ## Enabled Agent Actions
 
-There are currently **8 model-requestable actions**:
+There are currently **9 model-requestable actions**:
 
 | Action | Purpose |
 | --- | --- |
@@ -57,6 +56,7 @@ There are currently **8 model-requestable actions**:
 | `edit_file` | Replace exact text in a file. |
 | `run_shell` | Run a shell command in the workspace. |
 | `search` | Search with ripgrep. |
+| `web_search` | Search the web after user approval. |
 | `summarize_code` | Summarize a source file with tree-sitter when parsing deps are installed. |
 
 ## Installed / Supported Stack
@@ -72,6 +72,7 @@ There are currently **8 model-requestable actions**:
 | Diffs: difflib | Enabled |
 | Shell execution: subprocess | Enabled |
 | Project search: ripgrep | Enabled |
+| Web search | Enabled with user approval |
 | Code parsing: tree-sitter | Enabled as optional parsing extra |
 | Storage: SQLite | Enabled |
 | Testing: pytest | Enabled |
@@ -83,23 +84,22 @@ There are currently **8 model-requestable actions**:
 
 The next major milestones are:
 
-1. Add approval prompts before file writes and shell execution.
-2. Replace direct file writes with patch preview and patch apply.
-3. Add streaming output in the terminal.
-4. Add stronger repo context gathering.
-5. Add planner state and visible step progress.
-6. Add automatic test command detection and verification loops.
-7. Add resumable sessions.
-8. Add multi-model/provider support.
-9. Add VS Code extension frontend.
-10. Improve reliability, docs, and examples.
+1. Replace direct file writes with patch preview and patch apply.
+2. Add streaming output in the terminal.
+3. Add stronger repo context gathering.
+4. Add planner state and visible step progress.
+5. Add automatic test command detection and verification loops.
+6. Add resumable sessions.
+7. Add multi-model/provider support.
+8. Add VS Code extension frontend.
+9. Improve reliability, docs, and examples.
 
 ## Current Safety Notes
 
 - Paths are guarded so tools cannot access files outside the workspace.
 - `.env`, `.venv`, caches, and local agent databases are ignored by git.
 - `--dry-run` skips writes and shell commands.
-- Human approval prompts are not implemented yet.
+- Human approval prompts are implemented for write/edit/shell/web-search actions.
 - Patch approval is not implemented yet.
 
 ## Last Updated

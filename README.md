@@ -65,6 +65,8 @@ agent47: /write
 agent47: /exit
 ```
 
+`agent47` is the only interactive launcher. The old `copilot` alias was removed to avoid colliding with GitHub Copilot.
+
 ## Environment
 
 - `OPENROUTER_API_KEY` is required.
@@ -74,6 +76,17 @@ agent47: /exit
 - `AGENT_MAX_TOKENS` is optional and defaults to `4096`.
 - `AGENT_DB_PATH` is optional and defaults to `.code-agent/agent.db`.
 - `OPENAI_API_KEY` and `OPENAI_BASE_URL` are still accepted as a temporary fallback.
+
+## Permissions
+
+The agent asks for confirmation before:
+
+- writing files
+- editing files
+- running shell commands
+- searching the web
+
+Read/list/local search actions are workspace-guarded and do not prompt by default.
 
 ## Project Shape
 

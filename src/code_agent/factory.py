@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from collections.abc import Callable
 
 from .agent import CodingAgent
 from .config import Settings
@@ -15,6 +16,7 @@ def create_agent(
     model: str | None,
     dry_run: bool,
     max_steps: int,
+    approval_callback: Callable[[str, str], bool] | None = None,
 ) -> CodingAgent:
     workspace = cwd.resolve()
     selected_model = model or settings.agent_model
@@ -31,6 +33,10 @@ def create_agent(
         dry_run=dry_run,
         max_steps=max_steps,
         model_client=client,
-        tools=ToolRegistry(workspace=workspace, dry_run=dry_run),
+        tools=ToolRegistry(
+            workspace=workspace,
+            dry_run=dry_run,
+            approval_callback=approval_callback,
+        ),
         storage=storage,
     )

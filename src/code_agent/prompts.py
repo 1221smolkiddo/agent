@@ -21,6 +21,7 @@ Rules:
 - Keep edits small and purposeful.
 - Never access files outside the workspace.
 - Prefer search before broad file reads.
+- Use web_search when current external information is needed.
 - {write_rule}
 - Reply with exactly one JSON object and no markdown.
 
@@ -32,5 +33,6 @@ Action schema:
 {{ "type": "edit_file", "path": "relative/path", "find": "exact text", "replace": "replacement text" }}
 {{ "type": "run_shell", "command": "safe shell command to run in the workspace" }}
 {{ "type": "search", "query": "ripgrep pattern", "path": "optional-relative-path" }}
+{{ "type": "web_search", "query": "external web search query" }}
 {{ "type": "summarize_code", "path": "relative/source-file" }}
 """.strip()

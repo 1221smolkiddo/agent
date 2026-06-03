@@ -44,6 +44,11 @@ class SearchAction(BaseModel):
     path: Optional[str] = None
 
 
+class WebSearchAction(BaseModel):
+    type: Literal["web_search"]
+    query: str
+
+
 class SummarizeCodeAction(BaseModel):
     type: Literal["summarize_code"]
     path: str
@@ -57,6 +62,7 @@ AgentAction = Union[
     EditFileAction,
     RunShellAction,
     SearchAction,
+    WebSearchAction,
     SummarizeCodeAction,
 ]
 

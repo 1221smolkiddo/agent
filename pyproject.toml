@@ -24,7 +24,6 @@ parsing = [
 [project.scripts]
 code-agent = "code_agent.cli:app"
 agent47 = "code_agent.interactive:main"
-copilot = "code_agent.interactive:main"
 
 [build-system]
 requires = ["hatchling"]

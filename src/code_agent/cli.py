@@ -7,6 +7,7 @@ import typer
 
 from .config import Settings
 from .factory import create_agent
+from .permissions import confirm_permission
 from .storage import AgentStorage
 
 app = typer.Typer(help="A CLI-first coding agent.")
@@ -22,7 +23,14 @@ def run(
 ) -> None:
     """Run the coding agent on a task."""
     settings = Settings()
-    agent = create_agent(settings=settings, cwd=cwd, model=model, dry_run=dry_run, max_steps=max_steps)
+    agent = create_agent(
+        settings=settings,
+        cwd=cwd,
+        model=model,
+        dry_run=dry_run,
+        max_steps=max_steps,
+        approval_callback=confirm_permission,
+    )
     result = agent.run(task)
     typer.echo(result)
 

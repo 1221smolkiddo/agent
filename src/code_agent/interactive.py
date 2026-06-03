@@ -6,6 +6,7 @@ import typer
 
 from .config import Settings
 from .factory import create_agent
+from .permissions import confirm_permission
 from .storage import AgentStorage
 
 
@@ -48,6 +49,7 @@ def main() -> None:
             model=model,
             dry_run=dry_run,
             max_steps=max_steps,
+            approval_callback=confirm_permission,
         )
         typer.echo(agent.run(user_input))
 
