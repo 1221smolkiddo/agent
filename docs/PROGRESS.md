@@ -26,11 +26,12 @@ Common examples:
 uv run code-agent run "Inspect this project and suggest next steps"
 uv run code-agent run --dry-run "Find risky areas in the codebase"
 uv run code-agent run --sandbox "Try a risky change in an isolated copy"
+uv run code-agent run --max-failures 5 "Recover from failed tool attempts"
 uv run code-agent history
 agent47
 ```
 
-Inside `agent47`, there are currently **10 slash commands**:
+Inside `agent47`, there are currently **11 slash commands**:
 
 | Slash command | Purpose |
 | --- | --- |
@@ -42,6 +43,7 @@ Inside `agent47`, there are currently **10 slash commands**:
 | `/sandbox [off]` | Create and use a sandbox copy, or return to the base workspace. |
 | `/model <name>` | Change model for this session. |
 | `/max-steps <n>` | Change max agent loop steps. |
+| `/max-failures <n>` | Change consecutive failure recovery budget. |
 | `/history` | Show recent saved agent runs. |
 | `/exit` | Quit interactive mode. |
 
@@ -76,6 +78,7 @@ There are currently **9 model-requestable actions**:
 | Project search: ripgrep | Enabled |
 | Web search | Enabled with user approval |
 | Local workspace sandbox | Enabled |
+| Tool failure recovery loop | Enabled |
 | Code parsing: tree-sitter | Enabled as optional parsing extra |
 | Storage: SQLite | Enabled |
 | Testing: pytest | Enabled |
@@ -105,6 +108,7 @@ The next major milestones are:
 - `.env`, `.venv`, caches, and local agent databases are ignored by git.
 - `--dry-run` skips writes and shell commands.
 - Human approval prompts are implemented for write/edit/shell/web-search actions.
+- Failed tool calls are automatically fed back to the model for recovery until the failure budget is exhausted.
 - Patch approval is not implemented yet.
 
 ## Last Updated

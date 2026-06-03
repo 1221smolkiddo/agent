@@ -21,6 +21,7 @@ class CodingAgent:
         cwd: Path,
         dry_run: bool,
         max_steps: int,
+        max_failures: int,
         model_client: ModelClient,
         tools: ToolRegistry,
         storage: AgentStorage,
@@ -28,12 +29,15 @@ class CodingAgent:
         self.cwd = cwd
         self.dry_run = dry_run
         self.max_steps = max_steps
+        self.max_failures = max_failures
         self.model_client = model_client
         self.tools = tools
         self.storage = storage
 
     def run(self, task: str) -> str:
         run_id = self.storage.create_run(task=task, model=self.model_client.model, cwd=self.cwd)
+        consecutive_failures = 0
+        previous_tool_failed = False
         messages: list[ChatMessage] = [
             {"role": "system", "content": system_prompt(self.cwd, self.dry_run)},
             {"role": "user", "content": task},
@@ -41,36 +45,119 @@ class CodingAgent:
 
         for step in range(1, self.max_steps + 1):
             response = self.model_client.complete(messages)
-            action = self._parse_action(response)
+            action, parse_error = self._parse_action(response)
+            if parse_error:
+                consecutive_failures += 1
+                payload = self._failure_payload(
+                    step=step,
+                    kind="parse_failure",
+                    output=parse_error,
+                    consecutive_failures=consecutive_failures,
+                )
+                self.storage.add_step(run_id, "assistant", {"raw": response})
+                self.storage.add_step(run_id, "tool", payload)
+                if consecutive_failures >= self.max_failures:
+                    return self._failure_summary(consecutive_failures, parse_error)
+                messages.append({"role": "assistant", "content": response})
+                messages.append({"role": "user", "content": json.dumps(payload)})
+                previous_tool_failed = True
+                continue
+
             self.storage.add_step(run_id, "assistant", action.model_dump())
 
             if isinstance(action, FinalAction):
+                if previous_tool_failed and consecutive_failures < self.max_failures:
+                    consecutive_failures += 1
+                    payload = self._failure_payload(
+                        step=step,
+                        kind="premature_final",
+                        output="A tool failed on the previous step. Diagnose and try another action before finalizing.",
+                        consecutive_failures=consecutive_failures,
+                    )
+                    self.storage.add_step(run_id, "tool", payload)
+                    messages.append({"role": "assistant", "content": action.model_dump_json()})
+                    messages.append({"role": "user", "content": json.dumps(payload)})
+                    continue
                 return action.message
 
             result = self._run_tool(action)
+            if result.ok:
+                consecutive_failures = 0
+                previous_tool_failed = False
+            else:
+                consecutive_failures += 1
+                previous_tool_failed = True
+
             tool_payload = {
                 "type": "tool_result",
                 "step": step,
                 "ok": result.ok,
                 "output": result.output,
+                "recovery_instruction": self._recovery_instruction(result)
+                if not result.ok
+                else "Continue with the task.",
+                "consecutive_failures": consecutive_failures,
             }
             self.storage.add_step(run_id, "tool", tool_payload)
+            if consecutive_failures >= self.max_failures:
+                return self._failure_summary(consecutive_failures, result.output)
             messages.append({"role": "assistant", "content": action.model_dump_json()})
             messages.append({"role": "user", "content": json.dumps(tool_payload)})
 
         return f"Stopped after {self.max_steps} steps. Increase --max-steps if the task needs more work."
 
-    def _parse_action(self, raw: str) -> AgentAction:
+    def _parse_action(self, raw: str) -> tuple[AgentAction | None, str | None]:
         try:
             start = raw.index("{")
             end = raw.rindex("}") + 1
             data: Any = json.loads(raw[start:end])
-            return ACTION_ADAPTER.validate_python(data)
-        except (ValueError, json.JSONDecodeError, ValidationError):
-            return FinalAction(type="final", message=raw.strip())
+            return ACTION_ADAPTER.validate_python(data), None
+        except (ValueError, json.JSONDecodeError, ValidationError) as exc:
+            return None, (
+                "The model response was not a valid action JSON object. "
+                f"Error: {exc}. Reply with one valid action JSON object and continue solving the task."
+            )
 
     def _run_tool(self, action: AgentAction) -> ToolResult:
         try:
             return self.tools.run(action)
         except Exception as exc:
             return ToolResult(ok=False, output=str(exc))
+
+    @staticmethod
+    def _recovery_instruction(result: ToolResult) -> str:
+        if "Permission denied" in result.output:
+            return (
+                "The user denied permission. Respect the denial, choose a read-only alternative, "
+                "or explain why the task cannot proceed without permission."
+            )
+        return (
+            "The tool failed. Diagnose the failure from the output, inspect more context if needed, "
+            "then try a different action. Do not finalize until the task is solved or the failure budget is exhausted."
+        )
+
+    @staticmethod
+    def _failure_payload(
+        step: int,
+        kind: str,
+        output: str,
+        consecutive_failures: int,
+    ) -> dict[str, Any]:
+        return {
+            "type": kind,
+            "step": step,
+            "ok": False,
+            "output": output,
+            "consecutive_failures": consecutive_failures,
+            "recovery_instruction": (
+                "Diagnose the failure, choose a different valid action, and continue. "
+                "Do not produce a final answer yet."
+            ),
+        }
+
+    @staticmethod
+    def _failure_summary(consecutive_failures: int, output: str) -> str:
+        return (
+            f"Stopped after {consecutive_failures} consecutive failures. "
+            f"Last failure: {output}"
+        )

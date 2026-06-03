@@ -35,6 +35,7 @@ We cannot clone any proprietary internals, but we can build the same kind of pro
 
 - repo-aware context gathering
 - tool-using agent loop
+- automatic recovery from failed tool attempts
 - careful file editing
 - shell/test execution
 - approvals for risky actions

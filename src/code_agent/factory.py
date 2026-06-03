@@ -16,6 +16,7 @@ def create_agent(
     model: str | None,
     dry_run: bool,
     max_steps: int,
+    max_failures: int | None = None,
     approval_callback: Callable[[str, str], bool] | None = None,
 ) -> CodingAgent:
     workspace = cwd.resolve()
@@ -32,6 +33,7 @@ def create_agent(
         cwd=workspace,
         dry_run=dry_run,
         max_steps=max_steps,
+        max_failures=max_failures or settings.agent_max_failures,
         model_client=client,
         tools=ToolRegistry(
             workspace=workspace,

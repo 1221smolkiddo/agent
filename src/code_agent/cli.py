@@ -22,6 +22,12 @@ def run(
     dry_run: bool = typer.Option(False, "--dry-run", help="Inspect only; skip writes and shell."),
     sandbox: bool = typer.Option(False, "--sandbox", help="Run inside an isolated workspace copy."),
     max_steps: int = typer.Option(12, "--max-steps", min=1, help="Maximum agent loop steps."),
+    max_failures: Optional[int] = typer.Option(
+        None,
+        "--max-failures",
+        min=1,
+        help="Consecutive failures before the agent stops retrying.",
+    ),
 ) -> None:
     """Run the coding agent on a task."""
     settings = Settings()
@@ -37,6 +43,7 @@ def run(
         model=model,
         dry_run=dry_run,
         max_steps=max_steps,
+        max_failures=max_failures,
         approval_callback=confirm_permission,
     )
     result = agent.run(task)

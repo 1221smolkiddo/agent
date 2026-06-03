@@ -41,6 +41,7 @@ code-agent run "Fix the failing pytest"
 code-agent run --cwd ../some-project --model qwen/qwen3-coder "Add tests for the parser"
 code-agent run --dry-run "Refactor the CLI argument parser"
 code-agent run --sandbox "Try a risky refactor in an isolated copy"
+code-agent run --max-failures 5 "Fix the issue and recover from failed attempts"
 code-agent history
 ```
 
@@ -65,6 +66,7 @@ agent47: /dry-run
 agent47: /write
 agent47: /sandbox
 agent47: /sandbox off
+agent47: /max-failures 5
 agent47: /exit
 ```
 
@@ -77,6 +79,7 @@ agent47: /exit
 - `OPENROUTER_BASE_URL` is optional and defaults to `https://openrouter.ai/api/v1`.
 - `OPENROUTER_SITE_URL` and `OPENROUTER_APP_NAME` are optional OpenRouter metadata headers.
 - `AGENT_MAX_TOKENS` is optional and defaults to `4096`.
+- `AGENT_MAX_FAILURES` is optional and defaults to `3`.
 - `AGENT_DB_PATH` is optional and defaults to `.code-agent/agent.db`.
 - `OPENAI_API_KEY` and `OPENAI_BASE_URL` are still accepted as a temporary fallback.
 
@@ -90,6 +93,16 @@ The agent asks for confirmation before:
 - searching the web
 
 Read/list/local search actions are workspace-guarded and do not prompt by default.
+
+## Failure Recovery
+
+The agent automatically loops after failed tool calls. It feeds the failure back to the model with recovery instructions so the model can inspect, retry, or choose another action.
+
+```bash
+code-agent run --max-failures 5 "Fix the failing test"
+```
+
+It stops after the configured consecutive failure budget is exhausted.
 
 ## Sandbox
 
