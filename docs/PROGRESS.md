@@ -79,6 +79,7 @@ There are currently **9 model-requestable actions**:
 | Web search | Enabled with user approval |
 | Local workspace sandbox | Enabled |
 | Tool failure recovery loop | Enabled |
+| Operation status labels | Enabled |
 | Code parsing: tree-sitter | Enabled as optional parsing extra |
 | Storage: SQLite | Enabled |
 | Testing: pytest | Enabled |

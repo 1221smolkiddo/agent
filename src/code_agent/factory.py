@@ -7,6 +7,7 @@ from .agent import CodingAgent
 from .config import Settings
 from .models import OpenAICompatibleChatClient
 from .storage import AgentStorage
+from .status import StatusReporter
 from .tools import ToolRegistry
 
 
@@ -18,6 +19,7 @@ def create_agent(
     max_steps: int,
     max_failures: int | None = None,
     approval_callback: Callable[[str, str], bool] | None = None,
+    reporter: StatusReporter | None = None,
 ) -> CodingAgent:
     workspace = cwd.resolve()
     selected_model = model or settings.agent_model
@@ -41,4 +43,5 @@ def create_agent(
             approval_callback=approval_callback,
         ),
         storage=storage,
+        reporter=reporter,
     )

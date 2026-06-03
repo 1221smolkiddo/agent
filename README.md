@@ -104,6 +104,19 @@ code-agent run --max-failures 5 "Fix the failing test"
 
 It stops after the configured consecutive failure budget is exhausted.
 
+## Operation Status
+
+The CLI prints status lines while the agent works:
+
+- `THINKING` before model reasoning.
+- `READING` when listing or reading files.
+- `SEARCHING` for project search.
+- `SEARCHING WEB` for web search.
+- `EDITING` for file writes and edits.
+- `INSTALLING`, `BUILDING`, `TESTING`, or `CHECKING` for recognized shell commands.
+- `RECOVERING` when a tool fails and the agent is trying another path.
+- `DONE` when the agent reaches a final answer.
+
 ## Sandbox
 
 Use sandbox mode when you want the agent to experiment without touching the real project:

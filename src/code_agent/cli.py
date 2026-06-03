@@ -10,6 +10,7 @@ from .factory import create_agent
 from .permissions import confirm_permission
 from .sandbox import create_sandbox_workspace
 from .storage import AgentStorage
+from .status import StatusReporter
 
 app = typer.Typer(help="A CLI-first coding agent.")
 
@@ -45,6 +46,7 @@ def run(
         max_steps=max_steps,
         max_failures=max_failures,
         approval_callback=confirm_permission,
+        reporter=StatusReporter(),
     )
     result = agent.run(task)
     typer.echo(result)

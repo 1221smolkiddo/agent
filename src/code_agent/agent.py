@@ -10,6 +10,7 @@ from .models import ChatMessage, ModelClient
 from .prompts import system_prompt
 from .schema import AgentAction, FinalAction, ToolResult
 from .storage import AgentStorage
+from .status import StatusReporter
 from .tools import ToolRegistry
 
 ACTION_ADAPTER = TypeAdapter(AgentAction)
@@ -25,6 +26,7 @@ class CodingAgent:
         model_client: ModelClient,
         tools: ToolRegistry,
         storage: AgentStorage,
+        reporter: StatusReporter | None = None,
     ) -> None:
         self.cwd = cwd
         self.dry_run = dry_run
@@ -33,6 +35,7 @@ class CodingAgent:
         self.model_client = model_client
         self.tools = tools
         self.storage = storage
+        self.reporter = reporter
 
     def run(self, task: str) -> str:
         run_id = self.storage.create_run(task=task, model=self.model_client.model, cwd=self.cwd)
@@ -44,6 +47,7 @@ class CodingAgent:
         ]
 
         for step in range(1, self.max_steps + 1):
+            self._report_thinking(step)
             response = self.model_client.complete(messages)
             action, parse_error = self._parse_action(response)
             if parse_error:
@@ -56,6 +60,7 @@ class CodingAgent:
                 )
                 self.storage.add_step(run_id, "assistant", {"raw": response})
                 self.storage.add_step(run_id, "tool", payload)
+                self._report_recovery("model returned invalid action JSON")
                 if consecutive_failures >= self.max_failures:
                     return self._failure_summary(consecutive_failures, parse_error)
                 messages.append({"role": "assistant", "content": response})
@@ -75,11 +80,14 @@ class CodingAgent:
                         consecutive_failures=consecutive_failures,
                     )
                     self.storage.add_step(run_id, "tool", payload)
+                    self._report_recovery("previous tool failed; continuing instead of finalizing")
                     messages.append({"role": "assistant", "content": action.model_dump_json()})
                     messages.append({"role": "user", "content": json.dumps(payload)})
                     continue
+                self._report_done()
                 return action.message
 
+            self._report_action(action)
             result = self._run_tool(action)
             if result.ok:
                 consecutive_failures = 0
@@ -101,6 +109,8 @@ class CodingAgent:
             self.storage.add_step(run_id, "tool", tool_payload)
             if consecutive_failures >= self.max_failures:
                 return self._failure_summary(consecutive_failures, result.output)
+            if not result.ok:
+                self._report_recovery("tool failed; asking model for another attempt")
             messages.append({"role": "assistant", "content": action.model_dump_json()})
             messages.append({"role": "user", "content": json.dumps(tool_payload)})
 
@@ -161,3 +171,19 @@ class CodingAgent:
             f"Stopped after {consecutive_failures} consecutive failures. "
             f"Last failure: {output}"
         )
+
+    def _report_thinking(self, step: int) -> None:
+        if self.reporter:
+            self.reporter.thinking(step)
+
+    def _report_action(self, action: AgentAction) -> None:
+        if self.reporter:
+            self.reporter.action(action)
+
+    def _report_recovery(self, detail: str) -> None:
+        if self.reporter:
+            self.reporter.recovery(detail)
+
+    def _report_done(self) -> None:
+        if self.reporter:
+            self.reporter.done()

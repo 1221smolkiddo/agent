@@ -63,7 +63,18 @@ class ToolRegistry:
         target = self.resolve_inside_workspace(requested_path)
         entries = []
         for entry in sorted(target.iterdir(), key=lambda item: item.name.lower()):
-            if entry.name in {".git", ".venv", "node_modules", "__pycache__", "dist"}:
+            if entry.name in {
+                ".code-agent",
+                ".env",
+                ".git",
+                ".mypy_cache",
+                ".pytest_cache",
+                ".ruff_cache",
+                ".venv",
+                "__pycache__",
+                "dist",
+                "node_modules",
+            }:
                 continue
             prefix = "dir " if entry.is_dir() else "file"
             entries.append(f"{prefix} {entry.name}")

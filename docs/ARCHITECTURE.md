@@ -28,6 +28,7 @@ Typer CLI
 - `code_agent.storage`: SQLite run history.
 - `code_agent.config`: environment and settings.
 - `code_agent.schema`: typed action and tool result models.
+- `code_agent.status`: operation labels for thinking, editing, searching, testing, building, and recovery.
 
 ## Codex-Like Direction
 
