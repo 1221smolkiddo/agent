@@ -31,7 +31,7 @@ uv run code-agent history
 agent47
 ```
 
-Inside `agent47`, there are currently **11 slash commands**:
+Inside `agent47`, there are currently **12 slash commands**:
 
 | Slash command | Purpose |
 | --- | --- |
@@ -45,6 +45,7 @@ Inside `agent47`, there are currently **11 slash commands**:
 | `/max-steps <n>` | Change max agent loop steps. |
 | `/max-failures <n>` | Change consecutive failure recovery budget. |
 | `/history` | Show recent saved agent runs. |
+| `/stop` | Quit interactive mode. |
 | `/exit` | Quit interactive mode. |
 
 ## Enabled Agent Actions
@@ -80,6 +81,7 @@ There are currently **9 model-requestable actions**:
 | Local workspace sandbox | Enabled |
 | Tool failure recovery loop | Enabled |
 | Operation status labels | Enabled |
+| Stop shortcut: `Ctrl+C` and `/stop` | Enabled |
 | Code parsing: tree-sitter | Enabled as optional parsing extra |
 | Storage: SQLite | Enabled |
 | Testing: pytest | Enabled |

@@ -23,7 +23,7 @@ def main() -> None:
     max_failures: int | None = None
 
     typer.echo("agent47 interactive coding agent")
-    typer.echo("Type a task or question. Use /help for commands. Use /exit to quit.")
+    typer.echo("Type a task or question. Use /help for commands. Use /stop or Ctrl+C to quit.")
     typer.echo(f"Workspace: {cwd}")
     typer.echo(f"Mode: {'dry-run' if dry_run else 'write-enabled'}")
 
@@ -71,7 +71,11 @@ def main() -> None:
             approval_callback=confirm_permission,
             reporter=StatusReporter(),
         )
-        typer.echo(agent.run(user_input))
+        try:
+            typer.echo(agent.run(user_input))
+        except KeyboardInterrupt:
+            typer.echo("\nSTOPPED by user")
+            return
 
 
 class CommandState:
@@ -111,7 +115,7 @@ def handle_command(
     command = parts[0].lower()
     value = parts[1].strip() if len(parts) > 1 else ""
 
-    if command in {"/exit", "/quit", "/q"}:
+    if command in {"/exit", "/quit", "/q", "/stop"}:
         return CommandState(
             base_cwd,
             cwd,
@@ -191,6 +195,7 @@ Commands:
   /max-steps <n>     Change max agent loop steps.
   /max-failures <n>  Change consecutive failure recovery budget.
   /history           Show recent saved agent runs.
+  /stop              Quit.
   /exit              Quit.
 """.strip()
     )

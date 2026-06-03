@@ -48,7 +48,11 @@ def run(
         approval_callback=confirm_permission,
         reporter=StatusReporter(),
     )
-    result = agent.run(task)
+    try:
+        result = agent.run(task)
+    except KeyboardInterrupt:
+        typer.echo("\nSTOPPED by user")
+        raise typer.Exit(code=130)
     typer.echo(result)
 
 

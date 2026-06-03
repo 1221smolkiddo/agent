@@ -67,6 +67,7 @@ agent47: /write
 agent47: /sandbox
 agent47: /sandbox off
 agent47: /max-failures 5
+agent47: /stop
 agent47: /exit
 ```
 
@@ -116,6 +117,19 @@ The CLI prints status lines while the agent works:
 - `INSTALLING`, `BUILDING`, `TESTING`, or `CHECKING` for recognized shell commands.
 - `RECOVERING` when a tool fails and the agent is trying another path.
 - `DONE` when the agent reaches a final answer.
+
+## Stopping The Agent
+
+Use `Ctrl+C` to stop a running operation.
+
+Inside `agent47`, you can also quit between prompts with:
+
+```text
+/stop
+/exit
+```
+
+Esc is not used as the default stop key because most terminals treat it as line-editing input rather than a process interrupt.
 
 ## Sandbox
 
