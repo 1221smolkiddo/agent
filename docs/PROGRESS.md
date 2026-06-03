@@ -18,7 +18,8 @@ There are currently **3 user-facing CLI commands**:
 | --- | --- |
 | `code-agent run "task"` | Run the agent on a coding task. |
 | `code-agent history` | Show recent saved agent runs from SQLite. |
-| `copilot` | Open an interactive terminal session for free-form prompts. |
+| `agent47` | Open an interactive terminal session for free-form prompts. |
+| `copilot` | Backward-compatible alias for `agent47`. |
 
 Common examples:
 
@@ -26,10 +27,10 @@ Common examples:
 uv run code-agent run "Inspect this project and suggest next steps"
 uv run code-agent run --dry-run "Find risky areas in the codebase"
 uv run code-agent history
-copilot
+agent47
 ```
 
-Inside `copilot`, there are currently **9 slash commands**:
+Inside `agent47`, there are currently **9 slash commands**:
 
 | Slash command | Purpose |
 | --- | --- |

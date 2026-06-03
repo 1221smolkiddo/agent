@@ -16,14 +16,14 @@ def main() -> None:
     dry_run = True
     max_steps = 12
 
-    typer.echo("Copilot-style coding agent")
+    typer.echo("agent47 interactive coding agent")
     typer.echo("Type a task or question. Use /help for commands. Use /exit to quit.")
     typer.echo(f"Workspace: {cwd}")
     typer.echo(f"Mode: {'dry-run' if dry_run else 'write-enabled'}")
 
     while True:
         try:
-            user_input = typer.prompt("copilot").strip()
+            user_input = typer.prompt("agent47").strip()
         except (EOFError, KeyboardInterrupt):
             typer.echo("\nbye")
             return

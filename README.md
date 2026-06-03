@@ -52,17 +52,17 @@ uv run code-agent run "Fix the failing pytest"
 Interactive mode:
 
 ```bash
-copilot
+agent47
 ```
 
 Inside interactive mode, type freely:
 
 ```text
-copilot: Inspect this project and suggest the next feature
-copilot: /status
-copilot: /dry-run
-copilot: /write
-copilot: /exit
+agent47: Inspect this project and suggest the next feature
+agent47: /status
+agent47: /dry-run
+agent47: /write
+agent47: /exit
 ```
 
 ## Environment
