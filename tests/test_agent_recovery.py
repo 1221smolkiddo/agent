@@ -99,3 +99,27 @@ def test_agent_can_finalize_after_dry_run_skip(tmp_path: Path) -> None:
 
     assert result == "Enable write mode first."
     assert dry_run_tools.calls == 1
+
+
+def test_agent_rejects_false_completion_after_blocked_write(tmp_path: Path) -> None:
+    model = FakeModel(
+        [
+            '{"type":"write_file","path":"project_features.md","content":"features"}',
+            '{"type":"final","message":"I created project_features.md and you can find it in the current directory."}',
+            '{"type":"final","message":"I could not create the file because write mode is disabled. Use /write first."}',
+        ]
+    )
+
+    class DryRunWriteTools(RecoveringTools):
+        def run(self, action: AgentAction) -> ToolResult:
+            self.calls += 1
+            return ToolResult(ok=False, output="Dry-run mode skipped write_file.")
+
+    dry_run_tools = DryRunWriteTools()
+    agent = make_agent(tmp_path, model, dry_run_tools)
+
+    result = agent.run("create a features file")
+
+    assert result == "I could not create the file because write mode is disabled. Use /write first."
+    assert dry_run_tools.calls == 1
+    assert "false_completion" in model.messages_seen[2][-1]["content"]

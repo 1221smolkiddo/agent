@@ -42,6 +42,7 @@ class CodingAgent:
         consecutive_failures = 0
         previous_tool_failed = False
         previous_failure_allows_final = False
+        blocked_mutation_failure = False
         messages: list[ChatMessage] = [
             {"role": "system", "content": system_prompt(self.cwd, self.dry_run)},
             {"role": "user", "content": task},
@@ -68,11 +69,31 @@ class CodingAgent:
                 messages.append({"role": "user", "content": json.dumps(payload)})
                 previous_tool_failed = True
                 previous_failure_allows_final = False
+                blocked_mutation_failure = False
                 continue
 
             self.storage.add_step(run_id, "assistant", action.model_dump())
 
             if isinstance(action, FinalAction):
+                if blocked_mutation_failure and self._final_claims_mutation_success(action.message):
+                    consecutive_failures += 1
+                    payload = self._failure_payload(
+                        step=step,
+                        kind="false_completion",
+                        output=(
+                            "A file write/edit was blocked, but the final answer claimed the change was completed. "
+                            "Do not claim success. Explain that the file was not created/edited and tell the user "
+                            "to enable /write or use /sandbox plus /write."
+                        ),
+                        consecutive_failures=consecutive_failures,
+                    )
+                    self.storage.add_step(run_id, "tool", payload)
+                    self._report_recovery("blocked false completion after failed write/edit")
+                    if consecutive_failures >= self.max_failures:
+                        return self._failure_summary(consecutive_failures, payload["output"])
+                    messages.append({"role": "assistant", "content": action.model_dump_json()})
+                    messages.append({"role": "user", "content": json.dumps(payload)})
+                    continue
                 if (
                     previous_tool_failed
                     and not previous_failure_allows_final
@@ -99,10 +120,12 @@ class CodingAgent:
                 consecutive_failures = 0
                 previous_tool_failed = False
                 previous_failure_allows_final = False
+                blocked_mutation_failure = False
             else:
                 consecutive_failures += 1
                 previous_tool_failed = True
                 previous_failure_allows_final = self._can_finalize_after_failure(result)
+                blocked_mutation_failure = self._is_blocked_mutation(action, result)
 
             tool_payload = {
                 "type": "tool_result",
@@ -188,6 +211,52 @@ class CodingAgent:
     @staticmethod
     def _can_finalize_after_failure(result: ToolResult) -> bool:
         return "Permission denied" in result.output or "Dry-run mode skipped" in result.output
+
+    @staticmethod
+    def _is_blocked_mutation(action: AgentAction, result: ToolResult) -> bool:
+        if action.type not in {"write_file", "edit_file"}:
+            return False
+        return "Permission denied" in result.output or "Dry-run mode skipped" in result.output
+
+    @staticmethod
+    def _final_claims_mutation_success(message: str) -> bool:
+        lowered = message.lower()
+        honest_failure_terms = [
+            "could not",
+            "couldn't",
+            "cannot",
+            "can't",
+            "did not",
+            "didn't",
+            "not created",
+            "not edited",
+            "not written",
+            "failed",
+            "skipped",
+            "dry-run",
+            "permission",
+            "denied",
+            "/write",
+            "write mode",
+        ]
+        if any(term in lowered for term in honest_failure_terms):
+            return False
+
+        success_terms = [
+            "created",
+            "made",
+            "wrote",
+            "written",
+            "saved",
+            "updated",
+            "edited",
+            "committed",
+            "you can find",
+            "file is named",
+            "file named",
+            "the file",
+        ]
+        return any(term in lowered for term in success_terms)
 
     def _report_thinking(self, step: int) -> None:
         if self.reporter:
