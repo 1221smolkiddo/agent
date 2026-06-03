@@ -1,0 +1,46 @@
+# Architecture
+
+This project is CLI-first, but the code is split so other frontends can reuse the same agent core later.
+
+## Current Flow
+
+```text
+Typer CLI
+  -> Settings
+  -> CodingAgent
+  -> ModelClient
+  -> ToolRegistry
+  -> Storage
+```
+
+## Modules
+
+- `code_agent.cli`: command line surface.
+- `code_agent.agent`: agent loop and action parsing.
+- `code_agent.models`: OpenAI-compatible model client.
+- `code_agent.tools`: local filesystem, shell, search, and code summary tools.
+- `code_agent.parsing`: optional tree-sitter based code structure summaries.
+- `code_agent.storage`: SQLite run history.
+- `code_agent.config`: environment and settings.
+- `code_agent.schema`: typed action and tool result models.
+
+## Codex-Like Direction
+
+We cannot clone any proprietary internals, but we can build the same kind of product experience:
+
+- repo-aware context gathering
+- tool-using agent loop
+- careful file editing
+- shell/test execution
+- approvals for risky actions
+- run history
+- resumable sessions
+- eventually editor integration
+
+## Future VS Code Shape
+
+The VS Code extension should be a frontend that talks to this Python core. Early options:
+
+- spawn the CLI as a subprocess
+- expose a local JSON-RPC/stdin-stdout protocol
+- later add a lightweight local service for long-running sessions
