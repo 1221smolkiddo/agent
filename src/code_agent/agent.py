@@ -16,6 +16,41 @@ from .tools import ToolRegistry
 ACTION_ADAPTER = TypeAdapter(AgentAction)
 
 
+def _iter_json_objects(text: str):
+    """Yield every outermost ``{...}`` substring in *text* using balanced-brace scanning.
+
+    This is more robust than ``text.index("{")`` / ``text.rindex("}")`` because it
+    handles model responses that contain prose before/after the JSON, markdown
+    code-fences, or multiple JSON snippets.  Candidates are yielded left-to-right
+    so the caller can stop at the first successfully parsed object.
+    """
+    depth = 0
+    start: int | None = None
+    in_string = False
+    escape_next = False
+    for i, ch in enumerate(text):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start is not None:
+                yield text[start : i + 1]
+                start = None
+
+
 class CodingAgent:
     def __init__(
         self,
@@ -148,16 +183,24 @@ class CodingAgent:
         return f"Stopped after {self.max_steps} steps. Increase --max-steps if the task needs more work."
 
     def _parse_action(self, raw: str) -> tuple[AgentAction | None, str | None]:
-        try:
-            start = raw.index("{")
-            end = raw.rindex("}") + 1
-            data: Any = json.loads(raw[start:end])
-            return ACTION_ADAPTER.validate_python(data), None
-        except (ValueError, json.JSONDecodeError, ValidationError) as exc:
-            return None, (
-                "The model response was not a valid action JSON object. "
-                f"Error: {exc}. Reply with one valid action JSON object and continue solving the task."
-            )
+        """Extract and validate the first valid AgentAction JSON object in *raw*.
+
+        Uses a balanced-brace scan so that prose, markdown fences, and nested
+        JSON structures in the model reply do not confuse the parser.
+        """
+        last_exc: Exception | None = None
+        for candidate in _iter_json_objects(raw):
+            try:
+                data: Any = json.loads(candidate)
+                return ACTION_ADAPTER.validate_python(data), None
+            except (json.JSONDecodeError, ValidationError) as exc:
+                last_exc = exc
+
+        error_msg = str(last_exc) if last_exc else "no JSON object found"
+        return None, (
+            "The model response was not a valid action JSON object. "
+            f"Error: {error_msg}. Reply with one valid action JSON object and continue solving the task."
+        )
 
     def _run_tool(self, action: AgentAction) -> ToolResult:
         try:

@@ -86,7 +86,15 @@ class ToolRegistry:
         if not self._approve("read_file", requested_path):
             return ToolResult(ok=False, output="Permission denied for read_file.")
         target = self.resolve_inside_workspace(requested_path)
-        return ToolResult(ok=True, output=target.read_text(encoding="utf-8"))
+        if not target.exists():
+            return ToolResult(ok=False, output=f"File not found: {requested_path}")
+        try:
+            return ToolResult(ok=True, output=target.read_text(encoding="utf-8"))
+        except UnicodeDecodeError:
+            return ToolResult(
+                ok=False,
+                output=f"Cannot read {requested_path}: file is binary or uses a non-UTF-8 encoding.",
+            )
 
     def _write_file(self, requested_path: str, content: str) -> ToolResult:
         if self.dry_run:
@@ -153,14 +161,23 @@ class ToolRegistry:
         if not self._approve("search", f"Search {requested_path or '.'} for {query}"):
             return ToolResult(ok=False, output="Permission denied for search.")
         target = self.resolve_inside_workspace(requested_path)
-        completed = subprocess.run(
-            ["rg", "--line-number", "--hidden", "--glob", "!.git", query, str(target)],
-            cwd=self.workspace,
-            text=True,
-            capture_output=True,
-            timeout=60,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                ["rg", "--line-number", "--hidden", "--glob", "!.git", query, str(target)],
+                cwd=self.workspace,
+                text=True,
+                capture_output=True,
+                timeout=60,
+                check=False,
+            )
+        except FileNotFoundError:
+            return ToolResult(
+                ok=False,
+                output=(
+                    "'rg' (ripgrep) was not found on PATH. "
+                    "Install it with: brew install ripgrep  (macOS) or apt install ripgrep  (Debian/Ubuntu)."
+                ),
+            )
         if completed.returncode not in {0, 1}:
             return ToolResult(ok=False, output=completed.stderr.strip())
         return ToolResult(ok=True, output=completed.stdout.strip() or "<no matches>")
@@ -169,7 +186,12 @@ class ToolRegistry:
         if not self._approve("summarize_code", requested_path):
             return ToolResult(ok=False, output="Permission denied for summarize_code.")
         target = self.resolve_inside_workspace(requested_path)
-        return ToolResult(ok=True, output=summarize_code_file(target))
+        if not target.exists():
+            return ToolResult(ok=False, output=f"File not found: {requested_path}")
+        try:
+            return ToolResult(ok=True, output=summarize_code_file(target))
+        except FileNotFoundError:
+            return ToolResult(ok=False, output=f"File not found: {requested_path}")
 
     def _web_search(self, query: str) -> ToolResult:
         if not self._approve("web_search", query):
