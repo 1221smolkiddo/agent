@@ -214,7 +214,7 @@ class CodingAgent:
 
     @staticmethod
     def _is_blocked_mutation(action: AgentAction, result: ToolResult) -> bool:
-        if action.type not in {"write_file", "edit_file"}:
+        if action.type not in {"write_file", "edit_file", "apply_patch"}:
             return False
         return "Permission denied" in result.output or "Dry-run mode skipped" in result.output
 

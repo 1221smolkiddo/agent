@@ -1,4 +1,10 @@
-from code_agent.schema import EditFileAction, RunShellAction, SearchAction, WebSearchAction
+from code_agent.schema import (
+    ApplyPatchAction,
+    EditFileAction,
+    RunShellAction,
+    SearchAction,
+    WebSearchAction,
+)
 from code_agent.status import format_action_status, format_shell_status
 from code_agent.interactive import is_casual_greeting
 
@@ -9,6 +15,12 @@ def test_format_action_status_for_editing() -> None:
     )
 
     assert status == "EDITING src/app.py"
+
+
+def test_format_action_status_for_apply_patch() -> None:
+    status = format_action_status(ApplyPatchAction(type="apply_patch", patch="diff"))
+
+    assert status == "EDITING applying patch"
 
 
 def test_format_action_status_for_project_search() -> None:

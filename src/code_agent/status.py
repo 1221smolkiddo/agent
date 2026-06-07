@@ -4,6 +4,7 @@ import typer
 
 from .schema import (
     AgentAction,
+    ApplyPatchAction,
     EditFileAction,
     ListFilesAction,
     ReadFileAction,
@@ -38,6 +39,8 @@ def format_action_status(action: AgentAction) -> str:
         return f"EDITING writing {action.path}"
     if isinstance(action, EditFileAction):
         return f"EDITING {action.path}"
+    if isinstance(action, ApplyPatchAction):
+        return "EDITING applying patch"
     if isinstance(action, SearchAction):
         return f"SEARCHING project for {action.query}"
     if isinstance(action, WebSearchAction):

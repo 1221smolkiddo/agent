@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .schema import (
     AgentAction,
+    ApplyPatchAction,
     EditFileAction,
     ListFilesAction,
     ReadFileAction,
@@ -43,6 +44,8 @@ class ToolRegistry:
             return self._write_file(action.path, action.content)
         if isinstance(action, EditFileAction):
             return self._edit_file(action.path, action.find, action.replace)
+        if isinstance(action, ApplyPatchAction):
+            return self._apply_patch(action.patch)
         if isinstance(action, RunShellAction):
             return self._run_shell(action.command)
         if isinstance(action, SearchAction):
@@ -125,6 +128,31 @@ class ToolRegistry:
             return ToolResult(ok=False, output="Permission denied for edit_file.")
         target.write_text(after, encoding="utf-8")
         return ToolResult(ok=True, output=diff)
+
+    def _apply_patch(self, patch: str) -> ToolResult:
+        if self.dry_run:
+            return ToolResult(
+                ok=False,
+                output=(
+                    "Dry-run mode skipped apply_patch. Tell the user to run /write, "
+                    "/sandbox plus /write, or use --sandbox/without --dry-run before editing files."
+                ),
+            )
+        try:
+            paths = self._paths_from_patch(patch)
+            if not paths:
+                return ToolResult(ok=False, output="Patch does not contain any target file paths.")
+            for path in paths:
+                self.resolve_inside_workspace(path)
+        except ValueError as exc:
+            return ToolResult(ok=False, output=str(exc))
+        if not self._approve("apply_patch", patch):
+            return ToolResult(ok=False, output="Permission denied for apply_patch.")
+
+        check = self._git_apply(patch, check=True)
+        if not check.ok:
+            return check
+        return self._git_apply(patch, check=False)
 
     def _run_shell(self, command: str) -> ToolResult:
         if self.dry_run:
@@ -209,6 +237,57 @@ class ToolRegistry:
                 lineterm="",
             )
         )
+
+    @staticmethod
+    def _paths_from_patch(patch: str) -> set[str]:
+        paths: set[str] = set()
+        for line in patch.splitlines():
+            if line.startswith("diff --git "):
+                parts = line.split()
+                if len(parts) >= 4:
+                    paths.update(
+                        path
+                        for path in [
+                            ToolRegistry._clean_patch_path(parts[2]),
+                            ToolRegistry._clean_patch_path(parts[3]),
+                        ]
+                        if path
+                    )
+                continue
+            if line.startswith("--- ") or line.startswith("+++ "):
+                raw_path = line[4:].split("\t", 1)[0].strip()
+                path = ToolRegistry._clean_patch_path(raw_path)
+                if path:
+                    paths.add(path)
+        return paths
+
+    @staticmethod
+    def _clean_patch_path(path: str) -> str | None:
+        if path == "/dev/null":
+            return None
+        for prefix in ("a/", "b/"):
+            if path.startswith(prefix):
+                return path[len(prefix) :]
+        return path
+
+    def _git_apply(self, patch: str, check: bool) -> ToolResult:
+        command = ["git", "apply", "--whitespace=nowarn"]
+        if check:
+            command.append("--check")
+        completed = subprocess.run(
+            command,
+            cwd=self.workspace,
+            input=patch,
+            text=True,
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+        output = "\n".join(part for part in [completed.stdout, completed.stderr] if part).strip()
+        if completed.returncode == 0:
+            return ToolResult(ok=True, output="Patch can be applied." if check else "Patch applied.")
+        stage = "Patch check failed" if check else "Patch apply failed"
+        return ToolResult(ok=False, output=f"{stage}: {output or '<no output>'}")
 
 
 class DuckDuckGoParser(html.parser.HTMLParser):

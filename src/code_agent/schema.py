@@ -33,6 +33,11 @@ class EditFileAction(BaseModel):
     replace: str
 
 
+class ApplyPatchAction(BaseModel):
+    type: Literal["apply_patch"]
+    patch: str
+
+
 class RunShellAction(BaseModel):
     type: Literal["run_shell"]
     command: str
@@ -60,6 +65,7 @@ AgentAction = Union[
     ReadFileAction,
     WriteFileAction,
     EditFileAction,
+    ApplyPatchAction,
     RunShellAction,
     SearchAction,
     WebSearchAction,

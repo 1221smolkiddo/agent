@@ -110,6 +110,7 @@ The agent asks for confirmation before:
 - summarizing code structure
 - writing files
 - editing files
+- applying structured patches
 - running shell commands
 - searching the web
 
@@ -134,6 +135,7 @@ The CLI prints status lines while the agent works:
 - `SEARCHING` for project search.
 - `SEARCHING WEB` for web search.
 - `EDITING` for file writes and edits.
+- `EDITING applying patch` for structured patch edits.
 - `INSTALLING`, `BUILDING`, `TESTING`, or `CHECKING` for recognized shell commands.
 - `RECOVERING` when a tool fails and the agent is trying another path.
 - `DONE` when the agent reaches a final answer.

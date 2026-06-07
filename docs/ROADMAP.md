@@ -4,14 +4,14 @@ This is the build map for turning Agent47 from a promising CLI agent into an ind
 
 ## Current Position
 
-Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRouter/OpenAI-compatible model access, typed tool actions, local file/search/shell/web tools, permission prompts, dry-run mode, local sandbox copies, SQLite run history, operation status labels, failure recovery, optional tree-sitter summaries, and an Agent47 engineering protocol in the system prompt.
+Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRouter/OpenAI-compatible model access, typed tool actions, local file/search/shell/web tools, structured patch application, permission prompts, dry-run mode, local sandbox copies, SQLite run history, operation status labels, failure recovery, optional tree-sitter summaries, and an Agent47 engineering protocol in the system prompt.
 
 ## Industry-Standard Capability Checklist
 
 | Capability area | Current state | What is left |
 | --- | --- | --- |
 | Agent loop | Basic typed action loop with failure recovery | Add durable plans, step status, task decomposition, cancellation, pause/resume, and bounded long-running work |
-| Code editing | Full-file writes and exact text replacement | Add structured patch generation, diff preview, patch apply, multi-file change sets, conflict handling, and formatting hooks |
+| Code editing | Full-file writes, exact text replacement, and approved `git apply` patches | Add multi-file change set metadata, conflict handling, rollback support, and formatting hooks |
 | Repository intelligence | File listing, ripgrep search, optional code summaries | Add repo index, symbol graph, dependency graph, ownership hints, changed-file awareness, and context ranking |
 | Verification | Agent can run shell commands after approval | Add automatic test/lint/build detection, targeted verification selection, retry policy, and final verification summaries |
 | Safety and sandboxing | Workspace path guard, dry-run, permission prompts, copy sandbox | Add command allow/deny policy, environment redaction, network controls, process limits, timeout tiers, and secret scanning |
@@ -27,8 +27,9 @@ Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRou
 
 ## Phase 1: Trustworthy Editing
 
-- Add a first-class `apply_patch` action instead of relying on full-file writes for code edits.
-- Show unified diffs before approval and store approved patches in run history.
+- Done: add a first-class `apply_patch` action instead of relying on full-file writes for code edits.
+- Done: show unified diffs before approval and validate patch paths before applying.
+- Store approved patches with richer metadata in run history.
 - Add multi-file change set support with one approval prompt per coherent change.
 - Add formatting hooks for common stacks after patch application.
 - Add tests for patch parsing, apply failures, and partial-application recovery.

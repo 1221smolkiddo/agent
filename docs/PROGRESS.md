@@ -6,9 +6,9 @@ This document tracks how far the coding agent has come and what collaborators ca
 
 **Stage:** Basic single-model CLI agent with Agent47 engineering protocol
 
-**Approximate progress toward an industry-standard local AI coding agent:** 15%
+**Approximate progress toward an industry-standard local AI coding agent:** 18%
 
-The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, run history, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
+The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, structured patch application, run history, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
 
 This file should be updated whenever a meaningful Agent47 capability is added. Keep the enabled commands/actions current, move completed items out of "What Is Left" when they land, and update the percentage only when the agent gains real product capability rather than documentation alone.
 
@@ -52,7 +52,7 @@ Inside `agent47`, there are currently **12 slash commands**:
 
 ## Enabled Agent Actions
 
-There are currently **9 model-requestable actions**:
+There are currently **10 model-requestable actions**:
 
 | Action | Purpose |
 | --- | --- |
@@ -61,6 +61,7 @@ There are currently **9 model-requestable actions**:
 | `read_file` | Read a file inside the workspace. |
 | `write_file` | Write a full file inside the workspace. |
 | `edit_file` | Replace exact text in a file. |
+| `apply_patch` | Apply a unified diff patch inside the workspace after approval. |
 | `run_shell` | Run a shell command in the workspace. |
 | `search` | Search with ripgrep. |
 | `web_search` | Search the web after user approval. |
@@ -77,6 +78,7 @@ There are currently **9 model-requestable actions**:
 | Config: python-dotenv + pydantic-settings | Enabled |
 | File ops: pathlib | Enabled |
 | Diffs: difflib | Enabled |
+| Structured patch application: git apply | Enabled |
 | Shell execution: subprocess | Enabled |
 | Project search: ripgrep | Enabled |
 | Web search | Enabled with user approval |
@@ -98,7 +100,7 @@ These are the remaining capability areas needed for Agent47 to feel like a fully
 
 | Priority | Capability | Why it matters | Status |
 | --- | --- | --- | --- |
-| 1 | Structured patch editing | Gives safe, reviewable multi-file code changes instead of brittle full-file rewrites | Not started |
+| 1 | Structured patch editing | Gives safe, reviewable multi-file code changes instead of brittle full-file rewrites | Partial |
 | 2 | Verification loop | Lets Agent47 detect and run the right tests, lint, typecheck, and builds after edits | Not started |
 | 3 | Repo intelligence | Helps the agent choose relevant context using symbols, dependencies, git diff, and architecture summaries | Partial |
 | 4 | Safer shell policy | Separates read-only, test/build, install/network, and destructive commands with stronger approvals | Partial |
@@ -113,7 +115,7 @@ These are the remaining capability areas needed for Agent47 to feel like a fully
 
 ## Next Recommended Build Order
 
-1. Add structured patch preview and patch apply.
+1. Finish structured patch editing with multi-file change sets, patch history metadata, and better conflict recovery.
 2. Add automatic verification command detection.
 3. Add git diff awareness so Agent47 respects existing user changes.
 4. Add resumable sessions with run IDs and plan state.
@@ -128,9 +130,10 @@ These are the remaining capability areas needed for Agent47 to feel like a fully
 - `.env`, `.venv`, caches, and local agent databases are ignored by git.
 - Read/list/project-search/code-summary actions now ask for user approval.
 - `--dry-run` skips writes and shell commands.
-- Human approval prompts are implemented for write/edit/shell/web-search actions.
+- Human approval prompts are implemented for write/edit/apply-patch/shell/web-search actions.
+- `apply_patch` validates target paths, previews the full patch for approval, checks patch applicability, and applies it with `git apply`.
 - Failed tool calls are automatically fed back to the model for recovery until the failure budget is exhausted.
-- Patch approval is not implemented yet.
+- Multi-file change set metadata and richer patch conflict recovery are not implemented yet.
 
 ## Last Updated
 
