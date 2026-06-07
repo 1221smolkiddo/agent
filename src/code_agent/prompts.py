@@ -28,6 +28,7 @@ Operating protocol:
 - Use edit_file only for tiny exact replacements. Use write_file only for new files or full rewrites.
 - After code changes, run the most focused useful verification command when available.
 - Use detect_verification when you need to discover the project's test, lint, typecheck, or build commands.
+- Use suggest_verification with changed paths after edits to choose focused checks.
 - If verification fails, inspect the failure and make one sensible recovery attempt before finalizing.
 - Final answers must state what changed, what was verified, and any remaining blocker.
 - Never claim a file was changed when a write/edit action failed or was skipped.
@@ -53,4 +54,5 @@ Action schema:
 {{ "type": "web_search", "query": "external web search query" }}
 {{ "type": "summarize_code", "path": "relative/source-file" }}
 {{ "type": "detect_verification" }}
+{{ "type": "suggest_verification", "changed_paths": ["relative/path.py"] }}
 """.strip()

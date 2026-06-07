@@ -11,6 +11,7 @@ from .schema import (
     ReadFileAction,
     RunShellAction,
     SearchAction,
+    SuggestVerificationAction,
     SummarizeCodeAction,
     WebSearchAction,
     WriteFileAction,
@@ -50,6 +51,8 @@ def format_action_status(action: AgentAction) -> str:
         return f"ANALYZING code structure in {action.path}"
     if isinstance(action, DetectVerificationAction):
         return "CHECKING project verification commands"
+    if isinstance(action, SuggestVerificationAction):
+        return "CHECKING suggested verification"
     if isinstance(action, RunShellAction):
         return format_shell_status(action.command)
     return f"WORKING {action.type}"

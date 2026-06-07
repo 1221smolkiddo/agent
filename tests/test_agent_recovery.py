@@ -123,3 +123,21 @@ def test_agent_rejects_false_completion_after_blocked_write(tmp_path: Path) -> N
     assert result == "I could not create the file because write mode is disabled. Use /write first."
     assert dry_run_tools.calls == 1
     assert "false_completion" in model.messages_seen[2][-1]["content"]
+
+
+def test_agent_adds_verification_hint_after_successful_mutation(tmp_path: Path) -> None:
+    model = FakeModel(
+        [
+            '{"type":"write_file","path":"src/app.py","content":"print(\\"hi\\")"}',
+            '{"type":"final","message":"updated src/app.py; verification not run."}',
+        ]
+    )
+    tools = RecoveringTools()
+    agent = make_agent(tmp_path, model, tools)
+
+    result = agent.run("update a file")
+
+    assert result == "updated src/app.py; verification not run."
+    tool_payload = model.messages_seen[1][-1]["content"]
+    assert '"changed_paths": ["src/app.py"]' in tool_payload
+    assert "Call suggest_verification" in tool_payload

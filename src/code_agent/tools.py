@@ -18,13 +18,14 @@ from .schema import (
     ReadFileAction,
     RunShellAction,
     SearchAction,
+    SuggestVerificationAction,
     SummarizeCodeAction,
     ToolResult,
     WebSearchAction,
     WriteFileAction,
 )
 from .parsing import summarize_code_file
-from .verification import detect_verification_commands
+from .verification import detect_verification_commands, suggest_verification_commands
 
 IGNORED_NAMES = {
     ".code-agent",
@@ -72,6 +73,8 @@ class ToolRegistry:
             return self._summarize_code(action.path)
         if isinstance(action, DetectVerificationAction):
             return self._detect_verification()
+        if isinstance(action, SuggestVerificationAction):
+            return self._suggest_verification(action.changed_paths)
         return ToolResult(ok=False, output=f"Unsupported action: {action.type}")
 
     def resolve_inside_workspace(self, requested_path: str | None = None) -> Path:
@@ -223,6 +226,14 @@ class ToolRegistry:
         ):
             return ToolResult(ok=False, output="Permission denied for detect_verification.")
         return ToolResult(ok=True, output=detect_verification_commands(self.workspace))
+
+    def _suggest_verification(self, changed_paths: list[str]) -> ToolResult:
+        detail = "Suggest focused verification commands"
+        if changed_paths:
+            detail += " for: " + ", ".join(changed_paths)
+        if not self._approve("suggest_verification", detail):
+            return ToolResult(ok=False, output="Permission denied for suggest_verification.")
+        return ToolResult(ok=True, output=suggest_verification_commands(self.workspace, changed_paths))
 
     def _web_search(self, query: str) -> ToolResult:
         if not self._approve("web_search", query):

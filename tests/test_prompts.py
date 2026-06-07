@@ -14,6 +14,8 @@ def test_system_prompt_names_agent47_engineering_protocol() -> None:
     assert "run the most focused useful verification command" in prompt
     assert "Use detect_verification" in prompt
     assert '{ "type": "detect_verification" }' in prompt
+    assert "Use suggest_verification with changed paths" in prompt
+    assert '{ "type": "suggest_verification"' in prompt
     assert "Final answers must state what changed, what was verified" in prompt
 
 

@@ -63,6 +63,11 @@ class DetectVerificationAction(BaseModel):
     type: Literal["detect_verification"]
 
 
+class SuggestVerificationAction(BaseModel):
+    type: Literal["suggest_verification"]
+    changed_paths: list[str] = Field(default_factory=list)
+
+
 AgentAction = Union[
     FinalAction,
     ListFilesAction,
@@ -75,6 +80,7 @@ AgentAction = Union[
     WebSearchAction,
     SummarizeCodeAction,
     DetectVerificationAction,
+    SuggestVerificationAction,
 ]
 
 

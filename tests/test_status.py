@@ -4,6 +4,7 @@ from code_agent.schema import (
     EditFileAction,
     RunShellAction,
     SearchAction,
+    SuggestVerificationAction,
     WebSearchAction,
 )
 from code_agent.status import format_action_status, format_shell_status
@@ -40,6 +41,14 @@ def test_format_action_status_for_detect_verification() -> None:
     status = format_action_status(DetectVerificationAction(type="detect_verification"))
 
     assert status == "CHECKING project verification commands"
+
+
+def test_format_action_status_for_suggest_verification() -> None:
+    status = format_action_status(
+        SuggestVerificationAction(type="suggest_verification", changed_paths=["src/app.py"])
+    )
+
+    assert status == "CHECKING suggested verification"
 
 
 def test_format_shell_status_for_install() -> None:

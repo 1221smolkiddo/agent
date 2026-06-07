@@ -81,14 +81,14 @@ class CodingAgent:
                         step=step,
                         kind="false_completion",
                         output=(
-                            "A file write/edit was blocked, but the final answer claimed the change was completed. "
-                            "Do not claim success. Explain that the file was not created/edited and tell the user "
+                            "A file write/edit/patch was blocked, but the final answer claimed the change was completed. "
+                            "Do not claim success. Explain that the file was not created/edited/patched and tell the user "
                             "to enable /write or use /sandbox plus /write."
                         ),
                         consecutive_failures=consecutive_failures,
                     )
                     self.storage.add_step(run_id, "tool", payload)
-                    self._report_recovery("blocked false completion after failed write/edit")
+                    self._report_recovery("blocked false completion after failed write/edit/patch")
                     if consecutive_failures >= self.max_failures:
                         return self._failure_summary(consecutive_failures, payload["output"])
                     messages.append({"role": "assistant", "content": action.model_dump_json()})
@@ -116,6 +116,7 @@ class CodingAgent:
 
             self._report_action(action)
             result = self._run_tool(action)
+            changed_paths = self._changed_paths_from_action(action) if result.ok else []
             if result.ok:
                 consecutive_failures = 0
                 previous_tool_failed = False
@@ -137,6 +138,12 @@ class CodingAgent:
                 else "Continue with the task.",
                 "consecutive_failures": consecutive_failures,
             }
+            if changed_paths:
+                tool_payload["changed_paths"] = changed_paths
+                tool_payload["verification_instruction"] = (
+                    "Call suggest_verification with these changed_paths, then run the most focused "
+                    "suggested command when verification is useful for the task."
+                )
             self.storage.add_step(run_id, "tool", tool_payload)
             if consecutive_failures >= self.max_failures:
                 return self._failure_summary(consecutive_failures, result.output)
@@ -217,6 +224,16 @@ class CodingAgent:
         if action.type not in {"write_file", "edit_file", "apply_patch"}:
             return False
         return "Permission denied" in result.output or "Dry-run mode skipped" in result.output
+
+    @staticmethod
+    def _changed_paths_from_action(action: AgentAction) -> list[str]:
+        if action.type in {"write_file", "edit_file"}:
+            path = getattr(action, "path", "")
+            return [path] if path else []
+        if action.type == "apply_patch":
+            patch = getattr(action, "patch", "")
+            return sorted(ToolRegistry._paths_from_patch(patch))
+        return []
 
     @staticmethod
     def _final_claims_mutation_success(message: str) -> bool:

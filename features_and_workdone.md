@@ -10,7 +10,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - OpenRouter-compatible model access.
 - Default model set to `qwen/qwen3-coder`.
 - Local `.env` configuration with secrets excluded from git.
-- User approval prompts for file listing, reading, project search, code summary, verification detection, file writes, file edits, patch application, shell commands, and web search.
+- User approval prompts for file listing, reading, project search, code summary, verification detection/suggestion, file writes, file edits, patch application, shell commands, and web search.
 - Dry-run mode for inspect-only sessions.
 - Write mode through `/write` or non-dry-run CLI usage.
 - Local workspace sandbox mode through `--sandbox` or `/sandbox`.
@@ -19,12 +19,14 @@ This document summarizes the current state of Agent47 for collaborators.
 - Diff previews for write, edit, and structured patch operations.
 - Structured `apply_patch` action backed by `git apply`.
 - Verification command detection for Python, Node, Rust, and Go projects.
+- Focused verification command suggestions based on changed file paths.
 - Shell execution with operation labels for install, build, test, check, and generic shell commands.
 - Project search with `ripgrep` plus a built-in Python fallback when `ripgrep` is unavailable.
 - Web search action with user permission.
 - Optional tree-sitter code summaries.
 - SQLite run history.
 - Automatic recovery loop when a tool fails.
+- Mutation tool results include changed paths and a verification hint for the next model step.
 - Guard against false completion after blocked writes, edits, or patch applications.
 - Operation status labels such as `THINKING`, `READING`, `EDITING`, `SEARCHING`, `TESTING`, `BUILDING`, `RECOVERING`, and `DONE`.
 - Stop controls with `Ctrl+C`, `/stop`, and `/exit`.
@@ -59,7 +61,7 @@ Inside `agent47`:
 - `.code-agent/` local data and sandboxes are git-ignored.
 - The agent asks before reading or listing files.
 - The agent asks before writing, editing, or applying patches to files.
-- The agent asks before detecting verification commands.
+- The agent asks before detecting or suggesting verification commands.
 - The agent asks before running shell commands.
 - The agent asks before using web search.
 - Sandbox mode copies the workspace and excludes `.env`, `.git`, `.venv`, caches, and local agent state.
@@ -88,6 +90,7 @@ Inside `agent47`:
 - False-completion prevention after blocked writes.
 - Structured patch application and path validation.
 - Verification command detection.
+- Focused verification command suggestion.
 - Project search fallback when `ripgrep` is unavailable.
 - Operation status label formatting.
 - Casual greeting handling.
@@ -100,7 +103,7 @@ Inside `agent47`:
 - Streaming model output.
 - Better repo context selection.
 - Planner state with visible task steps.
-- Targeted verification command selection and verification result summaries.
+- Automatic verification execution and verification result summaries.
 - Session resume.
 - Multi-provider and multi-model support.
 - VS Code extension frontend.

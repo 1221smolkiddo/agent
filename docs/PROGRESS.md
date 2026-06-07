@@ -6,9 +6,9 @@ This document tracks how far the coding agent has come and what collaborators ca
 
 **Stage:** Basic single-model CLI agent with Agent47 engineering protocol
 
-**Approximate progress toward an industry-standard local AI coding agent:** 20%
+**Approximate progress toward an industry-standard local AI coding agent:** 22%
 
-The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, structured patch application, verification command detection, run history, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
+The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, structured patch application, verification command detection and suggestion, run history, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
 
 This file should be updated whenever a meaningful Agent47 capability is added. Keep the enabled commands/actions current, move completed items out of "What Is Left" when they land, and update the percentage only when the agent gains real product capability rather than documentation alone.
 
@@ -52,7 +52,7 @@ Inside `agent47`, there are currently **12 slash commands**:
 
 ## Enabled Agent Actions
 
-There are currently **11 model-requestable actions**:
+There are currently **12 model-requestable actions**:
 
 | Action | Purpose |
 | --- | --- |
@@ -67,6 +67,7 @@ There are currently **11 model-requestable actions**:
 | `web_search` | Search the web after user approval. |
 | `summarize_code` | Summarize a source file with tree-sitter when parsing deps are installed. |
 | `detect_verification` | Detect likely test, lint, typecheck, and build commands from project files. |
+| `suggest_verification` | Suggest focused verification commands from changed file paths. |
 
 ## Installed / Supported Stack
 
@@ -87,6 +88,7 @@ There are currently **11 model-requestable actions**:
 | Tool failure recovery loop | Enabled |
 | Agent47 engineering protocol | Enabled |
 | Verification command detection | Enabled |
+| Verification command suggestion | Enabled |
 | Operation status labels | Enabled |
 | Stop shortcut: `Ctrl+C` and `/stop` | Enabled |
 | Code parsing: tree-sitter | Enabled as optional parsing extra |
@@ -117,7 +119,7 @@ These are the remaining capability areas needed for Agent47 to feel like a fully
 
 ## Next Recommended Build Order
 
-1. Finish the verification loop so Agent47 chooses and runs focused checks after edits.
+1. Finish the verification loop so Agent47 automatically runs focused checks after edits and records outcomes.
 2. Add git diff awareness so Agent47 respects existing user changes.
 3. Add resumable sessions with run IDs and plan state.
 4. Add streaming output in CLI and `agent47`.
@@ -135,6 +137,7 @@ These are the remaining capability areas needed for Agent47 to feel like a fully
 - Human approval prompts are implemented for write/edit/apply-patch/shell/web-search actions.
 - `apply_patch` validates target paths, previews the full patch for approval, checks patch applicability, and applies it with `git apply`.
 - `detect_verification` scans known project files for likely test, lint, typecheck, and build commands.
+- `suggest_verification` ranks focused checks from changed paths, and mutation tool results now include changed-path verification hints.
 - Failed tool calls are automatically fed back to the model for recovery until the failure budget is exhausted.
 - Multi-file change set metadata and richer patch conflict recovery are not implemented yet.
 

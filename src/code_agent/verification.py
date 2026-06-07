@@ -15,24 +15,89 @@ class VerificationCommand:
 
 
 def detect_verification_commands(workspace: Path) -> str:
+    commands = find_verification_commands(workspace)
+    if not commands:
+        return "No verification commands detected from known project files."
+
+    lines = ["Detected verification commands:"]
+    for item in _dedupe_commands(commands):
+        lines.append(f"- {item.purpose}: {item.command} ({item.source})")
+    return "\n".join(lines)
+
+
+def suggest_verification_commands(workspace: Path, changed_paths: list[str]) -> str:
+    commands = _dedupe_commands(find_verification_commands(workspace))
+    if not commands:
+        return "No verification commands detected from known project files."
+
+    selected_purposes, reason = _select_purposes(changed_paths)
+    purpose_order = {purpose: index for index, purpose in enumerate(selected_purposes)}
+    selected = sorted(
+        [command for command in commands if command.purpose in selected_purposes],
+        key=lambda command: purpose_order[command.purpose],
+    )
+    if not selected:
+        return f"No verification commands recommended. Reason: {reason}"
+
+    lines = [f"Suggested verification commands. Reason: {reason}"]
+    for item in selected:
+        lines.append(f"- {item.purpose}: {item.command} ({item.source})")
+    return "\n".join(lines)
+
+
+def find_verification_commands(workspace: Path) -> list[VerificationCommand]:
     commands: list[VerificationCommand] = []
     commands.extend(_python_commands(workspace))
     commands.extend(_node_commands(workspace))
     commands.extend(_rust_commands(workspace))
     commands.extend(_go_commands(workspace))
+    return commands
 
-    if not commands:
-        return "No verification commands detected from known project files."
 
-    lines = ["Detected verification commands:"]
+def _dedupe_commands(commands: list[VerificationCommand]) -> list[VerificationCommand]:
+    deduped: list[VerificationCommand] = []
     seen: set[tuple[str, str]] = set()
     for item in commands:
         key = (item.purpose, item.command)
         if key in seen:
             continue
         seen.add(key)
-        lines.append(f"- {item.purpose}: {item.command} ({item.source})")
-    return "\n".join(lines)
+        deduped.append(item)
+    return deduped
+
+
+def _select_purposes(changed_paths: list[str]) -> tuple[list[str], str]:
+    if not changed_paths:
+        return ["lint", "typecheck", "test"], "No changed paths were provided, so use the standard fast checks."
+
+    suffixes = {Path(path).suffix.lower() for path in changed_paths}
+    normalized_paths = [path.replace("\\", "/").lower() for path in changed_paths]
+    docs_only = all(
+        path.endswith((".md", ".txt", ".rst")) or path.startswith("docs/")
+        for path in normalized_paths
+    )
+    if docs_only:
+        return [], "Only documentation files changed."
+
+    manifest_names = {
+        "pyproject.toml",
+        "package.json",
+        "cargo.toml",
+        "go.mod",
+        "uv.lock",
+        "package-lock.json",
+    }
+    if any(Path(path).name.lower() in manifest_names for path in normalized_paths):
+        return ["lint", "typecheck", "test", "build"], "Project configuration or dependency files changed."
+
+    if suffixes & {".py", ".pyi"}:
+        return ["lint", "typecheck", "test"], "Python source or test files changed."
+    if suffixes & {".js", ".jsx", ".ts", ".tsx", ".vue", ".svelte"}:
+        return ["lint", "typecheck", "test", "build"], "Frontend source or test files changed."
+    if suffixes & {".rs", ".go"}:
+        return ["lint", "test", "build"], "Compiled-language source or test files changed."
+
+    return ["lint", "test"], "Source-like files changed."
 
 
 def _python_commands(workspace: Path) -> list[VerificationCommand]:
