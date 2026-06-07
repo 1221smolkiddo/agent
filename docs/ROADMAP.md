@@ -4,13 +4,13 @@ This is the build map for turning Agent47 from a promising CLI agent into an ind
 
 ## Current Position
 
-Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRouter/OpenAI-compatible model access, typed tool actions, local file/search/shell/web tools, structured patch application, verification command detection/suggestion/outcome summaries, permission prompts, dry-run mode, local sandbox copies, SQLite run history, operation status labels, cleaner bordered terminal panels, failure recovery, optional tree-sitter summaries, and an Agent47 engineering protocol in the system prompt.
+Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRouter/OpenAI-compatible model access, typed tool actions, non-workspace intent routing, local file/search/shell/web tools, structured patch application, verification command detection/suggestion/outcome summaries, permission prompts, dry-run mode, local sandbox copies, SQLite run history, operation status labels, cleaner bordered terminal panels, failure recovery, optional tree-sitter summaries, and an Agent47 engineering protocol in the system prompt.
 
 ## Industry-Standard Capability Checklist
 
 | Capability area | Current state | What is left |
 | --- | --- | --- |
-| Agent loop | Basic typed action loop with failure recovery | Add durable plans, step status, task decomposition, cancellation, pause/resume, and bounded long-running work |
+| Agent loop | Basic typed action loop with failure recovery and non-workspace routing | Add durable plans, step status, task decomposition, cancellation, pause/resume, and bounded long-running work |
 | Code editing | Full-file writes, exact text replacement, and approved `git apply` patches | Add multi-file change set metadata, conflict handling, rollback support, and formatting hooks |
 | Repository intelligence | File listing, ripgrep search, optional code summaries | Add repo index, symbol graph, dependency graph, ownership hints, changed-file awareness, and context ranking |
 | Verification | Agent can detect likely verification commands, suggest focused checks from changed paths, run shell commands after approval, and summarize verification outcomes | Add automatic verification execution and retry policy |

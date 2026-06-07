@@ -8,7 +8,7 @@ This document tracks how far the coding agent has come and what collaborators ca
 
 **Approximate progress toward an industry-standard local AI coding agent:** 24%
 
-The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, structured patch application, verification command detection/suggestion/outcome summaries, clearer interactive terminal panels, run history, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
+The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, non-workspace intent routing, structured patch application, verification command detection/suggestion/outcome summaries, clearer interactive terminal panels, run history, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
 
 This file should be updated whenever a meaningful Agent47 capability is added. Keep the enabled commands/actions current, move completed items out of "What Is Left" when they land, and update the percentage only when the agent gains real product capability rather than documentation alone.
 
@@ -87,6 +87,7 @@ There are currently **12 model-requestable actions**:
 | Local workspace sandbox | Enabled |
 | Tool failure recovery loop | Enabled |
 | Agent47 engineering protocol | Enabled |
+| Non-workspace question routing | Enabled |
 | Verification command detection | Enabled |
 | Verification command suggestion | Enabled |
 | Verification outcome summaries | Enabled |
@@ -131,6 +132,7 @@ These are the remaining capability areas needed for Agent47 to feel like a fully
 ## Current Safety Notes
 
 - Paths are guarded so tools cannot access files outside the workspace.
+- Workspace tools are blocked for prompts that do not appear to be about the local project, local files, code changes, tests, or commands.
 - Sandbox mode copies the workspace into `.code-agent/sandboxes/` and excludes secrets/local state.
 - `.env`, `.venv`, caches, and local agent databases are ignored by git.
 - Read/list/project-search/code-summary actions now ask for user approval.

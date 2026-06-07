@@ -72,7 +72,7 @@ def test_agent_retries_after_invalid_model_action(tmp_path: Path) -> None:
     tools = RecoveringTools()
     agent = make_agent(tmp_path, model, tools)
 
-    result = agent.run("recover from invalid json")
+    result = agent.run("recover from invalid json while inspecting this project")
 
     assert result == "done"
     assert tools.calls == 1
@@ -163,3 +163,36 @@ def test_agent_appends_verification_outcomes_to_final_answer(tmp_path: Path) -> 
     tool_payload = model.messages_seen[1][-1]["content"]
     assert '"verification_result"' in tool_payload
     assert '"purpose": "test"' in tool_payload
+
+
+def test_agent_blocks_workspace_tools_for_non_workspace_question(tmp_path: Path) -> None:
+    model = FakeModel(
+        [
+            '{"type":"list_files","path":"."}',
+            '{"type":"final","message":"It is in the China Standard Time zone."}',
+        ]
+    )
+    tools = RecoveringTools()
+    agent = make_agent(tmp_path, model, tools)
+
+    result = agent.run("what time is it in Chongqing?")
+
+    assert result == "It is in the China Standard Time zone."
+    assert tools.calls == 0
+    assert "non_workspace_tool_blocked" in model.messages_seen[1][-1]["content"]
+
+
+def test_agent_allows_workspace_tools_for_project_question(tmp_path: Path) -> None:
+    model = FakeModel(
+        [
+            '{"type":"list_files","path":"."}',
+            '{"type":"final","message":"checked the project"}',
+        ]
+    )
+    tools = RecoveringTools()
+    agent = make_agent(tmp_path, model, tools)
+
+    result = agent.run("inspect this project")
+
+    assert result == "checked the project"
+    assert tools.calls == 1

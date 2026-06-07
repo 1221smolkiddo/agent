@@ -8,6 +8,8 @@ def test_system_prompt_names_agent47_engineering_protocol() -> None:
 
     assert "You are Agent47" in prompt
     assert "Operating protocol:" in prompt
+    assert "general chat, current external info, general coding help, or workspace coding work" in prompt
+    assert "Only use workspace tools when the user asks about this project" in prompt
     assert "build a short internal plan" in prompt
     assert "Prefer apply_patch for code edits" in prompt
     assert '{ "type": "apply_patch"' in prompt
@@ -17,6 +19,7 @@ def test_system_prompt_names_agent47_engineering_protocol() -> None:
     assert "Use suggest_verification with changed paths" in prompt
     assert '{ "type": "suggest_verification"' in prompt
     assert "Final answers must state what changed, what was verified" in prompt
+    assert "For non-workspace questions, answer directly or use web_search" in prompt
 
 
 def test_system_prompt_dry_run_blocks_mutations_and_shell() -> None:

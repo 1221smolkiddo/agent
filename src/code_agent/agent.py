@@ -39,6 +39,7 @@ class CodingAgent:
 
     def run(self, task: str) -> str:
         run_id = self.storage.create_run(task=task, model=self.model_client.model, cwd=self.cwd)
+        workspace_task = self._is_workspace_task(task)
         consecutive_failures = 0
         previous_tool_failed = False
         previous_failure_allows_final = False
@@ -74,6 +75,29 @@ class CodingAgent:
                 continue
 
             self.storage.add_step(run_id, "assistant", action.model_dump())
+
+            if not workspace_task and self._is_workspace_action(action):
+                consecutive_failures += 1
+                payload = self._failure_payload(
+                    step=step,
+                    kind="non_workspace_tool_blocked",
+                    output=(
+                        "This user request does not appear to be about the local workspace. "
+                        "Do not inspect or modify project files. Answer directly with final, or use web_search "
+                        "only if current external information is needed."
+                    ),
+                    consecutive_failures=consecutive_failures,
+                )
+                self.storage.add_step(run_id, "tool", payload)
+                self._report_recovery("blocked workspace tool for non-workspace request")
+                if consecutive_failures >= self.max_failures:
+                    return self._failure_summary(consecutive_failures, payload["output"])
+                messages.append({"role": "assistant", "content": action.model_dump_json()})
+                messages.append({"role": "user", "content": json.dumps(payload)})
+                previous_tool_failed = True
+                previous_failure_allows_final = True
+                blocked_mutation_failure = False
+                continue
 
             if isinstance(action, FinalAction):
                 if blocked_mutation_failure and self._final_claims_mutation_success(action.message):
@@ -224,6 +248,61 @@ class CodingAgent:
     @staticmethod
     def _can_finalize_after_failure(result: ToolResult) -> bool:
         return "Permission denied" in result.output or "Dry-run mode skipped" in result.output
+
+    @staticmethod
+    def _is_workspace_task(task: str) -> bool:
+        lowered = task.lower()
+        workspace_terms = [
+            "agent47",
+            "repo",
+            "repository",
+            "project",
+            "workspace",
+            "codebase",
+            "file",
+            "read",
+            "inspect",
+            "search",
+            "find",
+            "folder",
+            "directory",
+            "readme",
+            "docs",
+            "test",
+            "tests",
+            "lint",
+            "build",
+            "fix",
+            "bug",
+            "implement",
+            "add",
+            "update",
+            "edit",
+            "change",
+            "refactor",
+            "commit",
+            "diff",
+            "patch",
+            "run",
+            "terminal",
+            "cli",
+        ]
+        return any(term in lowered for term in workspace_terms)
+
+    @staticmethod
+    def _is_workspace_action(action: AgentAction) -> bool:
+        return action.type in {
+            "list_files",
+            "read_file",
+            "write_file",
+            "edit_file",
+            "apply_patch",
+            "run_shell",
+            "search",
+            "summarize_code",
+            "detect_verification",
+            "suggest_verification",
+        }
 
     @staticmethod
     def _is_blocked_mutation(action: AgentAction, result: ToolResult) -> bool:

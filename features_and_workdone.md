@@ -9,6 +9,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - One-shot command mode with `code-agent run`.
 - OpenRouter-compatible model access.
 - Default model set to `qwen/qwen3-coder`.
+- Non-workspace question routing so general questions can be answered without inspecting project files.
 - Local `.env` configuration with secrets excluded from git.
 - User approval prompts for file listing, reading, project search, code summary, verification detection/suggestion, file writes, file edits, patch application, shell commands, and web search.
 - Dry-run mode for inspect-only sessions.
@@ -27,6 +28,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - Optional tree-sitter code summaries.
 - SQLite run history.
 - Automatic recovery loop when a tool fails.
+- Workspace tools are blocked for prompts that do not appear to be about the local project, files, code changes, tests, or commands.
 - Mutation tool results include changed paths and a verification hint for the next model step.
 - Bordered terminal panels distinguish user prompts, Agent47 responses, help, status, and history.
 - Guard against false completion after blocked writes, edits, or patch applications.
@@ -96,6 +98,7 @@ Inside `agent47`:
 - Verification outcome summaries.
 - Clean terminal panel formatting.
 - Project search fallback when `ripgrep` is unavailable.
+- Non-workspace routing guard.
 - Operation status label formatting.
 - Casual greeting handling.
 

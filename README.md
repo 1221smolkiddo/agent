@@ -6,6 +6,8 @@ The long-term goal is Agent47: a real AI engineering assistant that is repo-awar
 
 Agent47 now uses an engineering protocol in its system prompt: classify the request, plan internally, inspect relevant files, make focused edits, verify changes when practical, recover from failures, and report honestly about what changed and what was checked.
 
+Agent47 is not limited to the current folder. It can answer general questions directly, use web search for current external information when needed, and only inspect project files when the request is actually about the local workspace.
+
 ## Industry-Standard Target
 
 Agent47 is being built toward the baseline expected from a serious AI coding agent:
