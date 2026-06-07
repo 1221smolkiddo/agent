@@ -117,6 +117,8 @@ The agent asks for confirmation before:
 
 All file access remains workspace-guarded.
 
+Project search uses `ripgrep` when available and falls back to a built-in Python search when `ripgrep` is missing from the agent process PATH. Search skips local state and secret files such as `.env`, `.git`, `.code-agent`, caches, and virtual environments.
+
 ## Failure Recovery
 
 The agent automatically loops after failed tool calls. It feeds the failure back to the model with recovery instructions so the model can inspect, retry, or choose another action.

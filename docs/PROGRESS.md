@@ -63,7 +63,7 @@ There are currently **11 model-requestable actions**:
 | `edit_file` | Replace exact text in a file. |
 | `apply_patch` | Apply a unified diff patch inside the workspace after approval. |
 | `run_shell` | Run a shell command in the workspace. |
-| `search` | Search with ripgrep. |
+| `search` | Search the project with ripgrep, falling back to a built-in Python search when ripgrep is unavailable. |
 | `web_search` | Search the web after user approval. |
 | `summarize_code` | Summarize a source file with tree-sitter when parsing deps are installed. |
 | `detect_verification` | Detect likely test, lint, typecheck, and build commands from project files. |
@@ -81,7 +81,7 @@ There are currently **11 model-requestable actions**:
 | Diffs: difflib | Enabled |
 | Structured patch application: git apply | Enabled |
 | Shell execution: subprocess | Enabled |
-| Project search: ripgrep | Enabled |
+| Project search: ripgrep plus Python fallback | Enabled |
 | Web search | Enabled with user approval |
 | Local workspace sandbox | Enabled |
 | Tool failure recovery loop | Enabled |
@@ -130,6 +130,7 @@ These are the remaining capability areas needed for Agent47 to feel like a fully
 - Sandbox mode copies the workspace into `.code-agent/sandboxes/` and excludes secrets/local state.
 - `.env`, `.venv`, caches, and local agent databases are ignored by git.
 - Read/list/project-search/code-summary actions now ask for user approval.
+- Project search skips local state and secret files such as `.env`, `.git`, `.code-agent`, caches, and virtual environments.
 - `--dry-run` skips writes and shell commands.
 - Human approval prompts are implemented for write/edit/apply-patch/shell/web-search actions.
 - `apply_patch` validates target paths, previews the full patch for approval, checks patch applicability, and applies it with `git apply`.

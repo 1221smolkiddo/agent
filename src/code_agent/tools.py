@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import difflib
 import html.parser
+import re
 import subprocess
 import urllib.parse
 import urllib.request
@@ -24,6 +25,19 @@ from .schema import (
 )
 from .parsing import summarize_code_file
 from .verification import detect_verification_commands
+
+IGNORED_NAMES = {
+    ".code-agent",
+    ".env",
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "__pycache__",
+    "dist",
+    "node_modules",
+}
 
 
 class ToolRegistry:
@@ -72,18 +86,7 @@ class ToolRegistry:
         target = self.resolve_inside_workspace(requested_path)
         entries = []
         for entry in sorted(target.iterdir(), key=lambda item: item.name.lower()):
-            if entry.name in {
-                ".code-agent",
-                ".env",
-                ".git",
-                ".mypy_cache",
-                ".pytest_cache",
-                ".ruff_cache",
-                ".venv",
-                "__pycache__",
-                "dist",
-                "node_modules",
-            }:
+            if entry.name in IGNORED_NAMES:
                 continue
             prefix = "dir " if entry.is_dir() else "file"
             entries.append(f"{prefix} {entry.name}")
@@ -185,14 +188,24 @@ class ToolRegistry:
         if not self._approve("search", f"Search {requested_path or '.'} for {query}"):
             return ToolResult(ok=False, output="Permission denied for search.")
         target = self.resolve_inside_workspace(requested_path)
-        completed = subprocess.run(
-            ["rg", "--line-number", "--hidden", "--glob", "!.git", query, str(target)],
-            cwd=self.workspace,
-            text=True,
-            capture_output=True,
-            timeout=60,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                [
+                    "rg",
+                    "--line-number",
+                    "--hidden",
+                    *[item for name in IGNORED_NAMES for item in ["--glob", f"!{name}"]],
+                    query,
+                    str(target),
+                ],
+                cwd=self.workspace,
+                text=True,
+                capture_output=True,
+                timeout=60,
+                check=False,
+            )
+        except FileNotFoundError:
+            return ToolResult(ok=True, output=self._python_search(query, target))
         if completed.returncode not in {0, 1}:
             return ToolResult(ok=False, output=completed.stderr.strip())
         return ToolResult(ok=True, output=completed.stdout.strip() or "<no matches>")
@@ -237,6 +250,34 @@ class ToolRegistry:
         if self.approval_callback is None:
             return False
         return self.approval_callback(action, detail)
+
+    def _python_search(self, query: str, target: Path) -> str:
+        try:
+            pattern = re.compile(query)
+        except re.error:
+            pattern = re.compile(re.escape(query))
+
+        files = [target] if target.is_file() else sorted(target.rglob("*"))
+        matches: list[str] = []
+        for path in files:
+            if self._is_ignored_path(path) or not path.is_file():
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            relative = path.relative_to(self.workspace)
+            for line_number, line in enumerate(text.splitlines(), start=1):
+                if pattern.search(line):
+                    matches.append(f"{relative}:{line_number}:{line}")
+        return "\n".join(matches) or "<no matches>"
+
+    def _is_ignored_path(self, path: Path) -> bool:
+        try:
+            relative = path.relative_to(self.workspace)
+        except ValueError:
+            return True
+        return any(part in IGNORED_NAMES for part in relative.parts)
 
     @staticmethod
     def _diff(path: str, before: str, after: str) -> str:
