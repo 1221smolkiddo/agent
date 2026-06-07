@@ -5,6 +5,7 @@ import typer
 from .schema import (
     AgentAction,
     ApplyPatchAction,
+    DetectVerificationAction,
     EditFileAction,
     ListFilesAction,
     ReadFileAction,
@@ -47,6 +48,8 @@ def format_action_status(action: AgentAction) -> str:
         return f"SEARCHING WEB for {action.query}"
     if isinstance(action, SummarizeCodeAction):
         return f"ANALYZING code structure in {action.path}"
+    if isinstance(action, DetectVerificationAction):
+        return "CHECKING project verification commands"
     if isinstance(action, RunShellAction):
         return format_shell_status(action.command)
     return f"WORKING {action.type}"

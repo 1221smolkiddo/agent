@@ -59,6 +59,10 @@ class SummarizeCodeAction(BaseModel):
     path: str
 
 
+class DetectVerificationAction(BaseModel):
+    type: Literal["detect_verification"]
+
+
 AgentAction = Union[
     FinalAction,
     ListFilesAction,
@@ -70,6 +74,7 @@ AgentAction = Union[
     SearchAction,
     WebSearchAction,
     SummarizeCodeAction,
+    DetectVerificationAction,
 ]
 
 

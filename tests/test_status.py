@@ -1,5 +1,6 @@
 from code_agent.schema import (
     ApplyPatchAction,
+    DetectVerificationAction,
     EditFileAction,
     RunShellAction,
     SearchAction,
@@ -33,6 +34,12 @@ def test_format_action_status_for_web_search() -> None:
     status = format_action_status(WebSearchAction(type="web_search", query="OpenRouter docs"))
 
     assert status == "SEARCHING WEB for OpenRouter docs"
+
+
+def test_format_action_status_for_detect_verification() -> None:
+    status = format_action_status(DetectVerificationAction(type="detect_verification"))
+
+    assert status == "CHECKING project verification commands"
 
 
 def test_format_shell_status_for_install() -> None:

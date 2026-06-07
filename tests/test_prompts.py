@@ -12,6 +12,8 @@ def test_system_prompt_names_agent47_engineering_protocol() -> None:
     assert "Prefer apply_patch for code edits" in prompt
     assert '{ "type": "apply_patch"' in prompt
     assert "run the most focused useful verification command" in prompt
+    assert "Use detect_verification" in prompt
+    assert '{ "type": "detect_verification" }' in prompt
     assert "Final answers must state what changed, what was verified" in prompt
 
 

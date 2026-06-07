@@ -108,6 +108,7 @@ The agent asks for confirmation before:
 - reading files
 - searching the project
 - summarizing code structure
+- detecting verification commands
 - writing files
 - editing files
 - applying structured patches
@@ -134,6 +135,7 @@ The CLI prints status lines while the agent works:
 - `READING` when listing or reading files.
 - `SEARCHING` for project search.
 - `SEARCHING WEB` for web search.
+- `CHECKING project verification commands` when detecting test/lint/build commands.
 - `EDITING` for file writes and edits.
 - `EDITING applying patch` for structured patch edits.
 - `INSTALLING`, `BUILDING`, `TESTING`, or `CHECKING` for recognized shell commands.

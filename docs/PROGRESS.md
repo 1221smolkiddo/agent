@@ -6,9 +6,9 @@ This document tracks how far the coding agent has come and what collaborators ca
 
 **Stage:** Basic single-model CLI agent with Agent47 engineering protocol
 
-**Approximate progress toward an industry-standard local AI coding agent:** 18%
+**Approximate progress toward an industry-standard local AI coding agent:** 20%
 
-The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, structured patch application, run history, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
+The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, structured patch application, verification command detection, run history, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
 
 This file should be updated whenever a meaningful Agent47 capability is added. Keep the enabled commands/actions current, move completed items out of "What Is Left" when they land, and update the percentage only when the agent gains real product capability rather than documentation alone.
 
@@ -52,7 +52,7 @@ Inside `agent47`, there are currently **12 slash commands**:
 
 ## Enabled Agent Actions
 
-There are currently **10 model-requestable actions**:
+There are currently **11 model-requestable actions**:
 
 | Action | Purpose |
 | --- | --- |
@@ -66,6 +66,7 @@ There are currently **10 model-requestable actions**:
 | `search` | Search with ripgrep. |
 | `web_search` | Search the web after user approval. |
 | `summarize_code` | Summarize a source file with tree-sitter when parsing deps are installed. |
+| `detect_verification` | Detect likely test, lint, typecheck, and build commands from project files. |
 
 ## Installed / Supported Stack
 
@@ -85,6 +86,7 @@ There are currently **10 model-requestable actions**:
 | Local workspace sandbox | Enabled |
 | Tool failure recovery loop | Enabled |
 | Agent47 engineering protocol | Enabled |
+| Verification command detection | Enabled |
 | Operation status labels | Enabled |
 | Stop shortcut: `Ctrl+C` and `/stop` | Enabled |
 | Code parsing: tree-sitter | Enabled as optional parsing extra |
@@ -101,7 +103,7 @@ These are the remaining capability areas needed for Agent47 to feel like a fully
 | Priority | Capability | Why it matters | Status |
 | --- | --- | --- | --- |
 | 1 | Structured patch editing | Gives safe, reviewable multi-file code changes instead of brittle full-file rewrites | Partial |
-| 2 | Verification loop | Lets Agent47 detect and run the right tests, lint, typecheck, and builds after edits | Not started |
+| 2 | Verification loop | Lets Agent47 detect and run the right tests, lint, typecheck, and builds after edits | Partial |
 | 3 | Repo intelligence | Helps the agent choose relevant context using symbols, dependencies, git diff, and architecture summaries | Partial |
 | 4 | Safer shell policy | Separates read-only, test/build, install/network, and destructive commands with stronger approvals | Partial |
 | 5 | Durable sessions | Enables pause/resume, plan state, checkpoints, and long task recovery | Partial |
@@ -115,13 +117,12 @@ These are the remaining capability areas needed for Agent47 to feel like a fully
 
 ## Next Recommended Build Order
 
-1. Finish structured patch editing with multi-file change sets, patch history metadata, and better conflict recovery.
-2. Add automatic verification command detection.
-3. Add git diff awareness so Agent47 respects existing user changes.
-4. Add resumable sessions with run IDs and plan state.
-5. Add streaming output in CLI and `agent47`.
-6. Add model profiles and provider abstraction.
-7. Add a JSON protocol for future VS Code integration.
+1. Finish the verification loop so Agent47 chooses and runs focused checks after edits.
+2. Add git diff awareness so Agent47 respects existing user changes.
+3. Add resumable sessions with run IDs and plan state.
+4. Add streaming output in CLI and `agent47`.
+5. Add model profiles and provider abstraction.
+6. Add a JSON protocol for future VS Code integration.
 
 ## Current Safety Notes
 
@@ -132,6 +133,7 @@ These are the remaining capability areas needed for Agent47 to feel like a fully
 - `--dry-run` skips writes and shell commands.
 - Human approval prompts are implemented for write/edit/apply-patch/shell/web-search actions.
 - `apply_patch` validates target paths, previews the full patch for approval, checks patch applicability, and applies it with `git apply`.
+- `detect_verification` scans known project files for likely test, lint, typecheck, and build commands.
 - Failed tool calls are automatically fed back to the model for recovery until the failure budget is exhausted.
 - Multi-file change set metadata and richer patch conflict recovery are not implemented yet.
 

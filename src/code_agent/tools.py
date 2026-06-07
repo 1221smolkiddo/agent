@@ -11,6 +11,7 @@ from pathlib import Path
 from .schema import (
     AgentAction,
     ApplyPatchAction,
+    DetectVerificationAction,
     EditFileAction,
     ListFilesAction,
     ReadFileAction,
@@ -22,6 +23,7 @@ from .schema import (
     WriteFileAction,
 )
 from .parsing import summarize_code_file
+from .verification import detect_verification_commands
 
 
 class ToolRegistry:
@@ -54,6 +56,8 @@ class ToolRegistry:
             return self._web_search(action.query)
         if isinstance(action, SummarizeCodeAction):
             return self._summarize_code(action.path)
+        if isinstance(action, DetectVerificationAction):
+            return self._detect_verification()
         return ToolResult(ok=False, output=f"Unsupported action: {action.type}")
 
     def resolve_inside_workspace(self, requested_path: str | None = None) -> Path:
@@ -198,6 +202,14 @@ class ToolRegistry:
             return ToolResult(ok=False, output="Permission denied for summarize_code.")
         target = self.resolve_inside_workspace(requested_path)
         return ToolResult(ok=True, output=summarize_code_file(target))
+
+    def _detect_verification(self) -> ToolResult:
+        if not self._approve(
+            "detect_verification",
+            "Detect test, lint, typecheck, and build commands from project configuration.",
+        ):
+            return ToolResult(ok=False, output="Permission denied for detect_verification.")
+        return ToolResult(ok=True, output=detect_verification_commands(self.workspace))
 
     def _web_search(self, query: str) -> ToolResult:
         if not self._approve("web_search", query):
