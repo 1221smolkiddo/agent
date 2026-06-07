@@ -4,7 +4,7 @@ This is the build map for turning Agent47 from a promising CLI agent into an ind
 
 ## Current Position
 
-Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRouter/OpenAI-compatible model access, typed tool actions, non-workspace intent routing, local file/search/shell/web tools, structured patch application, verification command detection/suggestion/outcome summaries, permission prompts, dry-run mode, local sandbox copies, SQLite run history, operation status labels, cleaner bordered terminal panels, failure recovery, optional tree-sitter summaries, and an Agent47 engineering protocol in the system prompt.
+Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRouter/OpenAI-compatible model access, typed tool actions, non-workspace intent routing, local city-time answers, local file/search/shell/web tools, structured patch application, verification command detection/suggestion/outcome summaries, permission prompts, dry-run mode, local sandbox copies, SQLite run history, operation status labels, cleaner bordered terminal panels with short transcript context, failure recovery, optional tree-sitter summaries, and an Agent47 engineering protocol in the system prompt.
 
 ## Industry-Standard Capability Checklist
 
@@ -18,7 +18,7 @@ Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRou
 | Model layer | Single OpenAI-compatible chat client | Add provider abstraction, model profiles, planner/coder/reviewer routing, fallback models, token/cost tracking, and streaming |
 | Memory and sessions | SQLite run history | Add resumable sessions, conversation checkpoints, per-repo memory, decision logs, and context compaction |
 | Collaboration | Basic docs and GitHub setup | Add branch/commit/PR workflow, review mode, issue ingestion, changelog generation, and release notes |
-| Developer UX | CLI, `agent47` interactive mode, status labels, bordered panels for prompts and responses | Add richer TUI streaming, approval diff views, command output panes, transcript export, and VS Code integration |
+| Developer UX | CLI, `agent47` interactive mode, status labels, bordered panels for prompts and responses, short transcript context for follow-ups | Add richer TUI streaming, approval diff views, command output panes, transcript export, and VS Code integration |
 | Observability | Stored steps and simple status | Add structured traces, tool timing, model usage metrics, failure analytics, and debug bundles |
 | Evaluation | Unit tests for core behavior | Add agent task benchmarks, golden transcript tests, sandboxed fixture repos, regression scenarios, and quality gates |
 | Packaging | Python package with uv workflow | Add signed releases, config profiles, install docs for common platforms, and upgrade/migration notes |

@@ -15,6 +15,7 @@ from .schema import (
     DetectVerificationAction,
     EditFileAction,
     ListFilesAction,
+    LocalTimeAction,
     ReadFileAction,
     RunShellAction,
     SearchAction,
@@ -25,6 +26,7 @@ from .schema import (
     WriteFileAction,
 )
 from .parsing import summarize_code_file
+from .time_tools import local_time_for
 from .verification import detect_verification_commands, suggest_verification_commands
 
 IGNORED_NAMES = {
@@ -69,6 +71,8 @@ class ToolRegistry:
             return self._search(action.query, action.path)
         if isinstance(action, WebSearchAction):
             return self._web_search(action.query)
+        if isinstance(action, LocalTimeAction):
+            return self._local_time(action.location)
         if isinstance(action, SummarizeCodeAction):
             return self._summarize_code(action.path)
         if isinstance(action, DetectVerificationAction):
@@ -256,6 +260,9 @@ class ToolRegistry:
             ok=True,
             output="\n".join(f"{index + 1}. {title}\n{href}" for index, (title, href) in enumerate(results)),
         )
+
+    def _local_time(self, location: str) -> ToolResult:
+        return ToolResult(ok=True, output=local_time_for(location))
 
     def _approve(self, action: str, detail: str) -> bool:
         if self.approval_callback is None:

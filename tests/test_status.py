@@ -2,13 +2,14 @@ from code_agent.schema import (
     ApplyPatchAction,
     DetectVerificationAction,
     EditFileAction,
+    LocalTimeAction,
     RunShellAction,
     SearchAction,
     SuggestVerificationAction,
     WebSearchAction,
 )
 from code_agent.status import format_action_status, format_shell_status
-from code_agent.interactive import is_casual_greeting
+from code_agent.interactive import is_casual_greeting, should_include_transcript, task_with_transcript
 
 
 def test_format_action_status_for_editing() -> None:
@@ -35,6 +36,12 @@ def test_format_action_status_for_web_search() -> None:
     status = format_action_status(WebSearchAction(type="web_search", query="OpenRouter docs"))
 
     assert status == "SEARCHING WEB for OpenRouter docs"
+
+
+def test_format_action_status_for_local_time() -> None:
+    status = format_action_status(LocalTimeAction(type="local_time", location="Kyoto"))
+
+    assert status == "CHECKING local time for Kyoto"
 
 
 def test_format_action_status_for_detect_verification() -> None:
@@ -73,3 +80,20 @@ def test_is_casual_greeting() -> None:
     assert is_casual_greeting("hey")
     assert is_casual_greeting(" Hello ")
     assert not is_casual_greeting("hey inspect this project")
+
+
+def test_should_include_transcript_for_summary_request() -> None:
+    assert should_include_transcript("summarise your responses into 2 lines")
+    assert should_include_transcript("recap our conversation")
+    assert not should_include_transcript("inspect this project")
+
+
+def test_task_with_transcript_includes_recent_turns() -> None:
+    task = task_with_transcript(
+        "summarize your responses",
+        [("hi", "hello"), ("what time", "Kyoto: 10 PM")],
+    )
+
+    assert "Recent interactive transcript for reference:" in task
+    assert "Turn 1 user: hi" in task
+    assert "Turn 2 Agent47: Kyoto: 10 PM" in task

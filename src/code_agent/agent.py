@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +56,10 @@ class CodingAgent:
             response = self.model_client.complete(messages)
             action, parse_error = self._parse_action(response)
             if parse_error:
+                if not workspace_task and self._can_use_raw_final(response):
+                    self.storage.add_step(run_id, "assistant", {"raw": response})
+                    self._report_done()
+                    return response.strip()
                 consecutive_failures += 1
                 payload = self._failure_payload(
                     step=step,
@@ -70,7 +75,7 @@ class CodingAgent:
                 messages.append({"role": "assistant", "content": response})
                 messages.append({"role": "user", "content": json.dumps(payload)})
                 previous_tool_failed = True
-                previous_failure_allows_final = False
+                previous_failure_allows_final = not workspace_task
                 blocked_mutation_failure = False
                 continue
 
@@ -250,10 +255,14 @@ class CodingAgent:
         return "Permission denied" in result.output or "Dry-run mode skipped" in result.output
 
     @staticmethod
+    def _can_use_raw_final(response: str) -> bool:
+        stripped = response.strip()
+        return bool(stripped) and "{" not in stripped and "}" not in stripped
+
+    @staticmethod
     def _is_workspace_task(task: str) -> bool:
         lowered = task.lower()
         workspace_terms = [
-            "agent47",
             "repo",
             "repository",
             "project",
@@ -287,7 +296,13 @@ class CodingAgent:
             "terminal",
             "cli",
         ]
-        return any(term in lowered for term in workspace_terms)
+        return any(CodingAgent._contains_workspace_term(lowered, term) for term in workspace_terms)
+
+    @staticmethod
+    def _contains_workspace_term(text: str, term: str) -> bool:
+        if " " in term:
+            return term in text
+        return re.search(rf"\b{re.escape(term)}\b", text) is not None
 
     @staticmethod
     def _is_workspace_action(action: AgentAction) -> bool:

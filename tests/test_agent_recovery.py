@@ -196,3 +196,19 @@ def test_agent_allows_workspace_tools_for_project_question(tmp_path: Path) -> No
 
     assert result == "checked the project"
     assert tools.calls == 1
+
+
+def test_agent_accepts_plain_text_answer_for_non_workspace_question(tmp_path: Path) -> None:
+    model = FakeModel(["It is 10:30 PM in Kyoto."])
+    tools = RecoveringTools()
+    agent = make_agent(tmp_path, model, tools)
+
+    result = agent.run("what time is it in Kyoto?")
+
+    assert result == "It is 10:30 PM in Kyoto."
+    assert tools.calls == 0
+
+
+def test_workspace_classifier_does_not_match_run_inside_turn() -> None:
+    assert not CodingAgent._is_workspace_task("summarize this conversation\nTurn 1 Agent47: hi")
+    assert CodingAgent._is_workspace_task("run the tests")

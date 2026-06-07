@@ -22,6 +22,7 @@ def main() -> None:
     sandbox_enabled = False
     max_steps = 12
     max_failures: int | None = None
+    transcript: list[tuple[str, str]] = []
 
     print_panel(
         "Agent47",
@@ -84,8 +85,11 @@ def main() -> None:
         )
         try:
             print_panel("You", user_input)
-            result = agent.run(user_input)
+            task = task_with_transcript(user_input, transcript)
+            result = agent.run(task)
             print_panel("Agent47", result)
+            transcript.append((user_input, result))
+            transcript = transcript[-8:]
         except KeyboardInterrupt:
             print_panel("System", "STOPPED by user")
             return
@@ -232,3 +236,37 @@ def print_history(settings: Settings) -> None:
 def is_casual_greeting(user_input: str) -> bool:
     normalized = user_input.strip().lower()
     return normalized in {"hey", "hi", "hello", "yo", "sup", "hiya"}
+
+
+def task_with_transcript(user_input: str, transcript: list[tuple[str, str]]) -> str:
+    if not transcript or not should_include_transcript(user_input):
+        return user_input
+
+    lines = [
+        user_input,
+        "",
+        "Recent interactive transcript for reference:",
+    ]
+    for index, (user, assistant) in enumerate(transcript[-6:], start=1):
+        lines.append(f"Turn {index} user: {user}")
+        lines.append(f"Turn {index} Agent47: {assistant}")
+    return "\n".join(lines)
+
+
+def should_include_transcript(user_input: str) -> bool:
+    normalized = user_input.lower()
+    return any(
+        phrase in normalized
+        for phrase in [
+            "summarise your response",
+            "summarize your response",
+            "summarise your responses",
+            "summarize your responses",
+            "what did you say",
+            "previous response",
+            "previous responses",
+            "our conversation",
+            "this conversation",
+            "recap",
+        ]
+    )

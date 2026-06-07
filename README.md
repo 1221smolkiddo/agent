@@ -8,6 +8,8 @@ Agent47 now uses an engineering protocol in its system prompt: classify the requ
 
 Agent47 is not limited to the current folder. It can answer general questions directly, use web search for current external information when needed, and only inspect project files when the request is actually about the local workspace.
 
+For city time questions, Agent47 uses a local time action instead of web search, so common questions like Kyoto, Wuhan, or Chongqing do not depend on search results.
+
 ## Industry-Standard Target
 
 Agent47 is being built toward the baseline expected from a serious AI coding agent:
@@ -76,6 +78,7 @@ agent47
 ```
 
 Interactive mode separates prompts, responses, help, status, and history into bordered terminal panels so user input and Agent47 output do not visually merge.
+It also keeps a short in-memory transcript so follow-up requests like "summarize your responses" can refer to recent Agent47 replies.
 
 Inside interactive mode, type freely:
 
@@ -141,6 +144,7 @@ The CLI prints status lines while the agent works:
 - `READING` when listing or reading files.
 - `SEARCHING` for project search.
 - `SEARCHING WEB` for web search.
+- `CHECKING local time` for city time questions.
 - `CHECKING project verification commands` when detecting test/lint/build commands.
 - `CHECKING suggested verification` when choosing focused checks for changed files.
 - `EDITING` for file writes and edits.

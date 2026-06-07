@@ -6,9 +6,9 @@ This document tracks how far the coding agent has come and what collaborators ca
 
 **Stage:** Basic single-model CLI agent with Agent47 engineering protocol
 
-**Approximate progress toward an industry-standard local AI coding agent:** 24%
+**Approximate progress toward an industry-standard local AI coding agent:** 25%
 
-The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, non-workspace intent routing, structured patch application, verification command detection/suggestion/outcome summaries, clearer interactive terminal panels, run history, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
+The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, non-workspace intent routing, local city-time answers, structured patch application, verification command detection/suggestion/outcome summaries, clearer interactive terminal panels with short transcript context, run history, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
 
 This file should be updated whenever a meaningful Agent47 capability is added. Keep the enabled commands/actions current, move completed items out of "What Is Left" when they land, and update the percentage only when the agent gains real product capability rather than documentation alone.
 
@@ -52,7 +52,7 @@ Inside `agent47`, there are currently **12 slash commands**:
 
 ## Enabled Agent Actions
 
-There are currently **12 model-requestable actions**:
+There are currently **13 model-requestable actions**:
 
 | Action | Purpose |
 | --- | --- |
@@ -65,6 +65,7 @@ There are currently **12 model-requestable actions**:
 | `run_shell` | Run a shell command in the workspace. |
 | `search` | Search the project with ripgrep, falling back to a built-in Python search when ripgrep is unavailable. |
 | `web_search` | Search the web after user approval. |
+| `local_time` | Return local time for common cities and time-zone aliases without inspecting project files. |
 | `summarize_code` | Summarize a source file with tree-sitter when parsing deps are installed. |
 | `detect_verification` | Detect likely test, lint, typecheck, and build commands from project files. |
 | `suggest_verification` | Suggest focused verification commands from changed file paths. |
@@ -88,11 +89,13 @@ There are currently **12 model-requestable actions**:
 | Tool failure recovery loop | Enabled |
 | Agent47 engineering protocol | Enabled |
 | Non-workspace question routing | Enabled |
+| Local city-time action | Enabled |
 | Verification command detection | Enabled |
 | Verification command suggestion | Enabled |
 | Verification outcome summaries | Enabled |
 | Operation status labels | Enabled |
 | Bordered interactive terminal panels | Enabled |
+| Short interactive transcript context | Enabled |
 | Stop shortcut: `Ctrl+C` and `/stop` | Enabled |
 | Code parsing: tree-sitter | Enabled as optional parsing extra |
 | Storage: SQLite | Enabled |

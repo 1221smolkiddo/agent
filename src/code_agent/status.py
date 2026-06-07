@@ -6,6 +6,7 @@ from .schema import (
     DetectVerificationAction,
     EditFileAction,
     ListFilesAction,
+    LocalTimeAction,
     ReadFileAction,
     RunShellAction,
     SearchAction,
@@ -48,6 +49,8 @@ def format_action_status(action: AgentAction) -> str:
         return f"SEARCHING project for {action.query}"
     if isinstance(action, WebSearchAction):
         return f"SEARCHING WEB for {action.query}"
+    if isinstance(action, LocalTimeAction):
+        return f"CHECKING local time for {action.location}"
     if isinstance(action, SummarizeCodeAction):
         return f"ANALYZING code structure in {action.path}"
     if isinstance(action, DetectVerificationAction):
