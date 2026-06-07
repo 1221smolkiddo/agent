@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import typer
-
 from .schema import (
     AgentAction,
     ApplyPatchAction,
@@ -16,20 +14,23 @@ from .schema import (
     WebSearchAction,
     WriteFileAction,
 )
+from .terminal_ui import print_status_line
 
 
 class StatusReporter:
     def thinking(self, step: int) -> None:
-        typer.echo(f"THINKING step {step}")
+        print_status_line("THINKING", f"step {step}")
 
     def action(self, action: AgentAction) -> None:
-        typer.echo(format_action_status(action))
+        status = format_action_status(action)
+        label, _, detail = status.partition(" ")
+        print_status_line(label, detail)
 
     def recovery(self, detail: str) -> None:
-        typer.echo(f"RECOVERING {detail}")
+        print_status_line("RECOVERING", detail)
 
     def done(self) -> None:
-        typer.echo("DONE")
+        print_status_line("DONE", "")
 
 
 def format_action_status(action: AgentAction) -> str:

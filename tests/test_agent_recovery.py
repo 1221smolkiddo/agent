@@ -141,3 +141,25 @@ def test_agent_adds_verification_hint_after_successful_mutation(tmp_path: Path) 
     tool_payload = model.messages_seen[1][-1]["content"]
     assert '"changed_paths": ["src/app.py"]' in tool_payload
     assert "Call suggest_verification" in tool_payload
+
+
+def test_agent_appends_verification_outcomes_to_final_answer(tmp_path: Path) -> None:
+    model = FakeModel(
+        [
+            '{"type":"run_shell","command":"uv run pytest"}',
+            '{"type":"final","message":"Implemented the change."}',
+        ]
+    )
+    tools = RecoveringTools()
+    agent = make_agent(tmp_path, model, tools)
+
+    result = agent.run("run tests")
+
+    assert result == (
+        "Implemented the change.\n"
+        "Verification outcomes:\n"
+        "- test `uv run pytest`: passed."
+    )
+    tool_payload = model.messages_seen[1][-1]["content"]
+    assert '"verification_result"' in tool_payload
+    assert '"purpose": "test"' in tool_payload

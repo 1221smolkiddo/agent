@@ -73,6 +73,8 @@ Interactive mode:
 agent47
 ```
 
+Interactive mode separates prompts, responses, help, status, and history into bordered terminal panels so user input and Agent47 output do not visually merge.
+
 Inside interactive mode, type freely:
 
 ```text

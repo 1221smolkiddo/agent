@@ -20,6 +20,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - Structured `apply_patch` action backed by `git apply`.
 - Verification command detection for Python, Node, Rust, and Go projects.
 - Focused verification command suggestions based on changed file paths.
+- Verification-like shell command outcomes are appended to final summaries.
 - Shell execution with operation labels for install, build, test, check, and generic shell commands.
 - Project search with `ripgrep` plus a built-in Python fallback when `ripgrep` is unavailable.
 - Web search action with user permission.
@@ -27,6 +28,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - SQLite run history.
 - Automatic recovery loop when a tool fails.
 - Mutation tool results include changed paths and a verification hint for the next model step.
+- Bordered terminal panels distinguish user prompts, Agent47 responses, help, status, and history.
 - Guard against false completion after blocked writes, edits, or patch applications.
 - Operation status labels such as `THINKING`, `READING`, `EDITING`, `SEARCHING`, `TESTING`, `BUILDING`, `RECOVERING`, and `DONE`.
 - Stop controls with `Ctrl+C`, `/stop`, and `/exit`.
@@ -91,6 +93,8 @@ Inside `agent47`:
 - Structured patch application and path validation.
 - Verification command detection.
 - Focused verification command suggestion.
+- Verification outcome summaries.
+- Clean terminal panel formatting.
 - Project search fallback when `ripgrep` is unavailable.
 - Operation status label formatting.
 - Casual greeting handling.
@@ -103,7 +107,7 @@ Inside `agent47`:
 - Streaming model output.
 - Better repo context selection.
 - Planner state with visible task steps.
-- Automatic verification execution and verification result summaries.
+- Automatic verification execution without relying on the model to choose every command.
 - Session resume.
 - Multi-provider and multi-model support.
 - VS Code extension frontend.

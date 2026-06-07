@@ -43,6 +43,7 @@ class CodingAgent:
         previous_tool_failed = False
         previous_failure_allows_final = False
         blocked_mutation_failure = False
+        verification_results: list[dict[str, str | bool]] = []
         messages: list[ChatMessage] = [
             {"role": "system", "content": system_prompt(self.cwd, self.dry_run)},
             {"role": "user", "content": task},
@@ -112,11 +113,14 @@ class CodingAgent:
                     messages.append({"role": "user", "content": json.dumps(payload)})
                     continue
                 self._report_done()
-                return action.message
+                return self._with_verification_summary(action.message, verification_results)
 
             self._report_action(action)
             result = self._run_tool(action)
             changed_paths = self._changed_paths_from_action(action) if result.ok else []
+            verification_result = self._verification_result_from_action(action, result)
+            if verification_result:
+                verification_results.append(verification_result)
             if result.ok:
                 consecutive_failures = 0
                 previous_tool_failed = False
@@ -144,6 +148,8 @@ class CodingAgent:
                     "Call suggest_verification with these changed_paths, then run the most focused "
                     "suggested command when verification is useful for the task."
                 )
+            if verification_result:
+                tool_payload["verification_result"] = verification_result
             self.storage.add_step(run_id, "tool", tool_payload)
             if consecutive_failures >= self.max_failures:
                 return self._failure_summary(consecutive_failures, result.output)
@@ -234,6 +240,50 @@ class CodingAgent:
             patch = getattr(action, "patch", "")
             return sorted(ToolRegistry._paths_from_patch(patch))
         return []
+
+    @staticmethod
+    def _verification_result_from_action(
+        action: AgentAction, result: ToolResult
+    ) -> dict[str, str | bool] | None:
+        if action.type != "run_shell":
+            return None
+        command = getattr(action, "command", "")
+        purpose = CodingAgent._verification_purpose(command)
+        if purpose is None:
+            return None
+        return {
+            "purpose": purpose,
+            "command": command,
+            "ok": result.ok,
+            "status": "passed" if result.ok else "failed",
+        }
+
+    @staticmethod
+    def _verification_purpose(command: str) -> str | None:
+        normalized = command.lower()
+        if any(token in normalized for token in ["pytest", " test", "npm run test", "cargo test", "go test"]):
+            return "test"
+        if any(token in normalized for token in ["ruff check", "eslint", " lint", "cargo clippy"]):
+            return "lint"
+        if any(token in normalized for token in ["mypy", "tsc", "typecheck", "npm run check"]):
+            return "typecheck"
+        if any(token in normalized for token in [" build", "npm run build", "cargo build", "go build", "uv build"]):
+            return "build"
+        return None
+
+    @staticmethod
+    def _with_verification_summary(
+        message: str, verification_results: list[dict[str, str | bool]]
+    ) -> str:
+        if not verification_results:
+            return message
+        if "verification outcomes:" in message.lower():
+            return message
+
+        lines = ["", "Verification outcomes:"]
+        for item in verification_results:
+            lines.append(f"- {item['purpose']} `{item['command']}`: {item['status']}.")
+        return message.rstrip() + "\n".join(lines)
 
     @staticmethod
     def _final_claims_mutation_success(message: str) -> bool:

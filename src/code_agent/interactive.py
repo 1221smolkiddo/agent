@@ -10,6 +10,7 @@ from .permissions import confirm_permission
 from .sandbox import create_sandbox_workspace
 from .storage import AgentStorage
 from .status import StatusReporter
+from .terminal_ui import print_key_values, print_panel
 
 
 def main() -> None:
@@ -22,23 +23,29 @@ def main() -> None:
     max_steps = 12
     max_failures: int | None = None
 
-    typer.echo("agent47 interactive coding agent")
-    typer.echo("Type a task or question. Use /help for commands. Use /stop or Ctrl+C to quit.")
-    typer.echo(f"Workspace: {cwd}")
-    typer.echo(f"Mode: {'dry-run' if dry_run else 'write-enabled'}")
+    print_panel(
+        "Agent47",
+        (
+            "Interactive coding agent\n"
+            "Type a task or question. Use /help for commands. Use /stop or Ctrl+C to quit.\n\n"
+            f"Workspace: {cwd}\n"
+            f"Mode: {'dry-run' if dry_run else 'write-enabled'}"
+        ),
+    )
 
     while True:
         try:
-            user_input = typer.prompt("agent47").strip()
+            typer.echo("")
+            user_input = typer.prompt("agent47 >").strip()
         except (EOFError, KeyboardInterrupt):
-            typer.echo("\nbye")
+            print_panel("System", "bye")
             return
 
         if not user_input:
             continue
 
         if is_casual_greeting(user_input):
-            typer.echo("Hey! I am ready. Ask me a question, or use /help to see commands.")
+            print_panel("Agent47", "Hey! I am ready. Ask me a question, or use /help to see commands.")
             continue
 
         if user_input.startswith("/"):
@@ -54,7 +61,7 @@ def main() -> None:
                 max_failures,
             )
             if command_result.exit_requested:
-                typer.echo("bye")
+                print_panel("System", "bye")
                 return
             base_cwd = command_result.base_cwd
             cwd = command_result.cwd
@@ -76,9 +83,11 @@ def main() -> None:
             reporter=StatusReporter(),
         )
         try:
-            typer.echo(agent.run(user_input))
+            print_panel("You", user_input)
+            result = agent.run(user_input)
+            print_panel("Agent47", result)
         except KeyboardInterrupt:
-            typer.echo("\nSTOPPED by user")
+            print_panel("System", "STOPPED by user")
             return
 
 
@@ -134,59 +143,62 @@ def handle_command(
         print_help()
     elif command == "/dry-run":
         dry_run = True
-        typer.echo("Mode: dry-run")
+        print_panel("Mode", "dry-run")
     elif command == "/write":
         dry_run = False
-        typer.echo("Mode: write-enabled")
+        print_panel("Mode", "write-enabled")
     elif command == "/cwd":
         if value:
             base_cwd = Path(value).expanduser().resolve()
             cwd = base_cwd
             sandbox_enabled = False
-        typer.echo(f"Workspace: {cwd}")
+        print_panel("Workspace", str(cwd))
     elif command == "/sandbox":
         if value.lower() == "off":
             cwd = base_cwd
             sandbox_enabled = False
-            typer.echo("Sandbox: off")
-            typer.echo(f"Workspace: {cwd}")
+            print_key_values("Sandbox", [("Sandbox", "off"), ("Workspace", cwd)])
         else:
             sandbox_workspace = create_sandbox_workspace(base_cwd)
             cwd = sandbox_workspace.path
             sandbox_enabled = True
-            typer.echo("Sandbox: on")
-            typer.echo(f"Sandbox workspace: {cwd}")
+            print_key_values("Sandbox", [("Sandbox", "on"), ("Workspace", cwd)])
     elif command == "/model":
         if value:
             model = value
-        typer.echo(f"Model: {model or settings.agent_model}")
+        print_panel("Model", model or settings.agent_model)
     elif command == "/max-steps":
         if value:
             max_steps = int(value)
-        typer.echo(f"Max steps: {max_steps}")
+        print_panel("Max Steps", str(max_steps))
     elif command == "/max-failures":
         if value:
             max_failures = int(value)
-        typer.echo(f"Max failures: {max_failures or settings.agent_max_failures}")
+        print_panel("Max Failures", str(max_failures or settings.agent_max_failures))
     elif command == "/history":
         print_history(settings)
     elif command == "/status":
-        typer.echo(f"Base workspace: {base_cwd}")
-        typer.echo(f"Workspace: {cwd}")
-        typer.echo(f"Model: {model or settings.agent_model}")
-        typer.echo(f"Mode: {'dry-run' if dry_run else 'write-enabled'}")
-        typer.echo(f"Sandbox: {'on' if sandbox_enabled else 'off'}")
-        typer.echo(f"Max steps: {max_steps}")
-        typer.echo(f"Max failures: {max_failures or settings.agent_max_failures}")
+        print_key_values(
+            "Status",
+            [
+                ("Base workspace", base_cwd),
+                ("Workspace", cwd),
+                ("Model", model or settings.agent_model),
+                ("Mode", "dry-run" if dry_run else "write-enabled"),
+                ("Sandbox", "on" if sandbox_enabled else "off"),
+                ("Max steps", max_steps),
+                ("Max failures", max_failures or settings.agent_max_failures),
+            ],
+        )
     else:
-        typer.echo(f"Unknown command: {command}")
-        typer.echo("Use /help to see available commands.")
+        print_panel("Unknown Command", f"{command}\nUse /help to see available commands.")
 
     return CommandState(base_cwd, cwd, model, dry_run, sandbox_enabled, max_steps, max_failures)
 
 
 def print_help() -> None:
-    typer.echo(
+    print_panel(
+        "Help",
         """
 Commands:
   /help              Show this help.
@@ -209,10 +221,12 @@ def print_history(settings: Settings) -> None:
     storage = AgentStorage(settings.agent_db_path)
     rows = storage.recent_runs(10)
     if not rows:
-        typer.echo("No runs recorded yet.")
+        print_panel("History", "No runs recorded yet.")
         return
-    for row in rows:
-        typer.echo(f"{row['id']} | {row['created_at']} | {row['model']} | {row['task']}")
+    print_panel(
+        "History",
+        "\n".join(f"{row['id']} | {row['created_at']} | {row['model']} | {row['task']}" for row in rows),
+    )
 
 
 def is_casual_greeting(user_input: str) -> bool:
