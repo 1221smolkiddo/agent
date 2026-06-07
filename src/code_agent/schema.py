@@ -54,11 +54,6 @@ class WebSearchAction(BaseModel):
     query: str
 
 
-class LocalTimeAction(BaseModel):
-    type: Literal["local_time"]
-    location: str
-
-
 class SummarizeCodeAction(BaseModel):
     type: Literal["summarize_code"]
     path: str
@@ -83,7 +78,6 @@ AgentAction = Union[
     RunShellAction,
     SearchAction,
     WebSearchAction,
-    LocalTimeAction,
     SummarizeCodeAction,
     DetectVerificationAction,
     SuggestVerificationAction,

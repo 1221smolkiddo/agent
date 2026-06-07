@@ -4,7 +4,7 @@ This is the build map for turning Agent47 from a promising CLI agent into an ind
 
 ## Current Position
 
-Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRouter/OpenAI-compatible model access, typed tool actions, non-workspace intent routing, local city-time answers, local file/search/shell/web tools, structured patch application, verification command detection/suggestion/outcome summaries, permission prompts, dry-run mode, local sandbox copies, SQLite run history, operation status labels, cleaner bordered terminal panels with short transcript context, failure recovery, optional tree-sitter summaries, and an Agent47 engineering protocol in the system prompt.
+Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRouter/OpenAI-compatible model access, typed tool actions, non-workspace intent routing, local file/search/shell/web tools with general web-search fallback, structured patch application, verification command detection/suggestion/outcome summaries, permission prompts, dry-run mode, local sandbox copies, SQLite run history, operation status labels, cleaner bordered terminal panels with short transcript context, failure recovery, optional tree-sitter summaries, and an Agent47 engineering protocol in the system prompt.
 
 ## Industry-Standard Capability Checklist
 

@@ -1,8 +1,8 @@
 from pathlib import Path
 
 import code_agent.tools as tools_module
-from code_agent.schema import ListFilesAction, ReadFileAction, SearchAction
-from code_agent.tools import ToolRegistry
+from code_agent.schema import ListFilesAction, ReadFileAction, SearchAction, WebSearchAction
+from code_agent.tools import BingParser, ToolRegistry
 
 
 def test_read_file_requires_permission(tmp_path: Path) -> None:
@@ -76,3 +76,47 @@ def test_project_search_fallback_ignores_local_secret_files(
 
     assert result.ok
     assert result.output == "README.md:1:agent47"
+
+
+def test_bing_parser_extracts_general_web_results() -> None:
+    parser = BingParser()
+    parser.feed(
+        """
+<li class="b_algo">
+  <div><a class="tilk" href="https://www.bing.com/ck/a?u=a1aHR0cHM6Ly9ub2lzZS5leGFtcGxlLw">noise.example</a></div>
+  <h2><a href="https://www.bing.com/ck/a?u=a1aHR0cHM6Ly9leGFtcGxlLmNvbS9h">Example Result</a></h2>
+</li>
+<li class="b_algo"><h2><a href="https://example.com/b">Second Result</a></h2></li>
+""".strip()
+    )
+
+    assert parser.results == [
+        ("Example Result", "https://example.com/a"),
+        ("Second Result", "https://example.com/b"),
+    ]
+
+
+def test_web_search_uses_duckduckgo_when_bing_has_no_results(tmp_path: Path, monkeypatch) -> None:
+    tools = ToolRegistry(workspace=tmp_path, dry_run=True, approval_callback=lambda _a, _d: True)
+    monkeypatch.setattr(tools, "_search_bing", lambda _query: [])
+    monkeypatch.setattr(
+        tools,
+        "_search_duckduckgo",
+        lambda _query: [("Fallback Result", "https://example.com/fallback")],
+    )
+
+    result = tools.run(WebSearchAction(type="web_search", query="general question"))
+
+    assert result.ok
+    assert "Fallback Result" in result.output
+
+
+def test_web_search_reports_provider_failure_when_no_results(tmp_path: Path, monkeypatch) -> None:
+    tools = ToolRegistry(workspace=tmp_path, dry_run=True, approval_callback=lambda _a, _d: True)
+    monkeypatch.setattr(tools, "_search_bing", lambda _query: [])
+    monkeypatch.setattr(tools, "_search_duckduckgo", lambda _query: [])
+
+    result = tools.run(WebSearchAction(type="web_search", query="general question"))
+
+    assert not result.ok
+    assert "No web results were found" in result.output

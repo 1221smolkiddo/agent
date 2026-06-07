@@ -199,13 +199,13 @@ def test_agent_allows_workspace_tools_for_project_question(tmp_path: Path) -> No
 
 
 def test_agent_accepts_plain_text_answer_for_non_workspace_question(tmp_path: Path) -> None:
-    model = FakeModel(["It is 10:30 PM in Kyoto."])
+    model = FakeModel(["Here is the general answer."])
     tools = RecoveringTools()
     agent = make_agent(tmp_path, model, tools)
 
-    result = agent.run("what time is it in Kyoto?")
+    result = agent.run("explain this idea simply")
 
-    assert result == "It is 10:30 PM in Kyoto."
+    assert result == "Here is the general answer."
     assert tools.calls == 0
 
 

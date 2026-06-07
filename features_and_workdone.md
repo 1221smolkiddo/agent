@@ -10,7 +10,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - OpenRouter-compatible model access.
 - Default model set to `qwen/qwen3-coder`.
 - Non-workspace question routing so general questions can be answered without inspecting project files.
-- Local city-time answers through a `local_time` action for common city/time-zone aliases.
+- General web search for current external information, with provider fallback.
 - Local `.env` configuration with secrets excluded from git.
 - User approval prompts for file listing, reading, project search, code summary, verification detection/suggestion, file writes, file edits, patch application, shell commands, and web search.
 - Dry-run mode for inspect-only sessions.
@@ -101,7 +101,7 @@ Inside `agent47`:
 - Clean terminal panel formatting.
 - Project search fallback when `ripgrep` is unavailable.
 - Non-workspace routing guard.
-- Local city-time action.
+- General web-search provider fallback.
 - Transcript-aware interactive summaries.
 - Operation status label formatting.
 - Casual greeting handling.

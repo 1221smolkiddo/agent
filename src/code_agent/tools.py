@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import difflib
 import html.parser
 import re
@@ -15,7 +16,6 @@ from .schema import (
     DetectVerificationAction,
     EditFileAction,
     ListFilesAction,
-    LocalTimeAction,
     ReadFileAction,
     RunShellAction,
     SearchAction,
@@ -26,7 +26,6 @@ from .schema import (
     WriteFileAction,
 )
 from .parsing import summarize_code_file
-from .time_tools import local_time_for
 from .verification import detect_verification_commands, suggest_verification_commands
 
 IGNORED_NAMES = {
@@ -71,8 +70,6 @@ class ToolRegistry:
             return self._search(action.query, action.path)
         if isinstance(action, WebSearchAction):
             return self._web_search(action.query)
-        if isinstance(action, LocalTimeAction):
-            return self._local_time(action.location)
         if isinstance(action, SummarizeCodeAction):
             return self._summarize_code(action.path)
         if isinstance(action, DetectVerificationAction):
@@ -243,31 +240,54 @@ class ToolRegistry:
         if not self._approve("web_search", query):
             return ToolResult(ok=False, output="Permission denied for web_search.")
 
-        url = "https://duckduckgo.com/html/?" + urllib.parse.urlencode({"q": query})
-        request = urllib.request.Request(
-            url,
-            headers={"User-Agent": "agent47/0.1"},
-        )
-        with urllib.request.urlopen(request, timeout=20) as response:
-            html = response.read().decode("utf-8", errors="replace")
-
-        parser = DuckDuckGoParser()
-        parser.feed(html)
-        results = parser.results[:5]
+        results = self._search_bing(query)
         if not results:
-            return ToolResult(ok=True, output="<no web results>")
+            results = self._search_duckduckgo(query)
+        if not results:
+            return ToolResult(
+                ok=False,
+                output=(
+                    "No web results were found from the configured search providers. "
+                    "Try a more specific query or another source."
+                ),
+            )
         return ToolResult(
             ok=True,
             output="\n".join(f"{index + 1}. {title}\n{href}" for index, (title, href) in enumerate(results)),
         )
 
-    def _local_time(self, location: str) -> ToolResult:
-        return ToolResult(ok=True, output=local_time_for(location))
-
     def _approve(self, action: str, detail: str) -> bool:
         if self.approval_callback is None:
             return False
         return self.approval_callback(action, detail)
+
+    def _search_bing(self, query: str) -> list[tuple[str, str]]:
+        url = "https://www.bing.com/search?" + urllib.parse.urlencode({"q": query})
+        html = self._fetch_url(url)
+        parser = BingParser()
+        parser.feed(html)
+        return parser.results[:5]
+
+    def _search_duckduckgo(self, query: str) -> list[tuple[str, str]]:
+        url = "https://duckduckgo.com/html/?" + urllib.parse.urlencode({"q": query})
+        html = self._fetch_url(url)
+        parser = DuckDuckGoParser()
+        parser.feed(html)
+        return parser.results[:5]
+
+    @staticmethod
+    def _fetch_url(url: str) -> str:
+        request = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Agent47/0.1 Safari/537.36"
+                )
+            },
+        )
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return response.read().decode("utf-8", errors="replace")
 
     def _python_search(self, query: str, target: Path) -> str:
         try:
@@ -398,4 +418,71 @@ class DuckDuckGoParser(html.parser.HTMLParser):
             parsed = urllib.parse.urlparse("https:" + href)
             query = urllib.parse.parse_qs(parsed.query)
             return query.get("uddg", [href])[0]
+        return href
+
+
+class BingParser(html.parser.HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.results: list[tuple[str, str]] = []
+        self._in_result = False
+        self._in_heading = False
+        self._in_title_link = False
+        self._current_href = ""
+        self._current_text: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attrs_dict = dict(attrs)
+        class_name = attrs_dict.get("class", "")
+        if tag == "li" and "b_algo" in class_name:
+            self._in_result = True
+            return
+        if tag == "h2" and self._in_result:
+            self._in_heading = True
+            return
+        if tag == "a" and self._in_result and self._in_heading and not self._in_title_link:
+            href = attrs_dict.get("href") or ""
+            if href.startswith("http"):
+                self._in_title_link = True
+                self._current_href = self._clean_href(href)
+                self._current_text = []
+
+    def handle_data(self, data: str) -> None:
+        if self._in_title_link:
+            self._current_text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "a" and self._in_title_link:
+            title = " ".join("".join(self._current_text).split())
+            if title and self._current_href:
+                self.results.append((title, self._current_href))
+            self._in_title_link = False
+            self._current_href = ""
+            self._current_text = []
+            return
+        if tag == "h2" and self._in_heading:
+            self._in_heading = False
+            return
+        if tag == "li" and self._in_result:
+            self._in_result = False
+            self._in_heading = False
+
+    @staticmethod
+    def _clean_href(href: str) -> str:
+        parsed = urllib.parse.urlparse(href)
+        if parsed.netloc.endswith("bing.com") and parsed.path.startswith("/ck/"):
+            values = urllib.parse.parse_qs(parsed.query).get("u", [])
+            if not values:
+                match = re.search(r"[?&]u=([^&]+)", href)
+                if match:
+                    values = [urllib.parse.unquote(match.group(1))]
+            if values:
+                encoded = values[0]
+                if encoded.startswith("a1"):
+                    encoded = encoded[2:]
+                padding = "=" * (-len(encoded) % 4)
+                try:
+                    return base64.urlsafe_b64decode(encoded + padding).decode("utf-8")
+                except (ValueError, UnicodeDecodeError):
+                    return href
         return href

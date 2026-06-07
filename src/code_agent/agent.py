@@ -219,6 +219,12 @@ class CodingAgent:
                 "Dry-run prevented the requested action. Explain that the user must enable /write, "
                 "or use sandbox plus write mode, then finalize with clear next steps."
             )
+        if "No web results were found" in result.output:
+            return (
+                "The web search did not find results. Revise the query once with clearer terms, "
+                "or answer from stable general knowledge if the question does not require current information. "
+                "Do not inspect workspace files for a non-workspace question."
+            )
         return (
             "The tool failed. Diagnose the failure from the output, inspect more context if needed, "
             "then try a different action. Do not finalize until the task is solved or the failure budget is exhausted."

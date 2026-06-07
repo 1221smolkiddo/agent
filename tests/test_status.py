@@ -2,7 +2,6 @@ from code_agent.schema import (
     ApplyPatchAction,
     DetectVerificationAction,
     EditFileAction,
-    LocalTimeAction,
     RunShellAction,
     SearchAction,
     SuggestVerificationAction,
@@ -36,12 +35,6 @@ def test_format_action_status_for_web_search() -> None:
     status = format_action_status(WebSearchAction(type="web_search", query="OpenRouter docs"))
 
     assert status == "SEARCHING WEB for OpenRouter docs"
-
-
-def test_format_action_status_for_local_time() -> None:
-    status = format_action_status(LocalTimeAction(type="local_time", location="Kyoto"))
-
-    assert status == "CHECKING local time for Kyoto"
 
 
 def test_format_action_status_for_detect_verification() -> None:
@@ -91,9 +84,9 @@ def test_should_include_transcript_for_summary_request() -> None:
 def test_task_with_transcript_includes_recent_turns() -> None:
     task = task_with_transcript(
         "summarize your responses",
-        [("hi", "hello"), ("what time", "Kyoto: 10 PM")],
+        [("hi", "hello"), ("explain recursion", "Recursion is a function calling itself.")],
     )
 
     assert "Recent interactive transcript for reference:" in task
     assert "Turn 1 user: hi" in task
-    assert "Turn 2 Agent47: Kyoto: 10 PM" in task
+    assert "Turn 2 Agent47: Recursion is a function calling itself." in task
