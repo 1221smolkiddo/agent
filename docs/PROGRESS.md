@@ -4,11 +4,13 @@ This document tracks how far the coding agent has come and what collaborators ca
 
 ## Current Stage
 
-**Stage:** Basic single-model CLI agent
+**Stage:** Basic single-model CLI agent with Agent47 engineering protocol
 
-**Approximate progress toward a Codex-like local coding agent:** 10-15%
+**Approximate progress toward an industry-standard local AI coding agent:** 15%
 
-The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, run history, tests, and GitHub collaboration setup.
+The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, run history, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
+
+This file should be updated whenever a meaningful Agent47 capability is added. Keep the enabled commands/actions current, move completed items out of "What Is Left" when they land, and update the percentage only when the agent gains real product capability rather than documentation alone.
 
 ## Enabled CLI Commands
 
@@ -80,6 +82,7 @@ There are currently **9 model-requestable actions**:
 | Web search | Enabled with user approval |
 | Local workspace sandbox | Enabled |
 | Tool failure recovery loop | Enabled |
+| Agent47 engineering protocol | Enabled |
 | Operation status labels | Enabled |
 | Stop shortcut: `Ctrl+C` and `/stop` | Enabled |
 | Code parsing: tree-sitter | Enabled as optional parsing extra |
@@ -91,18 +94,32 @@ There are currently **9 model-requestable actions**:
 
 ## What Is Left
 
-The next major milestones are:
+These are the remaining capability areas needed for Agent47 to feel like a fully fledged, industry-standard AI coding agent.
 
-1. Replace direct file writes with patch preview and patch apply.
-2. Add stronger sandbox isolation for processes and network policy.
-3. Add streaming output in the terminal.
-4. Add stronger repo context gathering.
-5. Add planner state and visible step progress.
-6. Add automatic test command detection and verification loops.
-7. Add resumable sessions.
-8. Add multi-model/provider support.
-9. Add VS Code extension frontend.
-10. Improve reliability, docs, and examples.
+| Priority | Capability | Why it matters | Status |
+| --- | --- | --- | --- |
+| 1 | Structured patch editing | Gives safe, reviewable multi-file code changes instead of brittle full-file rewrites | Not started |
+| 2 | Verification loop | Lets Agent47 detect and run the right tests, lint, typecheck, and builds after edits | Not started |
+| 3 | Repo intelligence | Helps the agent choose relevant context using symbols, dependencies, git diff, and architecture summaries | Partial |
+| 4 | Safer shell policy | Separates read-only, test/build, install/network, and destructive commands with stronger approvals | Partial |
+| 5 | Durable sessions | Enables pause/resume, plan state, checkpoints, and long task recovery | Partial |
+| 6 | Streaming UX | Makes CLI and interactive mode feel alive during model reasoning and tool execution | Not started |
+| 7 | Multi-model/provider layer | Supports planner/coder/reviewer profiles, fallbacks, and cost-aware routing | Not started |
+| 8 | Observability | Captures traces, timings, token use, failures, and debug bundles for reliability work | Partial |
+| 9 | Collaboration workflow | Adds review mode, branch/commit/PR helpers, issue context, changelogs, and release notes | Partial |
+| 10 | Editor integration | Brings Agent47 into VS Code with file context, diffs, approvals, and terminal output | Not started |
+| 11 | Evaluation harness | Measures solve rate, edit correctness, verification rate, and regressions on fixture repos | Not started |
+| 12 | Packaging hardening | Adds release profiles, install docs, upgrade notes, and platform-specific validation | Partial |
+
+## Next Recommended Build Order
+
+1. Add structured patch preview and patch apply.
+2. Add automatic verification command detection.
+3. Add git diff awareness so Agent47 respects existing user changes.
+4. Add resumable sessions with run IDs and plan state.
+5. Add streaming output in CLI and `agent47`.
+6. Add model profiles and provider abstraction.
+7. Add a JSON protocol for future VS Code integration.
 
 ## Current Safety Notes
 
@@ -117,4 +134,4 @@ The next major milestones are:
 
 ## Last Updated
 
-June 3, 2026
+June 7, 2026

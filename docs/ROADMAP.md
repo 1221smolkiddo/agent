@@ -1,39 +1,92 @@
 # Roadmap
 
-## Phase 1: Reliable CLI
+This is the build map for turning Agent47 from a promising CLI agent into an industry-standard AI coding agent.
 
-- Add streaming model output.
-- Add explicit approval prompts before shell execution and file writes.
-- Add structured patch application instead of direct full-file writes.
-- Improve run history with session IDs and resume support.
-- Add richer tests for file tools, storage, and model mocking.
+## Current Position
 
-## Phase 2: Better Coding Agent
+Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRouter/OpenAI-compatible model access, typed tool actions, local file/search/shell/web tools, permission prompts, dry-run mode, local sandbox copies, SQLite run history, operation status labels, failure recovery, optional tree-sitter summaries, and an Agent47 engineering protocol in the system prompt.
 
-- Add repository summaries and context selection.
-- Add tree-sitter powered symbol extraction.
-- Add git diff awareness.
-- Add test/lint command detection.
-- Add task planning and step status.
-- Add safer shell command policies.
+## Industry-Standard Capability Checklist
 
-## Phase 3: Collaboration
+| Capability area | Current state | What is left |
+| --- | --- | --- |
+| Agent loop | Basic typed action loop with failure recovery | Add durable plans, step status, task decomposition, cancellation, pause/resume, and bounded long-running work |
+| Code editing | Full-file writes and exact text replacement | Add structured patch generation, diff preview, patch apply, multi-file change sets, conflict handling, and formatting hooks |
+| Repository intelligence | File listing, ripgrep search, optional code summaries | Add repo index, symbol graph, dependency graph, ownership hints, changed-file awareness, and context ranking |
+| Verification | Agent can run shell commands after approval | Add automatic test/lint/build detection, targeted verification selection, retry policy, and final verification summaries |
+| Safety and sandboxing | Workspace path guard, dry-run, permission prompts, copy sandbox | Add command allow/deny policy, environment redaction, network controls, process limits, timeout tiers, and secret scanning |
+| Model layer | Single OpenAI-compatible chat client | Add provider abstraction, model profiles, planner/coder/reviewer routing, fallback models, token/cost tracking, and streaming |
+| Memory and sessions | SQLite run history | Add resumable sessions, conversation checkpoints, per-repo memory, decision logs, and context compaction |
+| Collaboration | Basic docs and GitHub setup | Add branch/commit/PR workflow, review mode, issue ingestion, changelog generation, and release notes |
+| Developer UX | CLI, `agent47` interactive mode, status labels | Add richer TUI streaming, approval diff views, command output panes, transcript export, and VS Code integration |
+| Observability | Stored steps and simple status | Add structured traces, tool timing, model usage metrics, failure analytics, and debug bundles |
+| Evaluation | Unit tests for core behavior | Add agent task benchmarks, golden transcript tests, sandboxed fixture repos, regression scenarios, and quality gates |
+| Packaging | Python package with uv workflow | Add signed releases, config profiles, install docs for common platforms, and upgrade/migration notes |
 
-- Add issue templates and pull request templates.
-- Add CI for tests and linting.
-- Add documented contribution workflow.
-- Add examples for common agent tasks.
+## Build Phases
 
-## Phase 4: Editor Integration
+## Phase 1: Trustworthy Editing
 
-- Add a VS Code extension package.
-- Start with subprocess calls to the Python CLI.
-- Move to a JSON protocol for interactive sessions.
-- Add sidebar chat, file context, diffs, approvals, and terminal output.
+- Add a first-class `apply_patch` action instead of relying on full-file writes for code edits.
+- Show unified diffs before approval and store approved patches in run history.
+- Add multi-file change set support with one approval prompt per coherent change.
+- Add formatting hooks for common stacks after patch application.
+- Add tests for patch parsing, apply failures, and partial-application recovery.
 
-## Phase 5: Multi-Model
+## Phase 2: Real Verification Loop
 
-- Add provider abstraction.
-- Add model profiles.
-- Add router policies for planning, coding, and reviewing.
-- Add cost and latency tracking.
+- Detect project test, lint, typecheck, and build commands from files such as `pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`, and CI configs.
+- Choose targeted verification commands based on changed files.
+- Teach the agent to inspect failing output, patch once or twice, and then report honestly if blocked.
+- Store verification commands and outcomes in the final run summary.
+
+## Phase 3: Repository Intelligence
+
+- Build a lightweight repo index with files, symbols, imports, and recently changed paths.
+- Rank context by task relevance instead of reading broad files.
+- Add git diff awareness so Agent47 understands existing user changes.
+- Add code ownership and architectural summary files under `.code-agent/`.
+
+## Phase 4: Safer Autonomy
+
+- Add command policy classes for read-only, build/test, install/network, and destructive operations.
+- Add redaction for secrets in tool outputs and final answers.
+- Add sandbox process limits, timeout tiers, and optional network-deny mode.
+- Add cancellation and clean shutdown for running tool calls.
+
+## Phase 5: Better Model System
+
+- Add provider abstraction beyond OpenRouter/OpenAI-compatible chat.
+- Add model profiles for fast planning, deep coding, reviewing, and summarization.
+- Add fallback routing when a model fails or returns invalid actions repeatedly.
+- Add token, latency, and cost tracking per run.
+- Add streaming responses in CLI and interactive mode.
+
+## Phase 6: Durable Sessions and Memory
+
+- Add session IDs and resume support.
+- Save plan state, tool results, patch sets, verification results, and final summaries.
+- Add per-repo memory for conventions, preferred commands, and recurring project facts.
+- Add context compaction for long tasks.
+
+## Phase 7: Collaboration Workflow
+
+- Add git branch, commit, and PR helper actions with explicit approval.
+- Add issue/PR template awareness.
+- Add review mode that focuses on bugs, regressions, tests, and security risks.
+- Add release-note and changelog generation.
+
+## Phase 8: Editor Integration
+
+- Add a local JSON protocol so frontends can drive the Python core.
+- Build a VS Code extension with sidebar chat, file context, approval UI, diffs, terminals, and run history.
+- Support editor selections and open files as first-class context.
+- Add background task notifications.
+
+## Phase 9: Evaluation and Product Hardening
+
+- Create fixture repositories for common tasks and regression testing.
+- Add golden transcript tests for agent behavior.
+- Track solve rate, edit correctness, verification rate, tool failures, and user intervention rate.
+- Add CI gates for unit tests, lint, typecheck, package build, and agent benchmark smoke tests.
+- Document supported workflows, limits, safety model, and troubleshooting.

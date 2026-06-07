@@ -1,8 +1,24 @@
-# Code Agent
+# Agent47
 
-A Python CLI-first coding agent scaffold. The core logic lives outside the CLI so it can later be reused by a VS Code extension shell or background service.
+A Python CLI-first AI coding agent scaffold. The core logic lives outside the CLI so it can later be reused by a VS Code extension shell or background service.
 
-The long-term goal is a Codex-like developer agent: repo-aware, tool-using, careful with edits, test-aware, and eventually available inside VS Code.
+The long-term goal is Agent47: a real AI engineering assistant that is repo-aware, tool-using, careful with edits, test-aware, and eventually available inside VS Code.
+
+Agent47 now uses an engineering protocol in its system prompt: classify the request, plan internally, inspect relevant files, make focused edits, verify changes when practical, recover from failures, and report honestly about what changed and what was checked.
+
+## Industry-Standard Target
+
+Agent47 is being built toward the baseline expected from a serious AI coding agent:
+
+- Repo-aware context gathering with symbol, dependency, and git-diff awareness.
+- Structured patch editing with diff preview, approval, conflict handling, and rollback-friendly history.
+- Automatic test, lint, typecheck, and build detection with focused verification loops.
+- Safer autonomy through command policies, sandbox limits, secret redaction, and explicit approvals.
+- Durable sessions with resumable plans, run history, per-repo memory, and compacted context.
+- Multi-model support with provider abstraction, model profiles, fallback routing, streaming, and cost tracking.
+- Collaboration workflows for review, commits, branches, pull requests, issues, changelogs, and release notes.
+- Editor integration, starting with a JSON protocol and eventually a VS Code extension.
+- Evaluation harnesses that measure task success, edit correctness, verification rate, and regressions.
 
 ## Quick Start
 
