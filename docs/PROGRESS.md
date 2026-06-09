@@ -107,6 +107,8 @@ There are currently **12 model-requestable actions**:
 
 These are the remaining capability areas needed for Agent47 to feel like a fully fledged, industry-standard AI coding agent.
 
+For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.md).
+
 | Priority | Capability | Why it matters | Status |
 | --- | --- | --- | --- |
 | 1 | Structured patch editing | Gives safe, reviewable multi-file code changes instead of brittle full-file rewrites | Partial |

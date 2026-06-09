@@ -207,6 +207,8 @@ tests/
 
 See [docs/ROADMAP.md](docs/ROADMAP.md).
 
+For the complete team issue breakdown from the current CLI to an industry-grade Agent47, see [docs/TEAM_BUILD_PLAN.md](docs/TEAM_BUILD_PLAN.md).
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
