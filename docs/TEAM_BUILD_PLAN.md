@@ -42,6 +42,154 @@ Everyone can work across areas, but each issue should have one clear owner.
 - Every issue should have acceptance criteria.
 - The agent should recover from failures without the user repeatedly typing "continue."
 
+## How To Track Work
+
+Use the checkboxes in this file as a lightweight project board.
+
+- `[ ]` means not started.
+- `[~]` means in progress.
+- `[x]` means done.
+
+When someone starts work:
+
+- Put their name next to the issue.
+- Change `[ ]` to `[~]`.
+- Link the GitHub issue or branch if one exists.
+
+When the work is finished:
+
+- Change `[~]` to `[x]`.
+- Add the merged PR or commit link.
+- Make sure the acceptance criteria are met.
+- Update `docs/PROGRESS.md` if the feature changes what Agent47 can do.
+
+## Completed Work
+
+These are already built and should be maintained while new work continues.
+
+- [x] Python CLI project scaffold.
+- [x] `agent47` interactive terminal mode.
+- [x] `code-agent run` one-shot CLI mode.
+- [x] OpenRouter-compatible model client.
+- [x] Default Qwen model configuration.
+- [x] `.env.example` and git-ignored local `.env`.
+- [x] SQLite run history.
+- [x] File listing, file reading, file writing, and exact-text editing tools.
+- [x] Project search with ripgrep and Python fallback.
+- [x] Web search action with user approval.
+- [x] Optional tree-sitter code summaries.
+- [x] Permission prompts for read/list/search/code-summary/write/edit/shell/web actions.
+- [x] Dry-run mode.
+- [x] Local workspace sandbox copy mode.
+- [x] Operation status labels such as `THINKING`, `READING`, `EDITING`, `TESTING`, and `DONE`.
+- [x] Stop controls with `Ctrl+C`, `/stop`, and `/exit`.
+- [x] Automatic tool failure recovery loop.
+- [x] Guard against false completion after blocked writes/edits.
+- [x] GitHub CI, issue templates, PR template, and contribution docs.
+- [x] Progress tracker in `docs/PROGRESS.md`.
+- [x] Feature summary in `features_and_workdone.md`.
+
+## Team Task Board
+
+Use this as the quick issue picker. Detailed descriptions and acceptance criteria are in the phase sections below.
+
+### Phase 1: Trust And Verification
+
+- [ ] Issue 1: Mutation Tracking. Owner:
+- [ ] Issue 2: Final Answer Verification Gate. Owner:
+- [ ] Issue 3: Final Work Report. Owner:
+
+### Phase 2: Patch-Based Editing
+
+- [ ] Issue 4: Patch Model. Owner:
+- [ ] Issue 5: Patch Preview And Approval. Owner:
+- [ ] Issue 6: Patch Apply And Verify. Owner:
+- [ ] Issue 7: Patch Revert. Owner:
+
+### Phase 3: Permissions And Policy
+
+- [ ] Issue 8: Permission Scopes. Owner:
+- [ ] Issue 9: Shell Command Policy. Owner:
+- [ ] Issue 10: Secret Redaction. Owner:
+- [ ] Issue 11: Network Permission Policy. Owner:
+
+### Phase 4: Sandbox And Isolation
+
+- [ ] Issue 12: Sandbox Diff View. Owner:
+- [ ] Issue 13: Promote Sandbox Changes. Owner:
+- [ ] Issue 14: Sandbox Cleanup. Owner:
+- [ ] Issue 15: Process Isolation Research. Owner:
+
+### Phase 5: Testing And Build Automation
+
+- [ ] Issue 16: Project Detector. Owner:
+- [ ] Issue 17: Test Command Runner. Owner:
+- [ ] Issue 18: Build/Lint Runner. Owner:
+
+### Phase 6: Context Engine
+
+- [ ] Issue 19: Repo Map. Owner:
+- [ ] Issue 20: File Relevance Ranking. Owner:
+- [ ] Issue 21: Tree-Sitter Symbol Index. Owner:
+- [ ] Issue 22: Git Awareness. Owner:
+
+### Phase 7: Planner And Task State
+
+- [ ] Issue 23: Task Plan Object. Owner:
+- [ ] Issue 24: Visible Step Progress. Owner:
+- [ ] Issue 25: Session Resume. Owner:
+
+### Phase 8: Streaming And UX
+
+- [ ] Issue 26: Streaming Model Output. Owner:
+- [ ] Issue 27: Better Terminal UI. Owner:
+- [ ] Issue 28: Multiline Input. Owner:
+
+### Phase 9: Model Layer
+
+- [ ] Issue 29: Provider Abstraction. Owner:
+- [ ] Issue 30: Model Profiles. Owner:
+- [ ] Issue 31: Cost And Token Tracking. Owner:
+- [ ] Issue 32: Model Fallback. Owner:
+
+### Phase 10: Storage And History
+
+- [ ] Issue 33: Run Detail View. Owner:
+- [ ] Issue 34: History Search. Owner:
+- [ ] Issue 35: Storage Migrations. Owner:
+
+### Phase 11: Public Packaging
+
+- [ ] Issue 36: Package Metadata. Owner:
+- [ ] Issue 37: Install Guide. Owner:
+- [ ] Issue 38: Versioning And Releases. Owner:
+- [ ] Issue 39: PyPI Or GitHub Release. Owner:
+
+### Phase 12: Evals And Reliability
+
+- [ ] Issue 40: Local Eval Harness. Owner:
+- [ ] Issue 41: Regression Tasks. Owner:
+- [ ] Issue 42: Error Reporting. Owner:
+
+### Phase 13: Documentation
+
+- [ ] Issue 43: User Guide. Owner:
+- [ ] Issue 44: Developer Guide. Owner:
+- [ ] Issue 45: Examples. Owner:
+
+### Phase 14: Security And Public Readiness
+
+- [ ] Issue 46: Security Policy. Owner:
+- [ ] Issue 47: Threat Model. Owner:
+- [ ] Issue 48: Prompt Injection Defenses. Owner:
+- [ ] Issue 49: Public Alpha Checklist. Owner:
+
+### Phase 15: VS Code Later
+
+- [ ] Issue 50: VS Code Architecture Decision. Owner:
+- [ ] Issue 51: Extension Scaffold. Owner:
+- [ ] Issue 52: Diff Approval UI. Owner:
+
 ## Phase 1: Trust And Verification
 
 Goal: make the agent truthful about what it did.
