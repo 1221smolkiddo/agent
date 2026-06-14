@@ -2,7 +2,9 @@ import pytest
 from typer._click.exceptions import Abort
 
 import code_agent.interactive as interactive
-from code_agent.interactive import DEFAULT_DRY_RUN, read_prompt
+from code_agent.agent import AgentRunResult
+from code_agent.interactive import DEFAULT_DRY_RUN, read_prompt, run_interactive_turn
+from code_agent.session import SessionState
 from code_agent.terminal_ui import format_key_values, format_panel
 
 
@@ -43,3 +45,17 @@ def test_read_prompt_propagates_click_abort(monkeypatch) -> None:
 
     with pytest.raises(Abort):
         read_prompt()
+
+
+def test_interactive_turn_does_not_print_user_panel(monkeypatch) -> None:
+    printed: list[tuple[str, str]] = []
+    monkeypatch.setattr(interactive, "print_panel", lambda title, body: printed.append((title, body)))
+
+    class Agent:
+        def run_detailed(self, _task: str) -> AgentRunResult:
+            return AgentRunResult(message="done", run_id=1)
+
+    transcript = run_interactive_turn("make a file", Agent(), [], SessionState())
+
+    assert printed == [("Agent47", "done")]
+    assert transcript == [("make a file", "done")]

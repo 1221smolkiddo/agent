@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Protocol
 
 import typer
 from typer._click.exceptions import Abort
@@ -15,6 +16,10 @@ from .status import StatusReporter
 from .terminal_ui import print_key_values, print_panel
 
 DEFAULT_DRY_RUN = False
+
+
+class InteractiveAgent(Protocol):
+    def run_detailed(self, task: str): ...
 
 
 def main() -> None:
@@ -89,13 +94,7 @@ def main() -> None:
             reporter=StatusReporter(),
         )
         try:
-            print_panel("You", user_input)
-            task = task_with_context(user_input, transcript, session_state)
-            result = agent.run_detailed(task)
-            print_panel("Agent47", result.message)
-            session_state.update(user_input, result)
-            transcript.append((user_input, result.message))
-            transcript = transcript[-8:]
+            transcript = run_interactive_turn(user_input, agent, transcript, session_state)
         except KeyboardInterrupt:
             print_panel("System", "STOPPED by user")
             return
@@ -249,6 +248,20 @@ def is_casual_greeting(user_input: str) -> bool:
 def read_prompt() -> str:
     typer.echo("")
     return typer.prompt("agent47 >").strip()
+
+
+def run_interactive_turn(
+    user_input: str,
+    agent: InteractiveAgent,
+    transcript: list[tuple[str, str]],
+    session_state: SessionState,
+) -> list[tuple[str, str]]:
+    task = task_with_context(user_input, transcript, session_state)
+    result = agent.run_detailed(task)
+    print_panel("Agent47", result.message)
+    session_state.update(user_input, result)
+    transcript.append((user_input, result.message))
+    return transcript[-8:]
 
 
 def task_with_transcript(user_input: str, transcript: list[tuple[str, str]]) -> str:
