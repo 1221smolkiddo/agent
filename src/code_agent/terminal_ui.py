@@ -38,6 +38,15 @@ def print_status_line(label: str, detail: str) -> None:
     typer.echo(f"  {label:<10} {detail}")
 
 
+def format_prompt_header(title: str, *, width: int = PANEL_WIDTH) -> str:
+    return _header(title, max(width, 24))
+
+
+def format_prompt_footer(*, width: int = PANEL_WIDTH) -> str:
+    safe_width = max(width, 24)
+    return "+" + "-" * (safe_width - 2) + "+"
+
+
 def _header(title: str, width: int) -> str:
     normalized = f" {title.strip().upper()} "
     available = width - 2

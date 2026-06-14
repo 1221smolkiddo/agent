@@ -5,7 +5,12 @@ import code_agent.interactive as interactive
 from code_agent.agent import AgentRunResult
 from code_agent.interactive import DEFAULT_DRY_RUN, read_prompt, run_interactive_turn
 from code_agent.session import SessionState
-from code_agent.terminal_ui import format_key_values, format_panel
+from code_agent.terminal_ui import (
+    format_key_values,
+    format_panel,
+    format_prompt_footer,
+    format_prompt_header,
+)
 
 
 def test_format_panel_makes_labeled_box() -> None:
@@ -31,6 +36,11 @@ def test_format_key_values_uses_panel_body() -> None:
     assert "| Sandbox: off                   |" in panel
 
 
+def test_format_prompt_border_parts() -> None:
+    assert format_prompt_header("You", width=24) == "+ YOU -----------------+"
+    assert format_prompt_footer(width=24) == "+----------------------+"
+
+
 def test_interactive_mode_starts_write_enabled() -> None:
     assert DEFAULT_DRY_RUN is False
 
@@ -38,13 +48,23 @@ def test_interactive_mode_starts_write_enabled() -> None:
 def test_read_prompt_propagates_click_abort(monkeypatch) -> None:
     monkeypatch.setattr(interactive.typer, "echo", lambda *_args, **_kwargs: None)
 
-    def abort_prompt(_prompt):
+    def abort_input(_prompt):
         raise Abort()
 
-    monkeypatch.setattr(interactive.typer, "prompt", abort_prompt)
+    monkeypatch.setattr("builtins.input", abort_input)
 
     with pytest.raises(Abort):
         read_prompt()
+
+
+def test_read_prompt_uses_bordered_input(monkeypatch) -> None:
+    echoed: list[str] = []
+    monkeypatch.setattr(interactive.typer, "echo", lambda value="", **_kwargs: echoed.append(value))
+    monkeypatch.setattr("builtins.input", lambda prompt: "hello there")
+
+    assert read_prompt() == "hello there"
+    assert echoed[1] == format_prompt_header("You")
+    assert echoed[2] == format_prompt_footer()
 
 
 def test_interactive_turn_does_not_print_user_panel(monkeypatch) -> None:

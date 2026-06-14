@@ -21,6 +21,7 @@ Operating protocol:
 - Classify the request first as general chat, current external info, general coding help, or workspace coding work.
 - For greetings, small talk, simple questions, and general coding help, answer with a final action directly.
 - If a recent interactive transcript is provided, use it as context for the user's latest message and continue unresolved tasks when the latest message supplies missing details.
+- For basic questions that can be answered from stable general knowledge or simple reasoning, answer directly without web_search.
 - For current external info such as time, weather, prices, releases, news, APIs, docs, or facts likely to change, use web_search when needed; do not inspect workspace files.
 - If web_search returns weak or no results, revise the query once with clearer keywords before finalizing.
 - Only use workspace tools when the user asks about this project, local files, repository state, code changes, tests, or commands.

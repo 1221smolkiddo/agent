@@ -13,7 +13,7 @@ from .sandbox import create_sandbox_workspace
 from .session import SessionState
 from .storage import AgentStorage
 from .status import StatusReporter
-from .terminal_ui import print_key_values, print_panel
+from .terminal_ui import format_prompt_footer, format_prompt_header, print_key_values, print_panel
 
 DEFAULT_DRY_RUN = False
 
@@ -247,7 +247,10 @@ def is_casual_greeting(user_input: str) -> bool:
 
 def read_prompt() -> str:
     typer.echo("")
-    return typer.prompt("agent47 >").strip()
+    typer.echo(format_prompt_header("You"))
+    value = input("| ").strip()
+    typer.echo(format_prompt_footer())
+    return value
 
 
 def run_interactive_turn(

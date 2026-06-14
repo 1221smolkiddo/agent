@@ -11,6 +11,7 @@ def test_system_prompt_names_agent47_engineering_protocol() -> None:
     assert "general chat, current external info, general coding help, or workspace coding work" in prompt
     assert "Only use workspace tools when the user asks about this project" in prompt
     assert "For current external info such as time, weather, prices" in prompt
+    assert "For basic questions that can be answered from stable general knowledge" in prompt
     assert "If web_search returns weak or no results" in prompt
     assert "build a short internal plan" in prompt
     assert "Prefer apply_patch for code edits" in prompt
