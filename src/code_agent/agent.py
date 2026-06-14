@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,18 @@ from .tools import ToolRegistry
 from .verification import select_verification_commands
 
 ACTION_ADAPTER = TypeAdapter(AgentAction)
+
+
+@dataclass
+class AgentRunResult:
+    message: str
+    run_id: int
+    changed_paths: list[str] = field(default_factory=list)
+    mutation_records: list[dict[str, Any]] = field(default_factory=list)
+    verification_results: list[dict[str, str | bool]] = field(default_factory=list)
+    failed_actions: list[dict[str, Any]] = field(default_factory=list)
+    denied_actions: list[dict[str, Any]] = field(default_factory=list)
+    blocked: bool = False
 
 
 class CodingAgent:
@@ -40,6 +53,9 @@ class CodingAgent:
         self.reporter = reporter
 
     def run(self, task: str) -> str:
+        return self.run_detailed(task).message
+
+    def run_detailed(self, task: str) -> AgentRunResult:
         run_id = self.storage.create_run(task=task, model=self.model_client.model, cwd=self.cwd)
         workspace_task = self._is_workspace_task(task)
         consecutive_failures = 0
@@ -48,6 +64,8 @@ class CodingAgent:
         blocked_mutation_failure = False
         verification_results: list[dict[str, str | bool]] = []
         mutation_records: list[dict[str, Any]] = []
+        failed_actions: list[dict[str, Any]] = []
+        denied_actions: list[dict[str, Any]] = []
         messages: list[ChatMessage] = [
             {"role": "system", "content": system_prompt(self.cwd, self.dry_run)},
             {"role": "user", "content": task},
@@ -61,7 +79,7 @@ class CodingAgent:
                 if not workspace_task and self._can_use_raw_final(response):
                     self.storage.add_step(run_id, "assistant", {"raw": response})
                     self._report_done()
-                    return response.strip()
+                    return AgentRunResult(message=response.strip(), run_id=run_id)
                 consecutive_failures += 1
                 payload = self._failure_payload(
                     step=step,
@@ -71,9 +89,15 @@ class CodingAgent:
                 )
                 self.storage.add_step(run_id, "assistant", {"raw": response})
                 self.storage.add_step(run_id, "tool", payload)
+                failed_actions.append(payload)
                 self._report_recovery("model returned invalid action JSON")
                 if consecutive_failures >= self.max_failures:
-                    return self._failure_summary(consecutive_failures, parse_error)
+                    return AgentRunResult(
+                        message=self._failure_summary(consecutive_failures, parse_error),
+                        run_id=run_id,
+                        failed_actions=failed_actions,
+                        blocked=True,
+                    )
                 messages.append({"role": "assistant", "content": response})
                 messages.append({"role": "user", "content": json.dumps(payload)})
                 previous_tool_failed = True
@@ -96,9 +120,15 @@ class CodingAgent:
                     consecutive_failures=consecutive_failures,
                 )
                 self.storage.add_step(run_id, "tool", payload)
+                failed_actions.append(payload)
                 self._report_recovery("blocked workspace tool for non-workspace request")
                 if consecutive_failures >= self.max_failures:
-                    return self._failure_summary(consecutive_failures, payload["output"])
+                    return AgentRunResult(
+                        message=self._failure_summary(consecutive_failures, payload["output"]),
+                        run_id=run_id,
+                        failed_actions=failed_actions,
+                        blocked=True,
+                    )
                 messages.append({"role": "assistant", "content": action.model_dump_json()})
                 messages.append({"role": "user", "content": json.dumps(payload)})
                 previous_tool_failed = True
@@ -124,9 +154,19 @@ class CodingAgent:
                         consecutive_failures=consecutive_failures,
                     )
                     self.storage.add_step(run_id, "tool", payload)
+                    failed_actions.append(payload)
                     self._report_recovery("blocked false completion after failed write/edit/patch")
                     if consecutive_failures >= self.max_failures:
-                        return self._failure_summary(consecutive_failures, payload["output"])
+                        return AgentRunResult(
+                            message=self._failure_summary(consecutive_failures, payload["output"]),
+                            run_id=run_id,
+                            changed_paths=self._successful_mutation_paths(mutation_records),
+                            mutation_records=mutation_records,
+                            verification_results=verification_results,
+                            failed_actions=failed_actions,
+                            denied_actions=denied_actions,
+                            blocked=True,
+                        )
                     messages.append({"role": "assistant", "content": action.model_dump_json()})
                     messages.append({"role": "user", "content": json.dumps(payload)})
                     continue
@@ -143,12 +183,22 @@ class CodingAgent:
                         consecutive_failures=consecutive_failures,
                     )
                     self.storage.add_step(run_id, "tool", payload)
+                    failed_actions.append(payload)
                     self._report_recovery("previous tool failed; continuing instead of finalizing")
                     messages.append({"role": "assistant", "content": action.model_dump_json()})
                     messages.append({"role": "user", "content": json.dumps(payload)})
                     continue
                 self._report_done()
-                return self._with_verification_summary(action.message, verification_results)
+                return AgentRunResult(
+                    message=self._with_verification_summary(action.message, verification_results),
+                    run_id=run_id,
+                    changed_paths=self._successful_mutation_paths(mutation_records),
+                    mutation_records=mutation_records,
+                    verification_results=verification_results,
+                    failed_actions=failed_actions,
+                    denied_actions=denied_actions,
+                    blocked=bool(failed_actions and not mutation_records),
+                )
 
             self._report_action(action)
             result = self._run_tool(action)
@@ -168,6 +218,13 @@ class CodingAgent:
                 previous_tool_failed = True
                 previous_failure_allows_final = self._can_finalize_after_failure(result)
                 blocked_mutation_failure = self._is_blocked_mutation(action, result)
+                failed_record = {
+                    "action": action.type,
+                    "output": result.output,
+                }
+                failed_actions.append(failed_record)
+                if "Permission denied" in result.output:
+                    denied_actions.append(failed_record)
 
             tool_payload = {
                 "type": "tool_result",
@@ -212,13 +269,31 @@ class CodingAgent:
                 tool_payload["mutation_records"] = new_mutation_records
             self.storage.add_step(run_id, "tool", tool_payload)
             if consecutive_failures >= self.max_failures:
-                return self._failure_summary(consecutive_failures, result.output)
+                return AgentRunResult(
+                    message=self._failure_summary(consecutive_failures, result.output),
+                    run_id=run_id,
+                    changed_paths=self._successful_mutation_paths(mutation_records),
+                    mutation_records=mutation_records,
+                    verification_results=verification_results,
+                    failed_actions=failed_actions,
+                    denied_actions=denied_actions,
+                    blocked=True,
+                )
             if not result.ok:
                 self._report_recovery("tool failed; asking model for another attempt")
             messages.append({"role": "assistant", "content": action.model_dump_json()})
             messages.append({"role": "user", "content": json.dumps(tool_payload)})
 
-        return f"Stopped after {self.max_steps} steps. Increase --max-steps if the task needs more work."
+        return AgentRunResult(
+            message=f"Stopped after {self.max_steps} steps. Increase --max-steps if the task needs more work.",
+            run_id=run_id,
+            changed_paths=self._successful_mutation_paths(mutation_records),
+            mutation_records=mutation_records,
+            verification_results=verification_results,
+            failed_actions=failed_actions,
+            denied_actions=denied_actions,
+            blocked=True,
+        )
 
     def _parse_action(self, raw: str) -> tuple[AgentAction | None, str | None]:
         try:
@@ -404,6 +479,16 @@ class CodingAgent:
             }
             for path in paths
         ]
+
+    @staticmethod
+    def _successful_mutation_paths(mutation_records: list[dict[str, Any]]) -> list[str]:
+        return sorted(
+            {
+                str(record["path"])
+                for record in mutation_records
+                if record.get("ok") is True and record.get("path")
+            }
+        )
 
     @staticmethod
     def _final_claim_rejection(message: str, mutation_records: list[dict[str, Any]]) -> str | None:

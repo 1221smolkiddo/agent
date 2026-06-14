@@ -90,6 +90,7 @@ These are already built and should be maintained while new work continues.
 - [x] Feature summary in `features_and_workdone.md`.
 - [x] Automatic focused verification after successful file mutations.
 - [x] Final-answer gate rejects unverified file creation/edit claims.
+- [x] Baseline interactive session state for follow-up turns.
 
 ## Team Task Board
 
@@ -137,7 +138,7 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 
 ### Phase 7: Planner And Task State
 
-- [ ] Issue 23: Task Plan Object. Owner:
+- [~] Issue 23: Task Plan Object. Owner: Agent47
 - [ ] Issue 24: Visible Step Progress. Owner:
 - [ ] Issue 25: Session Resume. Owner:
 
@@ -702,6 +703,8 @@ Fields:
 Acceptance criteria:
 
 - Agent creates and updates a plan for non-trivial tasks.
+
+Status: **In progress**. Interactive mode now keeps structured session state for current task, pending user info, target files, changed files, blockers, and recent tool results; full visible plans and step updates are still needed.
 
 #### 24. Visible Step Progress
 

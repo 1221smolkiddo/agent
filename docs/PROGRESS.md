@@ -8,7 +8,7 @@ This document tracks how far the coding agent has come and what collaborators ca
 
 **Approximate progress toward an industry-standard local AI coding agent:** 28%
 
-The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, non-workspace intent routing, general web search with provider fallback, structured patch application, verification command detection/suggestion/automatic execution/outcome summaries, mutation-attempt tracking for truthful final answers, clearer interactive terminal panels with short transcript context, run history, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
+The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, non-workspace intent routing, general web search with provider fallback, structured patch application, verification command detection/suggestion/automatic execution/outcome summaries, mutation-attempt tracking for truthful final answers, clearer interactive terminal panels with short transcript context and structured session state, run history, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
 
 This file should be updated whenever a meaningful Agent47 capability is added. Keep the enabled commands/actions current, move completed items out of "What Is Left" when they land, and update the percentage only when the agent gains real product capability rather than documentation alone.
 
@@ -97,6 +97,7 @@ There are currently **12 model-requestable actions**:
 | Operation status labels | Enabled |
 | Bordered interactive terminal panels | Enabled |
 | Short interactive transcript context | Enabled |
+| Structured interactive session state | Enabled |
 | Stop shortcut: `Ctrl+C` and `/stop` | Enabled |
 | Code parsing: tree-sitter | Enabled as optional parsing extra |
 | Storage: SQLite | Enabled |
@@ -117,7 +118,7 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 | 2 | Verification loop | Lets Agent47 detect, suggest, run, and summarize the right tests, lint, typecheck, and builds after edits | Baseline done |
 | 3 | Repo intelligence | Helps the agent choose relevant context using symbols, dependencies, git diff, and architecture summaries | Partial |
 | 4 | Safer shell policy | Separates read-only, test/build, install/network, and destructive commands with stronger approvals | Partial |
-| 5 | Durable sessions | Enables pause/resume, plan state, checkpoints, and long task recovery | Partial |
+| 5 | Durable sessions | Enables pause/resume, plan state, checkpoints, and long task recovery | Partial, with interactive state baseline |
 | 6 | Streaming UX | Makes CLI and interactive mode feel alive during model reasoning and tool execution | Partial |
 | 7 | Multi-model/provider layer | Supports planner/coder/reviewer profiles, fallbacks, and cost-aware routing | Not started |
 | 8 | Observability | Captures traces, timings, token use, failures, and debug bundles for reliability work | Partial |
@@ -146,6 +147,7 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 - `agent47` interactive mode starts write-enabled, while `/dry-run` remains available for inspect-only sessions.
 - Human approval prompts are implemented for write/edit/apply-patch/shell/web-search actions.
 - Mutation attempts are tracked so final answers cannot claim file creation or edits without a verified successful mutation.
+- Interactive session state tracks the current task, pending user info, target files, changed files, blockers, and recent tool results for follow-up turns.
 - `apply_patch` validates target paths, previews the full patch for approval, checks patch applicability, and applies it with `git apply`.
 - `detect_verification` scans known project files for likely test, lint, typecheck, and build commands.
 - `suggest_verification` ranks focused checks from changed paths, and successful file mutations now trigger automatic focused verification when commands are detected.

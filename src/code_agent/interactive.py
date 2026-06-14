@@ -8,6 +8,7 @@ from .config import Settings
 from .factory import create_agent
 from .permissions import confirm_permission
 from .sandbox import create_sandbox_workspace
+from .session import SessionState
 from .storage import AgentStorage
 from .status import StatusReporter
 from .terminal_ui import print_key_values, print_panel
@@ -25,6 +26,7 @@ def main() -> None:
     max_steps = 12
     max_failures: int | None = None
     transcript: list[tuple[str, str]] = []
+    session_state = SessionState()
 
     print_panel(
         "Agent47",
@@ -62,6 +64,7 @@ def main() -> None:
                 sandbox_enabled,
                 max_steps,
                 max_failures,
+                session_state,
             )
             if command_result.exit_requested:
                 print_panel("System", "bye")
@@ -87,10 +90,11 @@ def main() -> None:
         )
         try:
             print_panel("You", user_input)
-            task = task_with_transcript(user_input, transcript)
-            result = agent.run(task)
-            print_panel("Agent47", result)
-            transcript.append((user_input, result))
+            task = task_with_context(user_input, transcript, session_state)
+            result = agent.run_detailed(task)
+            print_panel("Agent47", result.message)
+            session_state.update(user_input, result)
+            transcript.append((user_input, result.message))
             transcript = transcript[-8:]
         except KeyboardInterrupt:
             print_panel("System", "STOPPED by user")
@@ -129,6 +133,7 @@ def handle_command(
     sandbox_enabled: bool,
     max_steps: int,
     max_failures: int | None,
+    session_state: SessionState | None = None,
 ) -> CommandState:
     parts = raw.split(maxsplit=1)
     command = parts[0].lower()
@@ -194,6 +199,7 @@ def handle_command(
                 ("Sandbox", "on" if sandbox_enabled else "off"),
                 ("Max steps", max_steps),
                 ("Max failures", max_failures or settings.agent_max_failures),
+                ("Session", session_state.render() if session_state else "<unavailable>"),
             ],
         )
     else:
@@ -249,6 +255,28 @@ def task_with_transcript(user_input: str, transcript: list[tuple[str, str]]) -> 
         "",
         "Recent interactive transcript for reference:",
     ]
+    for index, (user, assistant) in enumerate(transcript[-6:], start=1):
+        lines.append(f"Turn {index} user: {user}")
+        lines.append(f"Turn {index} Agent47: {assistant}")
+    return "\n".join(lines)
+
+
+def task_with_context(
+    user_input: str,
+    transcript: list[tuple[str, str]],
+    session_state: SessionState,
+) -> str:
+    sections = [user_input]
+    rendered_state = session_state.render()
+    if rendered_state:
+        sections.extend(["", rendered_state])
+    if transcript:
+        sections.extend(["", _format_transcript(transcript)])
+    return "\n".join(sections)
+
+
+def _format_transcript(transcript: list[tuple[str, str]]) -> str:
+    lines = ["Recent interactive transcript for reference:"]
     for index, (user, assistant) in enumerate(transcript[-6:], start=1):
         lines.append(f"Turn {index} user: {user}")
         lines.append(f"Turn {index} Agent47: {assistant}")

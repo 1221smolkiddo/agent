@@ -76,7 +76,7 @@ agent47
 ```
 
 Interactive mode separates prompts, responses, help, status, and history into bordered terminal panels so user input and Agent47 output do not visually merge.
-It also carries a short in-memory transcript into follow-up turns so Agent47 can continue recent work without relying on magic phrases.
+It carries both a short in-memory transcript and structured session state into follow-up turns so Agent47 can continue recent work without relying on magic phrases.
 Interactive mode starts write-enabled so file creation and edits can actually happen after approval. Use `/dry-run` when you want inspect-only behavior.
 
 Inside interactive mode, type freely:
@@ -196,6 +196,7 @@ src/
     models.py           OpenAI-compatible model client for OpenRouter
     prompts.py          System prompt
     sandbox.py          Local workspace sandbox copies
+    session.py          Interactive session state
     schema.py           Shared action/result models
     storage.py          SQLite run history
     parsing.py          Optional tree-sitter code summaries

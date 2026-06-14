@@ -34,6 +34,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - Mutation tool results include changed paths and automatic verification results or a verification hint for the next model step.
 - Bordered terminal panels distinguish user prompts, Agent47 responses, help, status, and history.
 - Interactive mode keeps a short in-memory transcript for follow-up summaries and recaps.
+- Interactive mode keeps structured session state for the current task, pending user info, target files, last changed files, blockers, and recent tool results.
 - Guard against false completion after blocked writes, edits, or patch applications.
 - Operation status labels such as `THINKING`, `READING`, `EDITING`, `SEARCHING`, `TESTING`, `BUILDING`, `RECOVERING`, and `DONE`.
 - Stop controls with `Ctrl+C`, `/stop`, and `/exit`.
@@ -105,6 +106,7 @@ Inside `agent47`:
 - Non-workspace routing guard.
 - General web-search provider fallback.
 - Transcript-aware interactive summaries.
+- Interactive session-state follow-up handling.
 - Operation status label formatting.
 - Casual greeting handling.
 
@@ -115,7 +117,7 @@ Inside `agent47`:
 - Network policy controls.
 - Streaming model output.
 - Better repo context selection.
-- Planner state with visible task steps.
+- Full planner state with visible task steps.
 - Session resume.
 - Multi-provider and multi-model support.
 - VS Code extension frontend.
