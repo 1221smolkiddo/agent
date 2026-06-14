@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import typer
+from typer._click.exceptions import Abort
 
 from .config import Settings
 from .factory import create_agent
@@ -40,9 +41,8 @@ def main() -> None:
 
     while True:
         try:
-            typer.echo("")
-            user_input = typer.prompt("agent47 >").strip()
-        except (EOFError, KeyboardInterrupt):
+            user_input = read_prompt()
+        except (EOFError, KeyboardInterrupt, Abort):
             print_panel("System", "bye")
             return
 
@@ -244,6 +244,11 @@ def print_history(settings: Settings) -> None:
 def is_casual_greeting(user_input: str) -> bool:
     normalized = user_input.strip().lower()
     return normalized in {"hey", "hi", "hello", "yo", "sup", "hiya"}
+
+
+def read_prompt() -> str:
+    typer.echo("")
+    return typer.prompt("agent47 >").strip()
 
 
 def task_with_transcript(user_input: str, transcript: list[tuple[str, str]]) -> str:

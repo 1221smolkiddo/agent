@@ -1,4 +1,8 @@
-from code_agent.interactive import DEFAULT_DRY_RUN
+import pytest
+from typer._click.exceptions import Abort
+
+import code_agent.interactive as interactive
+from code_agent.interactive import DEFAULT_DRY_RUN, read_prompt
 from code_agent.terminal_ui import format_key_values, format_panel
 
 
@@ -27,3 +31,15 @@ def test_format_key_values_uses_panel_body() -> None:
 
 def test_interactive_mode_starts_write_enabled() -> None:
     assert DEFAULT_DRY_RUN is False
+
+
+def test_read_prompt_propagates_click_abort(monkeypatch) -> None:
+    monkeypatch.setattr(interactive.typer, "echo", lambda *_args, **_kwargs: None)
+
+    def abort_prompt(_prompt):
+        raise Abort()
+
+    monkeypatch.setattr(interactive.typer, "prompt", abort_prompt)
+
+    with pytest.raises(Abort):
+        read_prompt()
