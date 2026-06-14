@@ -77,6 +77,7 @@ agent47
 
 Interactive mode separates prompts, responses, help, status, and history into bordered terminal panels so user input and Agent47 output do not visually merge.
 It also keeps a short in-memory transcript so follow-up requests like "summarize your responses" can refer to recent Agent47 replies.
+Interactive mode starts write-enabled so file creation and edits can actually happen after approval. Use `/dry-run` when you want inspect-only behavior.
 
 Inside interactive mode, type freely:
 

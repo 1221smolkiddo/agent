@@ -14,7 +14,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - Local `.env` configuration with secrets excluded from git.
 - User approval prompts for file listing, reading, project search, code summary, verification detection/suggestion, file writes, file edits, patch application, shell commands, and web search.
 - Dry-run mode for inspect-only sessions.
-- Write mode through `/write` or non-dry-run CLI usage.
+- Interactive mode starts write-enabled, and write mode is also available through `/write` or non-dry-run CLI usage.
 - Local workspace sandbox mode through `--sandbox` or `/sandbox`.
 - Workspace path guardrails to block access outside the selected workspace.
 - File operations with `pathlib`.
@@ -74,7 +74,7 @@ Inside `agent47`:
 - Sandbox mode copies the workspace and excludes `.env`, `.git`, `.venv`, caches, and local agent state.
 - Failed writes in dry-run mode do not count as completed work.
 - Project search skips local state and secret files such as `.env`, `.git`, `.code-agent`, caches, and virtual environments.
-- The agent rejects final answers that claim a blocked write/edit/patch succeeded.
+- The agent tracks mutation attempts and rejects final answers that claim unverified, blocked, skipped, or failed file changes succeeded.
 
 ## Collaboration Work Completed
 

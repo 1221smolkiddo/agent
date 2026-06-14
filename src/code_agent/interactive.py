@@ -12,13 +12,15 @@ from .storage import AgentStorage
 from .status import StatusReporter
 from .terminal_ui import print_key_values, print_panel
 
+DEFAULT_DRY_RUN = False
+
 
 def main() -> None:
     settings = Settings()
     base_cwd = Path.cwd().resolve()
     cwd = base_cwd
     model: str | None = None
-    dry_run = True
+    dry_run = DEFAULT_DRY_RUN
     sandbox_enabled = False
     max_steps = 12
     max_failures: int | None = None

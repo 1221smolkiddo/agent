@@ -1,3 +1,4 @@
+from code_agent.interactive import DEFAULT_DRY_RUN
 from code_agent.terminal_ui import format_key_values, format_panel
 
 
@@ -22,3 +23,7 @@ def test_format_key_values_uses_panel_body() -> None:
 
     assert "| Mode: dry-run                  |" in panel
     assert "| Sandbox: off                   |" in panel
+
+
+def test_interactive_mode_starts_write_enabled() -> None:
+    assert DEFAULT_DRY_RUN is False

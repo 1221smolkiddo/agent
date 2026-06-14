@@ -125,6 +125,50 @@ def test_agent_rejects_false_completion_after_blocked_write(tmp_path: Path) -> N
     assert "false_completion" in model.messages_seen[2][-1]["content"]
 
 
+def test_agent_rejects_created_claim_without_any_mutation(tmp_path: Path) -> None:
+    model = FakeModel(
+        [
+            '{"type":"final","message":"I created notes.md with the requested content."}',
+            '{"type":"final","message":"I did not create notes.md because no write action was run."}',
+        ]
+    )
+    tools = RecoveringTools()
+    agent = make_agent(tmp_path, model, tools)
+
+    result = agent.run("create a notes.md file in this project")
+
+    assert result == "I did not create notes.md because no write action was run."
+    assert tools.calls == 0
+    assert "no verified file mutation" in model.messages_seen[1][-1]["content"]
+
+
+def test_agent_rejects_template_claim_after_failed_write(tmp_path: Path) -> None:
+    model = FakeModel(
+        [
+            '{"type":"write_file","path":"project_notes.md","content":"# Project Notes"}',
+            (
+                '{"type":"final","message":"I created a new markdown file called '
+                "'project_notes.md' in the project root directory. Here is the template." + '"}'
+            ),
+            '{"type":"final","message":"I could not create project_notes.md because the write failed."}',
+        ]
+    )
+
+    class FailedWriteTools(RecoveringTools):
+        def run(self, action: AgentAction) -> ToolResult:
+            self.calls += 1
+            return ToolResult(ok=False, output="Dry-run mode skipped write_file.")
+
+    tools = FailedWriteTools()
+    agent = make_agent(tmp_path, model, tools)
+
+    result = agent.run("make an md file in the project")
+
+    assert result == "I could not create project_notes.md because the write failed."
+    assert tools.calls == 1
+    assert "no mutation succeeded" in model.messages_seen[2][-1]["content"]
+
+
 def test_agent_adds_verification_hint_after_successful_mutation(tmp_path: Path) -> None:
     model = FakeModel(
         [

@@ -47,6 +47,7 @@ class CodingAgent:
         previous_failure_allows_final = False
         blocked_mutation_failure = False
         verification_results: list[dict[str, str | bool]] = []
+        mutation_records: list[dict[str, Any]] = []
         messages: list[ChatMessage] = [
             {"role": "system", "content": system_prompt(self.cwd, self.dry_run)},
             {"role": "user", "content": task},
@@ -106,12 +107,16 @@ class CodingAgent:
                 continue
 
             if isinstance(action, FinalAction):
-                if blocked_mutation_failure and self._final_claims_mutation_success(action.message):
+                final_claim_rejection = self._final_claim_rejection(action.message, mutation_records)
+                if final_claim_rejection or (
+                    blocked_mutation_failure and self._final_claims_mutation_success(action.message)
+                ):
                     consecutive_failures += 1
                     payload = self._failure_payload(
                         step=step,
                         kind="false_completion",
-                        output=(
+                        output=final_claim_rejection
+                        or (
                             "A file write/edit/patch was blocked, but the final answer claimed the change was completed. "
                             "Do not claim success. Explain that the file was not created/edited/patched and tell the user "
                             "to enable /write or use /sandbox plus /write."
@@ -148,6 +153,8 @@ class CodingAgent:
             self._report_action(action)
             result = self._run_tool(action)
             changed_paths = self._changed_paths_from_action(action) if result.ok else []
+            new_mutation_records = self._mutation_records_from_action(action, result)
+            mutation_records.extend(new_mutation_records)
             verification_result = self._verification_result_from_action(action, result)
             if verification_result:
                 verification_results.append(verification_result)
@@ -201,6 +208,8 @@ class CodingAgent:
                     )
             if verification_result:
                 tool_payload["verification_result"] = verification_result
+            if new_mutation_records:
+                tool_payload["mutation_records"] = new_mutation_records
             self.storage.add_step(run_id, "tool", tool_payload)
             if consecutive_failures >= self.max_failures:
                 return self._failure_summary(consecutive_failures, result.output)
@@ -362,6 +371,44 @@ class CodingAgent:
             patch = getattr(action, "patch", "")
             return sorted(ToolRegistry._paths_from_patch(patch))
         return []
+
+    @staticmethod
+    def _mutation_records_from_action(action: AgentAction, result: ToolResult) -> list[dict[str, Any]]:
+        if action.type not in {"write_file", "edit_file", "apply_patch"}:
+            return []
+        paths = CodingAgent._changed_paths_from_action(action)
+        if not paths:
+            paths = ["<unknown>"]
+        return [
+            {
+                "action": action.type,
+                "path": path,
+                "ok": result.ok,
+                "output": result.output,
+            }
+            for path in paths
+        ]
+
+    @staticmethod
+    def _final_claim_rejection(message: str, mutation_records: list[dict[str, Any]]) -> str | None:
+        if not CodingAgent._final_claims_mutation_success(message):
+            return None
+        successful = [record for record in mutation_records if record.get("ok") is True]
+        if successful:
+            return None
+        failed = [record for record in mutation_records if record.get("ok") is False]
+        if failed:
+            paths = ", ".join(str(record.get("path", "<unknown>")) for record in failed)
+            return (
+                "The final answer claimed a file was created, edited, written, saved, or updated, "
+                f"but no mutation succeeded. Failed mutation target(s): {paths}. "
+                "Correct the final answer honestly and do not provide a template as if it were saved."
+            )
+        return (
+            "The final answer claimed a file was created, edited, written, saved, or updated, "
+            "but this run has no verified file mutation. Use write_file, edit_file, or apply_patch first, "
+            "or explain the blocker honestly."
+        )
 
     @staticmethod
     def _verification_result_from_action(

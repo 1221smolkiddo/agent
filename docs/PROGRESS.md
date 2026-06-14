@@ -8,7 +8,7 @@ This document tracks how far the coding agent has come and what collaborators ca
 
 **Approximate progress toward an industry-standard local AI coding agent:** 28%
 
-The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, non-workspace intent routing, general web search with provider fallback, structured patch application, verification command detection/suggestion/automatic execution/outcome summaries, clearer interactive terminal panels with short transcript context, run history, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
+The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, non-workspace intent routing, general web search with provider fallback, structured patch application, verification command detection/suggestion/automatic execution/outcome summaries, mutation-attempt tracking for truthful final answers, clearer interactive terminal panels with short transcript context, run history, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
 
 This file should be updated whenever a meaningful Agent47 capability is added. Keep the enabled commands/actions current, move completed items out of "What Is Left" when they land, and update the percentage only when the agent gains real product capability rather than documentation alone.
 
@@ -93,6 +93,7 @@ There are currently **12 model-requestable actions**:
 | Verification command suggestion | Enabled |
 | Automatic focused verification execution | Enabled |
 | Verification outcome summaries | Enabled |
+| Mutation-attempt tracking for final-answer honesty | Enabled |
 | Operation status labels | Enabled |
 | Bordered interactive terminal panels | Enabled |
 | Short interactive transcript context | Enabled |
@@ -142,7 +143,9 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 - Read/list/project-search/code-summary actions now ask for user approval.
 - Project search skips local state and secret files such as `.env`, `.git`, `.code-agent`, caches, and virtual environments.
 - `--dry-run` skips writes and shell commands.
+- `agent47` interactive mode starts write-enabled, while `/dry-run` remains available for inspect-only sessions.
 - Human approval prompts are implemented for write/edit/apply-patch/shell/web-search actions.
+- Mutation attempts are tracked so final answers cannot claim file creation or edits without a verified successful mutation.
 - `apply_patch` validates target paths, previews the full patch for approval, checks patch applicability, and applies it with `git apply`.
 - `detect_verification` scans known project files for likely test, lint, typecheck, and build commands.
 - `suggest_verification` ranks focused checks from changed paths, and successful file mutations now trigger automatic focused verification when commands are detected.

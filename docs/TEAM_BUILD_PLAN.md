@@ -89,6 +89,7 @@ These are already built and should be maintained while new work continues.
 - [x] Progress tracker in `docs/PROGRESS.md`.
 - [x] Feature summary in `features_and_workdone.md`.
 - [x] Automatic focused verification after successful file mutations.
+- [x] Final-answer gate rejects unverified file creation/edit claims.
 
 ## Team Task Board
 
@@ -96,8 +97,8 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 
 ### Phase 1: Trust And Verification
 
-- [ ] Issue 1: Mutation Tracking. Owner:
-- [ ] Issue 2: Final Answer Verification Gate. Owner:
+- [~] Issue 1: Mutation Tracking. Owner: Agent47
+- [x] Issue 2: Final Answer Verification Gate. Owner: Agent47
 - [ ] Issue 3: Final Work Report. Owner:
 
 ### Phase 2: Patch-Based Editing
@@ -222,6 +223,8 @@ Acceptance criteria:
 - If a write succeeds, final answer can include verified path.
 - Tests cover success, dry-run skip, permission denied, and missing file.
 
+Status: **In progress**. Agent47 now records mutation attempts in run steps and uses them to reject unverified final claims; richer file-exists/content-changed checks are still needed.
+
 #### 2. Final Answer Verification Gate
 
 Owner suggestion: Agent Core Owner
@@ -241,6 +244,8 @@ Acceptance criteria:
 - Model cannot say "I created X" unless X was verified.
 - Model can honestly say "I could not create X because write mode is disabled."
 - Regression tests for false completion.
+
+Status: **Done**. Final answers that claim file creation or edits are rejected unless the run contains a successful write, edit, or patch mutation.
 
 #### 3. Final Work Report
 
