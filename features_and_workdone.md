@@ -18,8 +18,9 @@ This document summarizes the current state of Agent47 for collaborators.
 - Local workspace sandbox mode through `--sandbox` or `/sandbox`.
 - Workspace path guardrails to block access outside the selected workspace.
 - File operations with `pathlib`.
-- Diff previews for write, edit, and structured patch operations.
+- Diff previews for write, edit, delete, and structured patch operations.
 - Structured `apply_patch` action backed by `git apply`.
+- First-class `delete_file` action for approved file removal.
 - Verification command detection for Python, Node, Rust, and Go projects.
 - Focused verification command suggestions based on changed file paths.
 - Automatic focused verification after successful file mutations when commands are detected.
@@ -36,6 +37,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - Interactive mode keeps a short in-memory transcript for follow-up summaries and recaps.
 - Interactive mode keeps structured session state for the current task, pending user info, target files, last changed files, blockers, and recent tool results.
 - Guard against false completion after blocked writes, edits, or patch applications.
+- Guard against false completion after unverified file deletion claims.
 - Operation status labels such as `THINKING`, `READING`, `EDITING`, `SEARCHING`, `TESTING`, `BUILDING`, `RECOVERING`, and `DONE`.
 - Stop controls with `Ctrl+C`, `/stop`, and `/exit`.
 

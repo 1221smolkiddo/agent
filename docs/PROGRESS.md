@@ -52,7 +52,7 @@ Inside `agent47`, there are currently **12 slash commands**:
 
 ## Enabled Agent Actions
 
-There are currently **12 model-requestable actions**:
+There are currently **13 model-requestable actions**:
 
 | Action | Purpose |
 | --- | --- |
@@ -62,6 +62,7 @@ There are currently **12 model-requestable actions**:
 | `write_file` | Write a full file inside the workspace. |
 | `edit_file` | Replace exact text in a file. |
 | `apply_patch` | Apply a unified diff patch inside the workspace after approval. |
+| `delete_file` | Delete a file inside the workspace after approval. |
 | `run_shell` | Run a shell command in the workspace. |
 | `search` | Search the project with ripgrep, falling back to a built-in Python search when ripgrep is unavailable. |
 | `web_search` | Search the web after user approval, using provider fallback when available. |
@@ -149,6 +150,7 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 - Mutation attempts are tracked so final answers cannot claim file creation or edits without a verified successful mutation.
 - Interactive session state tracks the current task, pending user info, target files, changed files, blockers, and recent tool results for follow-up turns.
 - `apply_patch` validates target paths, previews the full patch for approval, checks patch applicability, and applies it with `git apply`.
+- `delete_file` removes files through a first-class approved mutation action instead of shell commands.
 - `detect_verification` scans known project files for likely test, lint, typecheck, and build commands.
 - `suggest_verification` ranks focused checks from changed paths, and successful file mutations now trigger automatic focused verification when commands are detected.
 - Verification-like shell commands are recorded and appended to final summaries as pass/fail outcomes.

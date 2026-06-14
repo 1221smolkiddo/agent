@@ -440,6 +440,7 @@ class CodingAgent:
             "write_file",
             "edit_file",
             "apply_patch",
+            "delete_file",
             "run_shell",
             "search",
             "summarize_code",
@@ -449,13 +450,16 @@ class CodingAgent:
 
     @staticmethod
     def _is_blocked_mutation(action: AgentAction, result: ToolResult) -> bool:
-        if action.type not in {"write_file", "edit_file", "apply_patch"}:
+        if action.type not in {"write_file", "edit_file", "apply_patch", "delete_file"}:
             return False
         return "Permission denied" in result.output or "Dry-run mode skipped" in result.output
 
     @staticmethod
     def _changed_paths_from_action(action: AgentAction) -> list[str]:
         if action.type in {"write_file", "edit_file"}:
+            path = getattr(action, "path", "")
+            return [path] if path else []
+        if action.type == "delete_file":
             path = getattr(action, "path", "")
             return [path] if path else []
         if action.type == "apply_patch":
@@ -465,7 +469,7 @@ class CodingAgent:
 
     @staticmethod
     def _mutation_records_from_action(action: AgentAction, result: ToolResult) -> list[dict[str, Any]]:
-        if action.type not in {"write_file", "edit_file", "apply_patch"}:
+        if action.type not in {"write_file", "edit_file", "apply_patch", "delete_file"}:
             return []
         paths = CodingAgent._changed_paths_from_action(action)
         if not paths:
@@ -501,13 +505,13 @@ class CodingAgent:
         if failed:
             paths = ", ".join(str(record.get("path", "<unknown>")) for record in failed)
             return (
-                "The final answer claimed a file was created, edited, written, saved, or updated, "
+                "The final answer claimed a file was created, edited, written, saved, updated, deleted, or removed, "
                 f"but no mutation succeeded. Failed mutation target(s): {paths}. "
                 "Correct the final answer honestly and do not provide a template as if it were saved."
             )
         return (
-            "The final answer claimed a file was created, edited, written, saved, or updated, "
-            "but this run has no verified file mutation. Use write_file, edit_file, or apply_patch first, "
+            "The final answer claimed a file was created, edited, written, saved, updated, deleted, or removed, "
+            "but this run has no verified file mutation. Use write_file, edit_file, apply_patch, or delete_file first, "
             "or explain the blocker honestly."
         )
 
@@ -622,6 +626,8 @@ class CodingAgent:
             "saved",
             "updated",
             "edited",
+            "deleted",
+            "removed",
             "committed",
             "you can find",
             "file is named",

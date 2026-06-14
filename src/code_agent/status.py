@@ -3,6 +3,7 @@ from __future__ import annotations
 from .schema import (
     AgentAction,
     ApplyPatchAction,
+    DeleteFileAction,
     DetectVerificationAction,
     EditFileAction,
     ListFilesAction,
@@ -44,6 +45,8 @@ def format_action_status(action: AgentAction) -> str:
         return f"EDITING {action.path}"
     if isinstance(action, ApplyPatchAction):
         return "EDITING applying patch"
+    if isinstance(action, DeleteFileAction):
+        return f"EDITING deleting {action.path}"
     if isinstance(action, SearchAction):
         return f"SEARCHING project for {action.query}"
     if isinstance(action, WebSearchAction):

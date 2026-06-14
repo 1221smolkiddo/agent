@@ -19,6 +19,7 @@ class SessionState:
     target_files: list[str] = field(default_factory=list)
     last_created_files: list[str] = field(default_factory=list)
     last_edited_files: list[str] = field(default_factory=list)
+    last_deleted_files: list[str] = field(default_factory=list)
     last_tool_results: list[str] = field(default_factory=list)
     last_blocker: str | None = None
     last_run_id: int | None = None
@@ -44,6 +45,18 @@ class SessionState:
                 for record in result.mutation_records
                 if record.get("ok") is True and record.get("action") in {"edit_file", "apply_patch"}
             ]
+            self.last_deleted_files = [
+                record["path"]
+                for record in result.mutation_records
+                if record.get("ok") is True and record.get("action") == "delete_file"
+            ]
+            if self.last_deleted_files:
+                self.last_created_files = [
+                    path for path in self.last_created_files if path not in self.last_deleted_files
+                ]
+                self.last_edited_files = [
+                    path for path in self.last_edited_files if path not in self.last_deleted_files
+                ]
             self.pending_user_info = None
         else:
             mentioned_files = extract_file_refs(user_input + "\n" + result.message)
@@ -66,6 +79,8 @@ class SessionState:
             rows.append(("last_created_files", ", ".join(self.last_created_files)))
         if self.last_edited_files:
             rows.append(("last_edited_files", ", ".join(self.last_edited_files)))
+        if self.last_deleted_files:
+            rows.append(("last_deleted_files", ", ".join(self.last_deleted_files)))
         if self.last_blocker:
             rows.append(("last_blocker", self.last_blocker))
         if self.last_tool_results:

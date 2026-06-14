@@ -169,6 +169,46 @@ def test_agent_rejects_template_claim_after_failed_write(tmp_path: Path) -> None
     assert "no mutation succeeded" in model.messages_seen[2][-1]["content"]
 
 
+def test_agent_accepts_deleted_claim_after_delete_file(tmp_path: Path) -> None:
+    model = FakeModel(
+        [
+            '{"type":"delete_file","path":"hello_world.py"}',
+            '{"type":"final","message":"I removed hello_world.py from the workspace."}',
+        ]
+    )
+    tools = RecoveringTools()
+    agent = make_agent(tmp_path, model, tools)
+
+    result = agent.run_detailed("remove the file you just created")
+
+    assert result.message == "I removed hello_world.py from the workspace."
+    assert result.changed_paths == ["hello_world.py"]
+    assert result.mutation_records == [
+        {
+            "action": "delete_file",
+            "path": "hello_world.py",
+            "ok": True,
+            "output": "recovered",
+        }
+    ]
+
+
+def test_agent_rejects_deleted_claim_without_delete_file(tmp_path: Path) -> None:
+    model = FakeModel(
+        [
+            '{"type":"final","message":"I removed hello_world.py from the workspace."}',
+            '{"type":"final","message":"I did not remove hello_world.py because no delete action ran."}',
+        ]
+    )
+    tools = RecoveringTools()
+    agent = make_agent(tmp_path, model, tools)
+
+    result = agent.run("remove hello_world.py")
+
+    assert result == "I did not remove hello_world.py because no delete action ran."
+    assert "no verified file mutation" in model.messages_seen[1][-1]["content"]
+
+
 def test_agent_adds_verification_hint_after_successful_mutation(tmp_path: Path) -> None:
     model = FakeModel(
         [

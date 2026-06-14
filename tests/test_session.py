@@ -91,6 +91,31 @@ def test_session_state_tracks_created_files() -> None:
     assert "last_created_files: CONTRIBUTORS.md" in state.render()
 
 
+def test_session_state_tracks_deleted_files() -> None:
+    state = SessionState(last_created_files=["hello_world.py"], target_files=["hello_world.py"])
+
+    state.update(
+        "remove the file you just created",
+        AgentRunResult(
+            message="Removed hello_world.py.",
+            run_id=3,
+            changed_paths=["hello_world.py"],
+            mutation_records=[
+                {
+                    "action": "delete_file",
+                    "path": "hello_world.py",
+                    "ok": True,
+                    "output": "deleted",
+                }
+            ],
+        ),
+    )
+
+    assert state.last_created_files == []
+    assert state.last_deleted_files == ["hello_world.py"]
+    assert "last_deleted_files: hello_world.py" in state.render()
+
+
 def test_task_with_context_includes_session_state_and_transcript() -> None:
     state = SessionState(
         current_task="create a contributors file",

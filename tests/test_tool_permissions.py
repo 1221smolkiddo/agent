@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import code_agent.tools as tools_module
-from code_agent.schema import ListFilesAction, ReadFileAction, SearchAction, WebSearchAction
+from code_agent.schema import DeleteFileAction, ListFilesAction, ReadFileAction, SearchAction, WebSearchAction
 from code_agent.tools import BingParser, ToolRegistry
 
 
@@ -33,6 +33,17 @@ def test_project_search_requires_permission(tmp_path: Path) -> None:
     assert result.output == "Permission denied for search."
 
 
+def test_delete_file_requires_permission(tmp_path: Path) -> None:
+    (tmp_path / "notes.md").write_text("delete me", encoding="utf-8")
+    tools = ToolRegistry(workspace=tmp_path, dry_run=False, approval_callback=lambda _a, _d: False)
+
+    result = tools.run(DeleteFileAction(type="delete_file", path="notes.md"))
+
+    assert not result.ok
+    assert result.output == "Permission denied for delete_file."
+    assert (tmp_path / "notes.md").exists()
+
+
 def test_read_file_with_permission_succeeds(tmp_path: Path) -> None:
     (tmp_path / "README.md").write_text("hello", encoding="utf-8")
     tools = ToolRegistry(workspace=tmp_path, dry_run=True, approval_callback=lambda _a, _d: True)
@@ -41,6 +52,28 @@ def test_read_file_with_permission_succeeds(tmp_path: Path) -> None:
 
     assert result.ok
     assert result.output == "hello"
+
+
+def test_delete_file_with_permission_succeeds(tmp_path: Path) -> None:
+    (tmp_path / "notes.md").write_text("delete me", encoding="utf-8")
+    tools = ToolRegistry(workspace=tmp_path, dry_run=False, approval_callback=lambda _a, _d: True)
+
+    result = tools.run(DeleteFileAction(type="delete_file", path="notes.md"))
+
+    assert result.ok
+    assert "Deleted notes.md." in result.output
+    assert not (tmp_path / "notes.md").exists()
+
+
+def test_delete_file_dry_run_does_not_remove_file(tmp_path: Path) -> None:
+    (tmp_path / "notes.md").write_text("delete me", encoding="utf-8")
+    tools = ToolRegistry(workspace=tmp_path, dry_run=True, approval_callback=lambda _a, _d: True)
+
+    result = tools.run(DeleteFileAction(type="delete_file", path="notes.md"))
+
+    assert not result.ok
+    assert "Dry-run mode skipped delete_file" in result.output
+    assert (tmp_path / "notes.md").exists()
 
 
 def test_project_search_falls_back_when_ripgrep_is_missing(

@@ -38,6 +38,11 @@ class ApplyPatchAction(BaseModel):
     patch: str
 
 
+class DeleteFileAction(BaseModel):
+    type: Literal["delete_file"]
+    path: str
+
+
 class RunShellAction(BaseModel):
     type: Literal["run_shell"]
     command: str
@@ -75,6 +80,7 @@ AgentAction = Union[
     WriteFileAction,
     EditFileAction,
     ApplyPatchAction,
+    DeleteFileAction,
     RunShellAction,
     SearchAction,
     WebSearchAction,

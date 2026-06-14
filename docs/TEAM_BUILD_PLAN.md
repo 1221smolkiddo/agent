@@ -211,6 +211,7 @@ Tasks:
 
 - Track `write_file` attempts.
 - Track `edit_file` attempts.
+- Track `delete_file` attempts.
 - Track target path.
 - Track whether the tool succeeded.
 - Track whether the file exists after write.

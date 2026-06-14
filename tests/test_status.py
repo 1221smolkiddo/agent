@@ -1,5 +1,6 @@
 from code_agent.schema import (
     ApplyPatchAction,
+    DeleteFileAction,
     DetectVerificationAction,
     EditFileAction,
     RunShellAction,
@@ -23,6 +24,12 @@ def test_format_action_status_for_apply_patch() -> None:
     status = format_action_status(ApplyPatchAction(type="apply_patch", patch="diff"))
 
     assert status == "EDITING applying patch"
+
+
+def test_format_action_status_for_delete_file() -> None:
+    status = format_action_status(DeleteFileAction(type="delete_file", path="hello_world.py"))
+
+    assert status == "EDITING deleting hello_world.py"
 
 
 def test_format_action_status_for_project_search() -> None:

@@ -13,6 +13,7 @@ from pathlib import Path
 from .schema import (
     AgentAction,
     ApplyPatchAction,
+    DeleteFileAction,
     DetectVerificationAction,
     EditFileAction,
     ListFilesAction,
@@ -64,6 +65,8 @@ class ToolRegistry:
             return self._edit_file(action.path, action.find, action.replace)
         if isinstance(action, ApplyPatchAction):
             return self._apply_patch(action.patch)
+        if isinstance(action, DeleteFileAction):
+            return self._delete_file(action.path)
         if isinstance(action, RunShellAction):
             return self._run_shell(action.command)
         if isinstance(action, SearchAction):
@@ -164,6 +167,30 @@ class ToolRegistry:
         if not check.ok:
             return check
         return self._git_apply(patch, check=False)
+
+    def _delete_file(self, requested_path: str) -> ToolResult:
+        if self.dry_run:
+            return ToolResult(
+                ok=False,
+                output=(
+                    "Dry-run mode skipped delete_file. Tell the user to run /write, "
+                    "/sandbox plus /write, or use --sandbox/without --dry-run before deleting files."
+                ),
+            )
+        try:
+            target = self.resolve_inside_workspace(requested_path)
+        except ValueError as exc:
+            return ToolResult(ok=False, output=str(exc))
+        if not target.exists():
+            return ToolResult(ok=False, output=f"File does not exist: {requested_path}")
+        if not target.is_file():
+            return ToolResult(ok=False, output=f"Refusing to delete non-file path: {requested_path}")
+        before = target.read_text(encoding="utf-8")
+        diff = self._diff(requested_path, before, "")
+        if not self._approve("delete_file", diff or f"Delete {requested_path}"):
+            return ToolResult(ok=False, output="Permission denied for delete_file.")
+        target.unlink()
+        return ToolResult(ok=True, output=f"Deleted {requested_path}.\n{diff}")
 
     def _run_shell(self, command: str) -> ToolResult:
         if self.dry_run:

@@ -14,9 +14,11 @@ def test_system_prompt_names_agent47_engineering_protocol() -> None:
     assert "If web_search returns weak or no results" in prompt
     assert "build a short internal plan" in prompt
     assert "Prefer apply_patch for code edits" in prompt
+    assert "Use delete_file for file removal" in prompt
     assert "use a file mutation tool instead of giving the user a template" in prompt
     assert "never describe unsaved content as a created file" in prompt
     assert '{ "type": "apply_patch"' in prompt
+    assert '{ "type": "delete_file"' in prompt
     assert "run the most focused useful verification command" in prompt
     assert "Use detect_verification" in prompt
     assert '{ "type": "detect_verification" }' in prompt
