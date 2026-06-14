@@ -78,6 +78,8 @@ def test_is_casual_greeting() -> None:
 def test_should_include_transcript_for_summary_request() -> None:
     assert should_include_transcript("summarise your responses into 2 lines")
     assert should_include_transcript("recap our conversation")
+    assert should_include_transcript("the names are sm and sv")
+    assert should_include_transcript("there is already a contributing.md name it something else")
     assert not should_include_transcript("inspect this project")
 
 
@@ -90,3 +92,19 @@ def test_task_with_transcript_includes_recent_turns() -> None:
     assert "Recent interactive transcript for reference:" in task
     assert "Turn 1 user: hi" in task
     assert "Turn 2 Agent47: Recursion is a function calling itself." in task
+
+
+def test_task_with_transcript_includes_contextual_file_followup() -> None:
+    task = task_with_transcript(
+        "the names are sm and sv",
+        [
+            (
+                "create a contributors file for this project with the names i give",
+                "I need the contributor names before creating CONTRIBUTORS.md.",
+            )
+        ],
+    )
+
+    assert task.startswith("the names are sm and sv")
+    assert "Recent interactive transcript for reference:" in task
+    assert "create a contributors file" in task

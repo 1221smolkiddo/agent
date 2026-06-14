@@ -353,3 +353,29 @@ def test_agent_accepts_plain_text_answer_for_non_workspace_question(tmp_path: Pa
 def test_workspace_classifier_does_not_match_run_inside_turn() -> None:
     assert not CodingAgent._is_workspace_task("summarize this conversation\nTurn 1 Agent47: hi")
     assert CodingAgent._is_workspace_task("run the tests")
+
+
+def test_workspace_classifier_detects_file_extension_request() -> None:
+    assert CodingAgent._is_workspace_task("there is already a contributing.md name it something else")
+
+
+def test_workspace_classifier_uses_transcript_for_contextual_followup() -> None:
+    task = (
+        "the names are sm and sv\n"
+        "Recent interactive transcript for reference:\n"
+        "Turn 1 user: create a contributors file for this project with the names i give\n"
+        "Turn 1 Agent47: I need the contributor names before creating CONTRIBUTORS.md."
+    )
+
+    assert CodingAgent._is_workspace_task(task)
+
+
+def test_workspace_classifier_ignores_transcript_for_unrelated_latest_question() -> None:
+    task = (
+        "what time is it in Chongqing?\n"
+        "Recent interactive transcript for reference:\n"
+        "Turn 1 user: inspect this project\n"
+        "Turn 1 Agent47: checked the project"
+    )
+
+    assert not CodingAgent._is_workspace_task(task)

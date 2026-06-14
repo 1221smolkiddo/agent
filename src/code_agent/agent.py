@@ -298,7 +298,9 @@ class CodingAgent:
 
     @staticmethod
     def _is_workspace_task(task: str) -> bool:
-        lowered = task.lower()
+        latest, transcript = CodingAgent._split_latest_task_and_transcript(task)
+        lowered = latest.lower()
+        transcript_lowered = transcript.lower()
         workspace_terms = [
             "repo",
             "repository",
@@ -333,7 +335,51 @@ class CodingAgent:
             "terminal",
             "cli",
         ]
-        return any(CodingAgent._contains_workspace_term(lowered, term) for term in workspace_terms)
+        if CodingAgent._has_workspace_signal(lowered, workspace_terms):
+            return True
+        return bool(transcript_lowered) and CodingAgent._is_contextual_followup(
+            lowered
+        ) and CodingAgent._has_workspace_signal(transcript_lowered, workspace_terms)
+
+    @staticmethod
+    def _split_latest_task_and_transcript(task: str) -> tuple[str, str]:
+        marker = "\nRecent interactive transcript for reference:\n"
+        if marker not in task:
+            return task, ""
+        latest, transcript = task.split(marker, 1)
+        return latest.strip(), transcript.strip()
+
+    @staticmethod
+    def _has_workspace_signal(text: str, workspace_terms: list[str]) -> bool:
+        if any(CodingAgent._contains_workspace_term(text, term) for term in workspace_terms):
+            return True
+        return re.search(r"\b[\w.-]+\.(py|md|txt|rst|json|toml|yaml|yml|js|jsx|ts|tsx|css|html)\b", text) is not None
+
+    @staticmethod
+    def _is_contextual_followup(text: str) -> bool:
+        contextual_phrases = [
+            "the names are",
+            "names are",
+            "name it",
+            "call it",
+            "rename it",
+            "make it",
+            "add them",
+            "add those",
+            "the file",
+            "that file",
+            "the one",
+            "what we are doing",
+            "what we're doing",
+            "i just",
+            "you just",
+            "just listed",
+            "just mentioned",
+            "same",
+            "instead",
+            "something else",
+        ]
+        return any(phrase in text for phrase in contextual_phrases)
 
     @staticmethod
     def _contains_workspace_term(text: str, term: str) -> bool:
