@@ -241,7 +241,7 @@ def is_casual_greeting(user_input: str) -> bool:
 
 
 def task_with_transcript(user_input: str, transcript: list[tuple[str, str]]) -> str:
-    if not transcript or not should_include_transcript(user_input):
+    if not transcript:
         return user_input
 
     lines = [
@@ -253,42 +253,3 @@ def task_with_transcript(user_input: str, transcript: list[tuple[str, str]]) -> 
         lines.append(f"Turn {index} user: {user}")
         lines.append(f"Turn {index} Agent47: {assistant}")
     return "\n".join(lines)
-
-
-def should_include_transcript(user_input: str) -> bool:
-    normalized = user_input.lower()
-    return any(
-        phrase in normalized
-        for phrase in [
-            "the names are",
-            "names are",
-            "name it",
-            "call it",
-            "rename it",
-            "make it",
-            "add them",
-            "add those",
-            "the file",
-            "that file",
-            "the one",
-            "what we are doing",
-            "what we're doing",
-            "i just",
-            "you just",
-            "just listed",
-            "just mentioned",
-            "same",
-            "instead",
-            "something else",
-            "summarise your response",
-            "summarize your response",
-            "summarise your responses",
-            "summarize your responses",
-            "what did you say",
-            "previous response",
-            "previous responses",
-            "our conversation",
-            "this conversation",
-            "recap",
-        ]
-    )

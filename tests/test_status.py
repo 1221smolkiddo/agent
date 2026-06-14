@@ -8,7 +8,7 @@ from code_agent.schema import (
     WebSearchAction,
 )
 from code_agent.status import format_action_status, format_shell_status
-from code_agent.interactive import is_casual_greeting, should_include_transcript, task_with_transcript
+from code_agent.interactive import is_casual_greeting, task_with_transcript
 
 
 def test_format_action_status_for_editing() -> None:
@@ -75,14 +75,6 @@ def test_is_casual_greeting() -> None:
     assert not is_casual_greeting("hey inspect this project")
 
 
-def test_should_include_transcript_for_summary_request() -> None:
-    assert should_include_transcript("summarise your responses into 2 lines")
-    assert should_include_transcript("recap our conversation")
-    assert should_include_transcript("the names are sm and sv")
-    assert should_include_transcript("there is already a contributing.md name it something else")
-    assert not should_include_transcript("inspect this project")
-
-
 def test_task_with_transcript_includes_recent_turns() -> None:
     task = task_with_transcript(
         "summarize your responses",
@@ -94,7 +86,7 @@ def test_task_with_transcript_includes_recent_turns() -> None:
     assert "Turn 2 Agent47: Recursion is a function calling itself." in task
 
 
-def test_task_with_transcript_includes_contextual_file_followup() -> None:
+def test_task_with_transcript_includes_context_for_normal_followup() -> None:
     task = task_with_transcript(
         "the names are sm and sv",
         [
@@ -108,3 +100,7 @@ def test_task_with_transcript_includes_contextual_file_followup() -> None:
     assert task.startswith("the names are sm and sv")
     assert "Recent interactive transcript for reference:" in task
     assert "create a contributors file" in task
+
+
+def test_task_with_transcript_returns_user_input_without_transcript() -> None:
+    assert task_with_transcript("inspect this project", []) == "inspect this project"

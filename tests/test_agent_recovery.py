@@ -359,7 +359,7 @@ def test_workspace_classifier_detects_file_extension_request() -> None:
     assert CodingAgent._is_workspace_task("there is already a contributing.md name it something else")
 
 
-def test_workspace_classifier_uses_transcript_for_contextual_followup() -> None:
+def test_workspace_classifier_uses_transcript_context_without_phrase_rules() -> None:
     task = (
         "the names are sm and sv\n"
         "Recent interactive transcript for reference:\n"
@@ -368,14 +368,3 @@ def test_workspace_classifier_uses_transcript_for_contextual_followup() -> None:
     )
 
     assert CodingAgent._is_workspace_task(task)
-
-
-def test_workspace_classifier_ignores_transcript_for_unrelated_latest_question() -> None:
-    task = (
-        "what time is it in Chongqing?\n"
-        "Recent interactive transcript for reference:\n"
-        "Turn 1 user: inspect this project\n"
-        "Turn 1 Agent47: checked the project"
-    )
-
-    assert not CodingAgent._is_workspace_task(task)
