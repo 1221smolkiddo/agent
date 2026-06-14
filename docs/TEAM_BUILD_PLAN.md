@@ -88,6 +88,7 @@ These are already built and should be maintained while new work continues.
 - [x] GitHub CI, issue templates, PR template, and contribution docs.
 - [x] Progress tracker in `docs/PROGRESS.md`.
 - [x] Feature summary in `features_and_workdone.md`.
+- [x] Automatic focused verification after successful file mutations.
 
 ## Team Task Board
 
@@ -122,9 +123,9 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 
 ### Phase 5: Testing And Build Automation
 
-- [ ] Issue 16: Project Detector. Owner:
-- [ ] Issue 17: Test Command Runner. Owner:
-- [ ] Issue 18: Build/Lint Runner. Owner:
+- [x] Issue 16: Project Detector. Owner: Agent47
+- [x] Issue 17: Test Command Runner. Owner: Agent47
+- [x] Issue 18: Build/Lint Runner. Owner: Agent47
 
 ### Phase 6: Context Engine
 
@@ -526,7 +527,7 @@ Acceptance criteria:
 
 Goal: agent should verify its own work.
 
-Status: **Not started**
+Status: **Done for the current CLI baseline**
 
 ### Issues
 
@@ -550,6 +551,8 @@ Acceptance criteria:
 - Agent can identify Python, Node, Rust, Go basics.
 - Agent reports likely test/build/lint commands.
 
+Status: **Done**. Verification command detection covers Python, Node, Rust, and Go project signals.
+
 #### 17. Test Command Runner
 
 Owner suggestion: Agent Core Owner
@@ -569,6 +572,8 @@ Acceptance criteria:
 - After editing Python code, agent can run pytest.
 - Failed tests trigger recovery loop.
 
+Status: **Done**. Successful code mutations trigger focused test commands when detected, and failed automatic verification is fed back to the model for recovery.
+
 #### 18. Build/Lint Runner
 
 Owner suggestion: Agent Core Owner
@@ -585,6 +590,8 @@ Tasks:
 Acceptance criteria:
 
 - Final answer says which checks ran and whether they passed.
+
+Status: **Done**. Focused lint, typecheck, test, and build commands can be selected from changed paths, run through the normal shell tool, stored in history, and appended to final summaries.
 
 ## Phase 6: Context Engine
 

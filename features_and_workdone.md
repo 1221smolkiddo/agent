@@ -22,6 +22,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - Structured `apply_patch` action backed by `git apply`.
 - Verification command detection for Python, Node, Rust, and Go projects.
 - Focused verification command suggestions based on changed file paths.
+- Automatic focused verification after successful file mutations when commands are detected.
 - Verification-like shell command outcomes are appended to final summaries.
 - Shell execution with operation labels for install, build, test, check, and generic shell commands.
 - Project search with `ripgrep` plus a built-in Python fallback when `ripgrep` is unavailable.
@@ -30,7 +31,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - SQLite run history.
 - Automatic recovery loop when a tool fails.
 - Workspace tools are blocked for prompts that do not appear to be about the local project, files, code changes, tests, or commands.
-- Mutation tool results include changed paths and a verification hint for the next model step.
+- Mutation tool results include changed paths and automatic verification results or a verification hint for the next model step.
 - Bordered terminal panels distinguish user prompts, Agent47 responses, help, status, and history.
 - Interactive mode keeps a short in-memory transcript for follow-up summaries and recaps.
 - Guard against false completion after blocked writes, edits, or patch applications.
@@ -97,6 +98,7 @@ Inside `agent47`:
 - Structured patch application and path validation.
 - Verification command detection.
 - Focused verification command suggestion.
+- Automatic focused verification execution.
 - Verification outcome summaries.
 - Clean terminal panel formatting.
 - Project search fallback when `ripgrep` is unavailable.
@@ -114,7 +116,6 @@ Inside `agent47`:
 - Streaming model output.
 - Better repo context selection.
 - Planner state with visible task steps.
-- Automatic verification execution without relying on the model to choose every command.
 - Session resume.
 - Multi-provider and multi-model support.
 - VS Code extension frontend.

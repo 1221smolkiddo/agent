@@ -2,7 +2,11 @@ from pathlib import Path
 
 from code_agent.schema import DetectVerificationAction, SuggestVerificationAction
 from code_agent.tools import ToolRegistry
-from code_agent.verification import detect_verification_commands, suggest_verification_commands
+from code_agent.verification import (
+    detect_verification_commands,
+    select_verification_commands,
+    suggest_verification_commands,
+)
 
 
 def test_detect_verification_commands_for_python_project(tmp_path: Path) -> None:
@@ -84,6 +88,26 @@ line-length = 100
 
     assert "Reason: Python source or test files changed." in output
     assert output.index("- lint: uv run ruff check src tests") < output.index("- test: uv run pytest")
+
+
+def test_select_verification_commands_returns_structured_commands(tmp_path: Path) -> None:
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        """
+[project]
+dependencies = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    commands, reason = select_verification_commands(tmp_path, ["tests/test_app.py"])
+
+    assert reason == "Python source or test files changed."
+    assert [command.command for command in commands] == ["uv run pytest"]
 
 
 def test_suggest_verification_commands_skips_docs_only_change(tmp_path: Path) -> None:

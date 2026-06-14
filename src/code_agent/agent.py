@@ -9,10 +9,11 @@ from pydantic import TypeAdapter, ValidationError
 
 from .models import ChatMessage, ModelClient
 from .prompts import system_prompt
-from .schema import AgentAction, FinalAction, ToolResult
+from .schema import AgentAction, FinalAction, RunShellAction, ToolResult
 from .storage import AgentStorage
 from .status import StatusReporter
 from .tools import ToolRegistry
+from .verification import select_verification_commands
 
 ACTION_ADAPTER = TypeAdapter(AgentAction)
 
@@ -173,10 +174,31 @@ class CodingAgent:
             }
             if changed_paths:
                 tool_payload["changed_paths"] = changed_paths
-                tool_payload["verification_instruction"] = (
-                    "Call suggest_verification with these changed_paths, then run the most focused "
-                    "suggested command when verification is useful for the task."
+                automatic_results = self._run_automatic_verification(
+                    run_id=run_id,
+                    step=step,
+                    changed_paths=changed_paths,
                 )
+                if automatic_results:
+                    verification_results.extend(automatic_results)
+                    tool_payload["automatic_verification_results"] = automatic_results
+                    if any(not item["ok"] for item in automatic_results):
+                        consecutive_failures += 1
+                        previous_tool_failed = True
+                        previous_failure_allows_final = False
+                        tool_payload["recovery_instruction"] = (
+                            "Automatic verification failed. Inspect the failing output, patch the issue, "
+                            "and rerun focused verification before finalizing."
+                        )
+                    else:
+                        tool_payload["verification_instruction"] = (
+                            "Automatic focused verification passed. Continue with the task or finalize honestly."
+                        )
+                else:
+                    tool_payload["verification_instruction"] = (
+                        "No automatic verification command was selected for these changed paths. "
+                        "Call suggest_verification if more confidence is needed before finalizing."
+                    )
             if verification_result:
                 tool_payload["verification_result"] = verification_result
             self.storage.add_step(run_id, "tool", tool_payload)
@@ -370,6 +392,41 @@ class CodingAgent:
         if any(token in normalized for token in [" build", "npm run build", "cargo build", "go build", "uv build"]):
             return "build"
         return None
+
+    def _run_automatic_verification(
+        self,
+        run_id: int,
+        step: int,
+        changed_paths: list[str],
+    ) -> list[dict[str, str | bool]]:
+        commands, reason = select_verification_commands(self.cwd, changed_paths)
+        results: list[dict[str, str | bool]] = []
+        for command in commands:
+            action = RunShellAction(type="run_shell", command=command.command)
+            self._report_action(action)
+            result = self._run_tool(action)
+            item: dict[str, str | bool] = {
+                "purpose": command.purpose,
+                "command": command.command,
+                "ok": result.ok,
+                "status": "passed" if result.ok else "failed",
+                "reason": reason,
+                "output": result.output,
+                "automatic": True,
+            }
+            results.append(item)
+            self.storage.add_step(
+                run_id,
+                "tool",
+                {
+                    "type": "automatic_verification_result",
+                    "step": step,
+                    **item,
+                },
+            )
+            if not result.ok:
+                break
+        return results
 
     @staticmethod
     def _with_verification_summary(

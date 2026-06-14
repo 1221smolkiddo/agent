@@ -4,7 +4,7 @@ from pathlib import Path
 
 from code_agent.agent import CodingAgent
 from code_agent.models import ChatMessage
-from code_agent.schema import AgentAction, ReadFileAction, ToolResult
+from code_agent.schema import AgentAction, ReadFileAction, RunShellAction, ToolResult
 from code_agent.storage import AgentStorage
 
 
@@ -140,7 +140,104 @@ def test_agent_adds_verification_hint_after_successful_mutation(tmp_path: Path) 
     assert result == "updated src/app.py; verification not run."
     tool_payload = model.messages_seen[1][-1]["content"]
     assert '"changed_paths": ["src/app.py"]' in tool_payload
-    assert "Call suggest_verification" in tool_payload
+    assert "No automatic verification command was selected" in tool_payload
+
+
+def test_agent_runs_automatic_verification_after_successful_mutation(tmp_path: Path) -> None:
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        """
+[project]
+dependencies = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+""".strip(),
+        encoding="utf-8",
+    )
+    model = FakeModel(
+        [
+            '{"type":"write_file","path":"src/app.py","content":"print(\\"hi\\")"}',
+            '{"type":"final","message":"updated src/app.py"}',
+        ]
+    )
+
+    class VerifyingTools(RecoveringTools):
+        def __init__(self) -> None:
+            super().__init__()
+            self.commands: list[str] = []
+
+        def run(self, action: AgentAction) -> ToolResult:
+            self.calls += 1
+            if isinstance(action, RunShellAction):
+                self.commands.append(action.command)
+                return ToolResult(ok=True, output="tests passed")
+            return ToolResult(ok=True, output="changed")
+
+    tools = VerifyingTools()
+    agent = make_agent(tmp_path, model, tools)
+
+    result = agent.run("update a Python file")
+
+    assert result == (
+        "updated src/app.py\n"
+        "Verification outcomes:\n"
+        "- test `uv run pytest`: passed."
+    )
+    assert tools.commands == ["uv run pytest"]
+    tool_payload = model.messages_seen[1][-1]["content"]
+    assert '"automatic_verification_results"' in tool_payload
+    assert "Automatic focused verification passed" in tool_payload
+
+
+def test_agent_recovers_after_failed_automatic_verification(tmp_path: Path) -> None:
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        """
+[project]
+dependencies = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+""".strip(),
+        encoding="utf-8",
+    )
+    model = FakeModel(
+        [
+            '{"type":"write_file","path":"src/app.py","content":"print(\\"hi\\")"}',
+            '{"type":"edit_file","path":"src/app.py","find":"hi","replace":"hello"}',
+            '{"type":"final","message":"fixed src/app.py"}',
+        ]
+    )
+
+    class FailingVerificationTools(RecoveringTools):
+        def __init__(self) -> None:
+            super().__init__()
+            self.commands: list[str] = []
+
+        def run(self, action: AgentAction) -> ToolResult:
+            self.calls += 1
+            if isinstance(action, RunShellAction):
+                self.commands.append(action.command)
+                ok = len(self.commands) > 1
+                return ToolResult(ok=ok, output="passed" if ok else "failed tests")
+            return ToolResult(ok=True, output="changed")
+
+    tools = FailingVerificationTools()
+    agent = make_agent(tmp_path, model, tools)
+
+    result = agent.run("update and verify a Python file")
+
+    assert result == (
+        "fixed src/app.py\n"
+        "Verification outcomes:\n"
+        "- test `uv run pytest`: failed.\n"
+        "- test `uv run pytest`: passed."
+    )
+    assert tools.commands == ["uv run pytest", "uv run pytest"]
+    assert "Automatic verification failed" in model.messages_seen[1][-1]["content"]
 
 
 def test_agent_appends_verification_outcomes_to_final_answer(tmp_path: Path) -> None:

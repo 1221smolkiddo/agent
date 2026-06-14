@@ -26,16 +26,9 @@ def detect_verification_commands(workspace: Path) -> str:
 
 
 def suggest_verification_commands(workspace: Path, changed_paths: list[str]) -> str:
-    commands = _dedupe_commands(find_verification_commands(workspace))
-    if not commands:
+    selected, reason = select_verification_commands(workspace, changed_paths)
+    if not find_verification_commands(workspace):
         return "No verification commands detected from known project files."
-
-    selected_purposes, reason = _select_purposes(changed_paths)
-    purpose_order = {purpose: index for index, purpose in enumerate(selected_purposes)}
-    selected = sorted(
-        [command for command in commands if command.purpose in selected_purposes],
-        key=lambda command: purpose_order[command.purpose],
-    )
     if not selected:
         return f"No verification commands recommended. Reason: {reason}"
 
@@ -43,6 +36,19 @@ def suggest_verification_commands(workspace: Path, changed_paths: list[str]) -> 
     for item in selected:
         lines.append(f"- {item.purpose}: {item.command} ({item.source})")
     return "\n".join(lines)
+
+
+def select_verification_commands(
+    workspace: Path, changed_paths: list[str]
+) -> tuple[list[VerificationCommand], str]:
+    commands = _dedupe_commands(find_verification_commands(workspace))
+    selected_purposes, reason = _select_purposes(changed_paths)
+    purpose_order = {purpose: index for index, purpose in enumerate(selected_purposes)}
+    selected = sorted(
+        [command for command in commands if command.purpose in selected_purposes],
+        key=lambda command: purpose_order[command.purpose],
+    )
+    return selected, reason
 
 
 def find_verification_commands(workspace: Path) -> list[VerificationCommand]:

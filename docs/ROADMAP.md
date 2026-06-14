@@ -4,7 +4,7 @@ This is the build map for turning Agent47 from a promising CLI agent into an ind
 
 ## Current Position
 
-Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRouter/OpenAI-compatible model access, typed tool actions, non-workspace intent routing, local file/search/shell/web tools with general web-search fallback, structured patch application, verification command detection/suggestion/outcome summaries, permission prompts, dry-run mode, local sandbox copies, SQLite run history, operation status labels, cleaner bordered terminal panels with short transcript context, failure recovery, optional tree-sitter summaries, and an Agent47 engineering protocol in the system prompt.
+Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRouter/OpenAI-compatible model access, typed tool actions, non-workspace intent routing, local file/search/shell/web tools with general web-search fallback, structured patch application, verification command detection/suggestion/automatic execution/outcome summaries, permission prompts, dry-run mode, local sandbox copies, SQLite run history, operation status labels, cleaner bordered terminal panels with short transcript context, failure recovery, optional tree-sitter summaries, and an Agent47 engineering protocol in the system prompt.
 
 ## Industry-Standard Capability Checklist
 
@@ -13,7 +13,7 @@ Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRou
 | Agent loop | Basic typed action loop with failure recovery and non-workspace routing | Add durable plans, step status, task decomposition, cancellation, pause/resume, and bounded long-running work |
 | Code editing | Full-file writes, exact text replacement, and approved `git apply` patches | Add multi-file change set metadata, conflict handling, rollback support, and formatting hooks |
 | Repository intelligence | File listing, ripgrep search, optional code summaries | Add repo index, symbol graph, dependency graph, ownership hints, changed-file awareness, and context ranking |
-| Verification | Agent can detect likely verification commands, suggest focused checks from changed paths, run shell commands after approval, and summarize verification outcomes | Add automatic verification execution and retry policy |
+| Verification | Agent can detect likely verification commands, suggest focused checks from changed paths, automatically run focused checks after successful mutations, feed failed checks back to the model, and summarize verification outcomes | Add richer retry policy and failure-output parsing |
 | Safety and sandboxing | Workspace path guard, dry-run, permission prompts, copy sandbox | Add command allow/deny policy, environment redaction, network controls, process limits, timeout tiers, and secret scanning |
 | Model layer | Single OpenAI-compatible chat client | Add provider abstraction, model profiles, planner/coder/reviewer routing, fallback models, token/cost tracking, and streaming |
 | Memory and sessions | SQLite run history | Add resumable sessions, conversation checkpoints, per-repo memory, decision logs, and context compaction |
@@ -39,8 +39,9 @@ Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRou
 - Done: detect project test, lint, typecheck, and build commands from files such as `pyproject.toml`, `package.json`, `Cargo.toml`, and `go.mod`.
 - Done: suggest targeted verification commands based on changed files.
 - Done: store verification-like shell command outcomes and append them to final summaries.
-- Automatically run selected verification commands when appropriate.
-- Teach the agent to inspect failing output, patch once or twice, and then report honestly if blocked.
+- Done: automatically run selected verification commands after successful file mutations when appropriate.
+- Done: feed failed automatic verification back to the model for recovery.
+- Improve failure-output parsing and bounded retry policy.
 
 ## Phase 3: Repository Intelligence
 
