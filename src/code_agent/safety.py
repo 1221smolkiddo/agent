@@ -1,0 +1,165 @@
+from __future__ import annotations
+
+import re
+import shlex
+from dataclasses import dataclass
+from pathlib import Path
+
+
+SENSITIVE_FILE_NAMES = {
+    ".env",
+    ".env.local",
+    ".env.development",
+    ".env.production",
+    ".npmrc",
+    ".pypirc",
+    ".netrc",
+}
+
+SECRET_VALUE_PATTERNS = [
+    re.compile(r"(?i)\b(authorization\s*[:=]\s*bearer\s+)([A-Za-z0-9._~+/=-]{16,})"),
+    re.compile(r"(?i)\b(bearer\s+)([A-Za-z0-9._~+/=-]{16,})"),
+    re.compile(
+        r"(?i)\b(api[_-]?key|token|secret|password|passwd|credential)\b"
+        r"(\s*[:=]\s*)"
+        r"([^\s'\"]+)"
+    ),
+    re.compile(r"\b(sk-[A-Za-z0-9_-]{16,})\b"),
+]
+
+DESTRUCTIVE_PATTERNS = [
+    re.compile(r"(?i)\brm\s+.*-(?:r|f|rf|fr)\b"),
+    re.compile(r"(?i)\bremove-item\b.*-(?:recurse|force)\b"),
+    re.compile(r"(?i)\brmdir\b.*(/s|-r|--recursive)"),
+    re.compile(r"(?i)\bdel\b.*(/s|/q)"),
+    re.compile(r"(?i)\bgit\s+reset\s+--hard\b"),
+    re.compile(r"(?i)\bgit\s+clean\b.*-(?:f|x|d)"),
+    re.compile(r"(?i)\bgit\s+checkout\s+(?:--|\.)"),
+    re.compile(r"(?i)\bmkfs\b"),
+    re.compile(r"(?i)\bformat\b.*[A-Z]:"),
+]
+
+
+@dataclass(frozen=True)
+class ShellPolicy:
+    category: str
+    risk: str
+    allowed: bool
+    reason: str
+
+
+def is_sensitive_path(path: Path, workspace: Path) -> bool:
+    try:
+        relative = path.resolve().relative_to(workspace.resolve())
+    except ValueError:
+        return True
+    return any(part.lower() in SENSITIVE_FILE_NAMES for part in relative.parts)
+
+
+def redact_secrets(value: str) -> str:
+    redacted = value
+    for pattern in SECRET_VALUE_PATTERNS:
+        if pattern.pattern.lower().startswith("(?i)\\b(authorization"):
+            redacted = pattern.sub(r"\1[REDACTED]", redacted)
+        elif pattern.pattern.lower().startswith("(?i)\\b(bearer"):
+            redacted = pattern.sub(r"\1[REDACTED]", redacted)
+        elif pattern.pattern.startswith("\\b(sk-"):
+            redacted = pattern.sub("[REDACTED]", redacted)
+        else:
+            redacted = pattern.sub(r"\1\2[REDACTED]", redacted)
+    return redacted
+
+
+def classify_shell_command(command: str) -> ShellPolicy:
+    normalized = " ".join(command.strip().split())
+    lowered = normalized.lower()
+    if not normalized:
+        return ShellPolicy("unknown", "low", False, "Empty shell commands are not useful.")
+    if any(pattern.search(normalized) for pattern in DESTRUCTIVE_PATTERNS):
+        return ShellPolicy(
+            "destructive",
+            "critical",
+            False,
+            "Destructive shell commands are blocked by Agent47 policy.",
+        )
+    if _looks_like_install_or_network(lowered):
+        return ShellPolicy(
+            "install/network",
+            "high",
+            True,
+            "May install packages or contact external network resources.",
+        )
+    if _looks_like_test_or_build(lowered):
+        return ShellPolicy("verification", "medium", True, "Runs project verification.")
+    if _looks_like_git(lowered):
+        return ShellPolicy("git", "medium", True, "Touches git metadata or repository state.")
+    if _looks_like_read_only(lowered):
+        return ShellPolicy("read-only", "low", True, "Inspects local state without obvious mutation.")
+    return ShellPolicy("unknown", "medium", True, "Unclassified shell command; review before allowing.")
+
+
+def _looks_like_install_or_network(lowered: str) -> bool:
+    network_tokens = [
+        "npm install",
+        "npm i ",
+        "pip install",
+        "uv add",
+        "uv pip install",
+        "cargo install",
+        "go get",
+        "curl ",
+        "wget ",
+        "Invoke-WebRequest".lower(),
+        "irm ",
+        "iwr ",
+    ]
+    return any(token in lowered for token in network_tokens)
+
+
+def _looks_like_test_or_build(lowered: str) -> bool:
+    tokens = [
+        "pytest",
+        "ruff check",
+        "mypy",
+        "eslint",
+        "npm run test",
+        "npm test",
+        "npm run lint",
+        "npm run build",
+        "npm run typecheck",
+        "cargo test",
+        "cargo build",
+        "cargo clippy",
+        "go test",
+        "go build",
+        "uv build",
+    ]
+    return any(token in lowered for token in tokens)
+
+
+def _looks_like_git(lowered: str) -> bool:
+    return lowered.startswith("git ") or " git " in lowered
+
+
+def _looks_like_read_only(lowered: str) -> bool:
+    first = _first_token(lowered)
+    return first in {
+        "dir",
+        "ls",
+        "get-childitem",
+        "select-string",
+        "get-content",
+        "type",
+        "cat",
+        "rg",
+        "findstr",
+        "git",
+    }
+
+
+def _first_token(command: str) -> str:
+    try:
+        parts = shlex.split(command, posix=False)
+    except ValueError:
+        parts = command.split()
+    return parts[0].lower() if parts else ""

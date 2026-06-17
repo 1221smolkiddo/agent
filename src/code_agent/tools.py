@@ -28,6 +28,7 @@ from .schema import (
     WriteFileAction,
 )
 from .parsing import summarize_code_file
+from .safety import classify_shell_command, is_sensitive_path, redact_secrets
 from .verification import detect_verification_commands, suggest_verification_commands
 
 IGNORED_NAMES = {
@@ -103,10 +104,18 @@ class ToolRegistry:
         return ToolResult(ok=True, output="\n".join(entries) or "<empty>")
 
     def _read_file(self, requested_path: str) -> ToolResult:
+        target = self.resolve_inside_workspace(requested_path)
+        if is_sensitive_path(target, self.workspace):
+            return ToolResult(
+                ok=False,
+                output=(
+                    f"Refusing to read sensitive file: {requested_path}. "
+                    "Ask the user to provide only the specific non-secret value needed."
+                ),
+            )
         if not self._approve("read_file", requested_path):
             return ToolResult(ok=False, output="Permission denied for read_file.")
-        target = self.resolve_inside_workspace(requested_path)
-        return ToolResult(ok=True, output=target.read_text(encoding="utf-8"))
+        return ToolResult(ok=True, output=redact_secrets(target.read_text(encoding="utf-8")))
 
     def _write_file(self, requested_path: str, content: str) -> ToolResult:
         if self.dry_run:
@@ -118,6 +127,8 @@ class ToolRegistry:
                 ),
             )
         target = self.resolve_inside_workspace(requested_path)
+        if is_sensitive_path(target, self.workspace):
+            return ToolResult(ok=False, output=f"Refusing to write sensitive file: {requested_path}.")
         before = target.read_text(encoding="utf-8") if target.exists() else ""
         diff = self._diff(requested_path, before, content)
         if not self._approve("write_file", diff or f"Create or overwrite {requested_path}"):
@@ -136,6 +147,8 @@ class ToolRegistry:
                 ),
             )
         target = self.resolve_inside_workspace(requested_path)
+        if is_sensitive_path(target, self.workspace):
+            return ToolResult(ok=False, output=f"Refusing to edit sensitive file: {requested_path}.")
         before = target.read_text(encoding="utf-8")
         if find not in before:
             return ToolResult(ok=False, output=f"Could not find exact text in {requested_path}")
@@ -160,7 +173,9 @@ class ToolRegistry:
             if not paths:
                 return ToolResult(ok=False, output="Patch does not contain any target file paths.")
             for path in paths:
-                self.resolve_inside_workspace(path)
+                target = self.resolve_inside_workspace(path)
+                if is_sensitive_path(target, self.workspace):
+                    return ToolResult(ok=False, output=f"Refusing to patch sensitive file: {path}.")
         except ValueError as exc:
             return ToolResult(ok=False, output=str(exc))
         if not self._approve("apply_patch", patch):
@@ -184,6 +199,8 @@ class ToolRegistry:
             target = self.resolve_inside_workspace(requested_path)
         except ValueError as exc:
             return ToolResult(ok=False, output=str(exc))
+        if is_sensitive_path(target, self.workspace):
+            return ToolResult(ok=False, output=f"Refusing to delete sensitive file: {requested_path}.")
         if not target.exists():
             return ToolResult(ok=False, output=f"File does not exist: {requested_path}")
         if not target.is_file():
@@ -204,7 +221,22 @@ class ToolRegistry:
                     "/sandbox plus /write, or use --sandbox/without --dry-run before shell commands."
                 ),
             )
-        if not self._approve("run_shell", command):
+        policy = classify_shell_command(command)
+        if not policy.allowed:
+            return ToolResult(
+                ok=False,
+                output=(
+                    f"Blocked {policy.category} shell command ({policy.risk} risk): "
+                    f"{policy.reason}"
+                ),
+            )
+        approval_detail = (
+            f"Risk: {policy.risk}\n"
+            f"Category: {policy.category}\n"
+            f"Reason: {policy.reason}\n"
+            f"Command: {command}"
+        )
+        if not self._approve("run_shell", approval_detail):
             return ToolResult(ok=False, output="Permission denied for run_shell.")
         completed = subprocess.run(
             command,
@@ -216,7 +248,7 @@ class ToolRegistry:
             check=False,
         )
         output = "\n".join(part for part in [completed.stdout, completed.stderr] if part).strip()
-        return ToolResult(ok=completed.returncode == 0, output=output or "<no output>")
+        return ToolResult(ok=completed.returncode == 0, output=redact_secrets(output) or "<no output>")
 
     def _search(self, query: str, requested_path: str | None) -> ToolResult:
         if not self._approve("search", f"Search {requested_path or '.'} for {query}"):
@@ -239,16 +271,16 @@ class ToolRegistry:
                 check=False,
             )
         except FileNotFoundError:
-            return ToolResult(ok=True, output=self._python_search(query, target))
+            return ToolResult(ok=True, output=redact_secrets(self._python_search(query, target)))
         if completed.returncode not in {0, 1}:
-            return ToolResult(ok=False, output=completed.stderr.strip())
-        return ToolResult(ok=True, output=completed.stdout.strip() or "<no matches>")
+            return ToolResult(ok=False, output=redact_secrets(completed.stderr.strip()))
+        return ToolResult(ok=True, output=redact_secrets(completed.stdout.strip()) or "<no matches>")
 
     def _summarize_code(self, requested_path: str) -> ToolResult:
         if not self._approve("summarize_code", requested_path):
             return ToolResult(ok=False, output="Permission denied for summarize_code.")
         target = self.resolve_inside_workspace(requested_path)
-        return ToolResult(ok=True, output=summarize_code_file(target))
+        return ToolResult(ok=True, output=redact_secrets(summarize_code_file(target)))
 
     def _detect_verification(self) -> ToolResult:
         if not self._approve(
@@ -299,7 +331,7 @@ class ToolRegistry:
                 output_parts.append(f"{title}:\n{result.output.strip() or '<empty>'}")
 
         output = "\n\n".join(output_parts)
-        return ToolResult(ok=True, output=self._truncate(output, max_chars))
+        return ToolResult(ok=True, output=self._truncate(redact_secrets(output), max_chars))
 
     def _web_search(self, query: str) -> ToolResult:
         if not self._approve("web_search", query):
@@ -318,7 +350,9 @@ class ToolRegistry:
             )
         return ToolResult(
             ok=True,
-            output="\n".join(f"{index + 1}. {title}\n{href}" for index, (title, href) in enumerate(results)),
+            output=redact_secrets(
+                "\n".join(f"{index + 1}. {title}\n{href}" for index, (title, href) in enumerate(results))
+            ),
         )
 
     def _approve(self, action: str, detail: str) -> bool:
@@ -443,7 +477,7 @@ class ToolRegistry:
         if completed.returncode == 0:
             return ToolResult(ok=True, output="Patch can be applied." if check else "Patch applied.")
         stage = "Patch check failed" if check else "Patch apply failed"
-        return ToolResult(ok=False, output=f"{stage}: {output or '<no output>'}")
+        return ToolResult(ok=False, output=redact_secrets(f"{stage}: {output or '<no output>'}"))
 
     def _git(self, args: list[str], timeout: int) -> ToolResult:
         completed = subprocess.run(
@@ -455,7 +489,7 @@ class ToolRegistry:
             check=False,
         )
         output = "\n".join(part for part in [completed.stdout, completed.stderr] if part).strip()
-        return ToolResult(ok=completed.returncode == 0, output=output)
+        return ToolResult(ok=completed.returncode == 0, output=redact_secrets(output))
 
     @staticmethod
     def _truncate(output: str, max_chars: int) -> str:

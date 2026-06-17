@@ -93,6 +93,7 @@ These are already built and should be maintained while new work continues.
 - [x] Baseline interactive session state for follow-up turns.
 - [x] Approved git status/diff inspection before edits.
 - [x] Run detail views and resumable runs from saved step history.
+- [x] Baseline shell command risk policy and secret redaction.
 
 ## Team Task Board
 
@@ -114,8 +115,8 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 ### Phase 3: Permissions And Policy
 
 - [ ] Issue 8: Permission Scopes. Owner:
-- [ ] Issue 9: Shell Command Policy. Owner:
-- [ ] Issue 10: Secret Redaction. Owner:
+- [x] Issue 9: Shell Command Policy. Owner: Agent47
+- [x] Issue 10: Secret Redaction. Owner: Agent47
 - [ ] Issue 11: Network Permission Policy. Owner:
 
 ### Phase 4: Sandbox And Isolation
@@ -416,6 +417,8 @@ Acceptance criteria:
 - `pip install` and `uv add` are recognized as install.
 - `rm`, `del`, `Remove-Item`, `git reset --hard` are blocked unless explicitly allowed.
 
+Status: **Baseline done**. Shell commands are classified as read-only, verification, git, install/network, destructive, or unknown. Approval prompts include category, risk, and reason, and clearly destructive commands are blocked before approval. Configurable allow/deny profiles are still future work.
+
 #### 10. Secret Redaction
 
 Owner suggestion: Safety/Tools Owner
@@ -434,6 +437,8 @@ Acceptance criteria:
 - `.env` is not read without explicit override.
 - Stored history does not contain API keys.
 - Tests cover redaction patterns.
+
+Status: **Baseline done**. Sensitive credential files are refused by read/write/edit/delete/patch tools, and tool outputs redact common secret key/value pairs, bearer tokens, and OpenAI-style secret keys before model/storage use. A future explicit override flow can be added if needed.
 
 #### 11. Network Permission Policy
 

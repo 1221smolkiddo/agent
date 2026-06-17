@@ -90,6 +90,8 @@ There are currently **14 model-requestable actions**:
 | Diffs: difflib | Enabled |
 | Structured patch application: git apply | Enabled |
 | Shell execution: subprocess | Enabled |
+| Shell command risk policy | Enabled |
+| Secret output redaction | Enabled |
 | Project search: ripgrep plus Python fallback | Enabled |
 | Web search | Enabled with user approval |
 | Local workspace sandbox | Enabled |
@@ -129,7 +131,7 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 | 1 | Structured patch editing | Gives safe, reviewable multi-file code changes instead of brittle full-file rewrites | Partial |
 | 2 | Verification loop | Lets Agent47 detect, suggest, run, and summarize the right tests, lint, typecheck, and builds after edits | Baseline done |
 | 3 | Repo intelligence | Helps the agent choose relevant context using symbols, dependencies, git diff, and architecture summaries | Partial, with git awareness baseline |
-| 4 | Safer shell policy | Separates read-only, test/build, install/network, and destructive commands with stronger approvals | Partial |
+| 4 | Safer shell policy | Separates read-only, test/build, install/network, and destructive commands with stronger approvals | Baseline done |
 | 5 | Durable sessions | Enables pause/resume, plan state, checkpoints, and long task recovery | Partial, with resumable run baseline |
 | 6 | Streaming UX | Makes CLI and interactive mode feel alive during model reasoning and tool execution | Partial |
 | 7 | Multi-model/provider layer | Supports planner/coder/reviewer profiles, fallbacks, and cost-aware routing | Not started |
@@ -155,6 +157,9 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 - `.env`, `.venv`, caches, and local agent databases are ignored by git.
 - Read/list/project-search/code-summary actions now ask for user approval.
 - Project search skips local state and secret files such as `.env`, `.git`, `.code-agent`, caches, and virtual environments.
+- Direct file reads and mutations against sensitive credential files such as `.env`, `.npmrc`, `.pypirc`, and `.netrc` are refused by default.
+- Shell commands are classified by risk before approval, and destructive commands such as `git reset --hard`, recursive force deletes, and aggressive `git clean` forms are blocked by policy.
+- Tool outputs are redacted for common secret key/value pairs, bearer tokens, and OpenAI-style secret keys before model/storage use.
 - `--dry-run` skips writes and shell commands.
 - `agent47` interactive mode starts write-enabled, while `/dry-run` remains available for inspect-only sessions.
 - Human approval prompts are implemented for write/edit/apply-patch/shell/web-search actions.

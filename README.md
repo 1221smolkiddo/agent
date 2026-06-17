@@ -127,9 +127,11 @@ The agent asks for confirmation before:
 - running shell commands
 - searching the web
 
-All file access remains workspace-guarded.
+All file access remains workspace-guarded. Sensitive local credential files such as `.env`, `.npmrc`, `.pypirc`, and `.netrc` are refused by default so their contents do not enter model context.
 
 Project search uses `ripgrep` when available and falls back to a built-in Python search when `ripgrep` is missing from the agent process PATH. Search skips local state and secret files such as `.env`, `.git`, `.code-agent`, caches, and virtual environments.
+
+Shell commands are classified before approval. Destructive commands such as `git reset --hard`, recursive force deletes, and aggressive `git clean` forms are blocked by policy; install/network commands are labeled high risk; verification and read-only commands get lower-risk labels. Tool outputs are redacted for common secret patterns before they are returned to the model or stored.
 
 ## Failure Recovery
 

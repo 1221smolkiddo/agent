@@ -14,7 +14,7 @@ Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRou
 | Code editing | Full-file writes, exact text replacement, and approved `git apply` patches | Add multi-file change set metadata, conflict handling, rollback support, and formatting hooks |
 | Repository intelligence | File listing, ripgrep search, optional code summaries, approved git status/diff inspection | Add repo index, symbol graph, dependency graph, ownership hints, and context ranking |
 | Verification | Agent can detect likely verification commands, suggest focused checks from changed paths, automatically run focused checks after successful mutations, feed failed checks back to the model, and summarize verification outcomes | Add richer retry policy and failure-output parsing |
-| Safety and sandboxing | Workspace path guard, dry-run, permission prompts, copy sandbox | Add command allow/deny policy, environment redaction, network controls, process limits, timeout tiers, and secret scanning |
+| Safety and sandboxing | Workspace path guard, dry-run, permission prompts, copy sandbox, shell command risk policy, destructive-command blocking, and secret redaction | Add configurable command allow/deny policy, stronger network controls, process limits, timeout tiers, and secret scanning |
 | Model layer | Single OpenAI-compatible chat client | Add provider abstraction, model profiles, planner/coder/reviewer routing, fallback models, token/cost tracking, and streaming |
 | Memory and sessions | SQLite run history with detail views, resumable runs, and in-memory interactive session state for follow-ups | Add durable plan state, conversation checkpoints, per-repo memory, decision logs, and context compaction |
 | Collaboration | Basic docs and GitHub setup | Add branch/commit/PR workflow, review mode, issue ingestion, changelog generation, and release notes |
@@ -52,8 +52,9 @@ Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRou
 
 ## Phase 4: Safer Autonomy
 
-- Add command policy classes for read-only, build/test, install/network, and destructive operations.
-- Add redaction for secrets in tool outputs and final answers.
+- Done: add command policy classes for read-only, verification, git, install/network, destructive, and unknown operations.
+- Done: block destructive shell commands before approval.
+- Done: add redaction for common secret patterns in tool outputs.
 - Add sandbox process limits, timeout tiers, and optional network-deny mode.
 - Add cancellation and clean shutdown for running tool calls.
 

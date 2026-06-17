@@ -27,6 +27,10 @@ This document summarizes the current state of Agent47 for collaborators.
 - Automatic focused verification after successful file mutations when commands are detected.
 - Verification-like shell command outcomes are appended to final summaries.
 - Shell execution with operation labels for install, build, test, check, and generic shell commands.
+- Shell command risk classification for read-only, verification, git, install/network, destructive, and unknown commands.
+- Destructive shell commands are blocked before approval.
+- Sensitive credential files such as `.env`, `.npmrc`, `.pypirc`, and `.netrc` are refused by file mutation/read tools.
+- Tool outputs are redacted for common secret patterns before model/storage use.
 - Project search with `ripgrep` plus a built-in Python fallback when `ripgrep` is unavailable.
 - Web search action with user permission.
 - Optional tree-sitter code summaries.
@@ -82,6 +86,10 @@ Inside `agent47`:
 - Sandbox mode copies the workspace and excludes `.env`, `.git`, `.venv`, caches, and local agent state.
 - Failed writes in dry-run mode do not count as completed work.
 - Project search skips local state and secret files such as `.env`, `.git`, `.code-agent`, caches, and virtual environments.
+- Direct reads, writes, edits, deletes, and patches against sensitive credential files are refused by default.
+- Shell approval prompts include command category, risk, and reason.
+- Destructive shell commands are blocked by policy instead of being sent to a normal approval prompt.
+- Tool outputs redact common key/value secrets, bearer tokens, and OpenAI-style secret keys.
 - The agent tracks mutation attempts and rejects final answers that claim unverified, blocked, skipped, or failed file changes succeeded.
 
 ## Collaboration Work Completed
@@ -101,6 +109,7 @@ Inside `agent47`:
 - Path safety.
 - Sandbox copying and exclusion behavior.
 - Tool permission behavior.
+- Shell command policy and secret redaction.
 - Agent failure recovery.
 - False-completion prevention after blocked writes.
 - Structured patch application and path validation.
