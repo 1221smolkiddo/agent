@@ -43,6 +43,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - Guard against false completion after blocked writes, edits, or patch applications.
 - Guard against false completion after unverified file deletion claims.
 - Operation status labels such as `THINKING`, `READING`, `EDITING`, `SEARCHING`, `TESTING`, `BUILDING`, `RECOVERING`, and `DONE`.
+- Centered interactive startup banner with optional terminal colors for panels, prompts, and status labels.
 - Stop controls with `Ctrl+C`, `/stop`, and `/exit`.
 
 ## Main Commands

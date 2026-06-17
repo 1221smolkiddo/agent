@@ -105,6 +105,7 @@ There are currently **14 model-requestable actions**:
 | Mutation-attempt tracking for final-answer honesty | Enabled |
 | Operation status labels | Enabled |
 | Bordered interactive terminal panels | Enabled |
+| Centered interactive banner and terminal color theme | Enabled |
 | Short interactive transcript context | Enabled |
 | Structured interactive session state | Enabled |
 | Run detail views | Enabled |
@@ -159,6 +160,7 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 - Human approval prompts are implemented for write/edit/apply-patch/shell/web-search actions.
 - Mutation attempts are tracked so final answers cannot claim file creation or edits without a verified successful mutation.
 - Interactive session state tracks the current task, pending user info, target files, changed files, blockers, and recent tool results for follow-up turns.
+- Interactive mode starts with a centered `A G E N T 4 7` banner and uses optional terminal colors for panels, prompts, and status labels.
 - `code-agent history show <run-id>` and `/history-show <run-id>` expose saved step details for auditability.
 - `code-agent resume <run-id>` and `/resume <run-id>` continue from compact saved run context while preserving a new run record.
 - `apply_patch` validates target paths, previews the full patch for approval, checks patch applicability, and applies it with `git apply`.

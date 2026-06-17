@@ -6,6 +6,7 @@ from code_agent.agent import AgentRunResult
 from code_agent.interactive import DEFAULT_DRY_RUN, read_prompt, run_interactive_turn
 from code_agent.session import SessionState
 from code_agent.terminal_ui import (
+    format_agent_banner,
     format_key_values,
     format_panel,
     format_prompt_footer,
@@ -20,6 +21,16 @@ def test_format_panel_makes_labeled_box() -> None:
     assert "| hello                        |" in panel
     assert "| world                        |" in panel
     assert panel.splitlines()[-1] == "+------------------------------+"
+
+
+def test_format_agent_banner_centers_title() -> None:
+    banner = format_agent_banner(width=32)
+
+    assert banner.splitlines() == [
+        "+------------------------------+",
+        "|        A G E N T 4 7         |",
+        "+------------------------------+",
+    ]
 
 
 def test_format_panel_wraps_long_lines() -> None:

@@ -14,7 +14,14 @@ from .sandbox import create_sandbox_workspace
 from .session import SessionState
 from .storage import AgentStorage
 from .status import StatusReporter
-from .terminal_ui import format_prompt_footer, format_prompt_header, print_key_values, print_panel
+from .terminal_ui import (
+    colorize_panel,
+    format_prompt_footer,
+    format_prompt_header,
+    print_agent_banner,
+    print_key_values,
+    print_panel,
+)
 
 DEFAULT_DRY_RUN = False
 
@@ -35,8 +42,9 @@ def main() -> None:
     transcript: list[tuple[str, str]] = []
     session_state = SessionState()
 
+    print_agent_banner()
     print_panel(
-        "Agent47",
+        "Status",
         (
             "Interactive coding agent\n"
             "Type a task or question. Use /help for commands. Use /stop or Ctrl+C to quit.\n\n"
@@ -323,9 +331,9 @@ def is_casual_greeting(user_input: str) -> bool:
 
 def read_prompt() -> str:
     typer.echo("")
-    typer.echo(format_prompt_header("You"))
+    typer.echo(colorize_panel(format_prompt_header("You"), "You"))
     value = input("| ").strip()
-    typer.echo(format_prompt_footer())
+    typer.echo(colorize_panel(format_prompt_footer(), "You"))
     return value
 
 
