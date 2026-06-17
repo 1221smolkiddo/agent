@@ -49,6 +49,7 @@ Safety rules:
 - Never expose secrets from .env or other credential files in final answers.
 - Sensitive local credential files are blocked by policy; ask the user for specific non-secret values instead of reading them.
 - Destructive shell commands are blocked by policy; prefer safe file tools and patch-based edits.
+- Web access is restricted to public HTTP/HTTPS targets; localhost and private-network URLs are blocked.
 - Shell outputs and search results may be redacted before you see them. Do not try to reconstruct redacted secrets.
 - Do not run install, network, destructive, or long-running shell commands unless they are necessary.
 - Use web_search when current external information is needed.

@@ -2,8 +2,8 @@ from pathlib import Path
 import subprocess
 
 import code_agent.tools as tools_module
-from code_agent.safety import classify_shell_command, redact_secrets
-from code_agent.schema import ReadFileAction, RunShellAction, SearchAction, WriteFileAction
+from code_agent.safety import classify_network_url, classify_shell_command, redact_secrets
+from code_agent.schema import ReadFileAction, RunShellAction, SearchAction, WebSearchAction, WriteFileAction
 from code_agent.tools import ToolRegistry
 
 
@@ -20,6 +20,25 @@ def test_classify_shell_command_labels_install_network_commands() -> None:
 
     assert policy.category == "install/network"
     assert policy.risk == "high"
+    assert policy.allowed
+
+
+def test_classify_network_url_blocks_localhost_and_private_addresses() -> None:
+    localhost = classify_network_url("http://localhost:8000")
+    private_ip = classify_network_url("http://192.168.1.10/admin")
+
+    assert localhost.category == "local-network"
+    assert localhost.risk == "critical"
+    assert not localhost.allowed
+    assert private_ip.category == "local-network"
+    assert not private_ip.allowed
+
+
+def test_classify_network_url_allows_public_https() -> None:
+    policy = classify_network_url("https://example.com/docs")
+
+    assert policy.category == "public-web"
+    assert policy.risk == "medium"
     assert policy.allowed
 
 
@@ -125,3 +144,49 @@ def test_search_redacts_secret_matches_when_fallback_runs(tmp_path: Path, monkey
     assert result.ok
     assert "super-secret-token" not in result.output
     assert "settings.txt:1:API_KEY=[REDACTED]" in result.output
+
+
+def test_web_search_permission_detail_includes_provider_audit(tmp_path: Path) -> None:
+    approval_details: list[str] = []
+    tools = ToolRegistry(
+        workspace=tmp_path,
+        dry_run=True,
+        approval_callback=lambda _action, detail: approval_details.append(detail) or False,
+    )
+
+    result = tools.run(WebSearchAction(type="web_search", query="Agent47 docs"))
+
+    assert not result.ok
+    assert result.output == "Permission denied for web_search."
+    assert "Category: public-web-search" in approval_details[0]
+    assert "Providers: www.bing.com, duckduckgo.com" in approval_details[0]
+    assert "Query: Agent47 docs" in approval_details[0]
+
+
+def test_web_search_filters_private_network_results(tmp_path: Path, monkeypatch) -> None:
+    tools = ToolRegistry(workspace=tmp_path, dry_run=True, approval_callback=lambda _a, _d: True)
+    monkeypatch.setattr(
+        tools,
+        "_search_bing",
+        lambda _query: [
+            ("Local Admin", "http://127.0.0.1/admin"),
+            ("Public Result", "https://example.com/docs"),
+        ],
+    )
+    monkeypatch.setattr(tools, "_search_duckduckgo", lambda _query: [])
+
+    result = tools.run(WebSearchAction(type="web_search", query="docs"))
+
+    assert result.ok
+    assert "Public Result" in result.output
+    assert "https://example.com/docs" in result.output
+    assert "127.0.0.1" not in result.output
+
+
+def test_fetch_url_blocks_local_network_targets() -> None:
+    try:
+        ToolRegistry._fetch_url("http://127.0.0.1:8000")
+    except ValueError as exc:
+        assert "Blocked local-network web target" in str(exc)
+    else:
+        raise AssertionError("expected local-network web target to be blocked")

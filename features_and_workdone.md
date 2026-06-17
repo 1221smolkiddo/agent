@@ -31,6 +31,9 @@ This document summarizes the current state of Agent47 for collaborators.
 - Destructive shell commands are blocked before approval.
 - Sensitive credential files such as `.env`, `.npmrc`, `.pypirc`, and `.netrc` are refused by file mutation/read tools.
 - Tool outputs are redacted for common secret patterns before model/storage use.
+- Web search approval prompts include provider domains and query text.
+- Localhost, private-network, link-local, reserved, and multicast web targets are blocked by network policy.
+- Unsafe web result URLs are filtered before results are returned to the model.
 - Project search with `ripgrep` plus a built-in Python fallback when `ripgrep` is unavailable.
 - Web search action with user permission.
 - Optional tree-sitter code summaries.
@@ -89,6 +92,7 @@ Inside `agent47`:
 - Direct reads, writes, edits, deletes, and patches against sensitive credential files are refused by default.
 - Shell approval prompts include command category, risk, and reason.
 - Destructive shell commands are blocked by policy instead of being sent to a normal approval prompt.
+- Web search is limited to public HTTP/HTTPS targets and filters local/private-network URLs.
 - Tool outputs redact common key/value secrets, bearer tokens, and OpenAI-style secret keys.
 - The agent tracks mutation attempts and rejects final answers that claim unverified, blocked, skipped, or failed file changes succeeded.
 
@@ -110,6 +114,7 @@ Inside `agent47`:
 - Sandbox copying and exclusion behavior.
 - Tool permission behavior.
 - Shell command policy and secret redaction.
+- Network policy controls for web search.
 - Agent failure recovery.
 - False-completion prevention after blocked writes.
 - Structured patch application and path validation.

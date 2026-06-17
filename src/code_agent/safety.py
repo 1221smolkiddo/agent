@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 import shlex
+import ipaddress
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -42,6 +44,15 @@ DESTRUCTIVE_PATTERNS = [
 
 @dataclass(frozen=True)
 class ShellPolicy:
+    category: str
+    risk: str
+    allowed: bool
+    reason: str
+
+
+@dataclass(frozen=True)
+class NetworkPolicy:
+    host: str
     category: str
     risk: str
     allowed: bool
@@ -96,6 +107,66 @@ def classify_shell_command(command: str) -> ShellPolicy:
     if _looks_like_read_only(lowered):
         return ShellPolicy("read-only", "low", True, "Inspects local state without obvious mutation.")
     return ShellPolicy("unknown", "medium", True, "Unclassified shell command; review before allowing.")
+
+
+def classify_network_url(url: str) -> NetworkPolicy:
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme not in {"http", "https"}:
+        return NetworkPolicy(
+            host=host or "<none>",
+            category="unsupported-scheme",
+            risk="high",
+            allowed=False,
+            reason="Only http and https URLs are allowed for web access.",
+        )
+    if not host:
+        return NetworkPolicy(
+            host="<none>",
+            category="invalid-url",
+            risk="high",
+            allowed=False,
+            reason="URL does not contain a host.",
+        )
+    if host in {"localhost"} or host.endswith(".localhost"):
+        return NetworkPolicy(
+            host=host,
+            category="local-network",
+            risk="critical",
+            allowed=False,
+            reason="Localhost web targets are blocked by Agent47 network policy.",
+        )
+    try:
+        address = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return NetworkPolicy(
+            host=host,
+            category="public-web",
+            risk="medium",
+            allowed=True,
+            reason="Public web target.",
+        )
+    if (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_reserved
+        or address.is_multicast
+    ):
+        return NetworkPolicy(
+            host=host,
+            category="local-network",
+            risk="critical",
+            allowed=False,
+            reason="Private, loopback, reserved, link-local, and multicast web targets are blocked.",
+        )
+    return NetworkPolicy(
+        host=host,
+        category="public-web",
+        risk="medium",
+        allowed=True,
+        reason="Public web target.",
+    )
 
 
 def _looks_like_install_or_network(lowered: str) -> bool:

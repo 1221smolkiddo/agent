@@ -28,7 +28,7 @@ from .schema import (
     WriteFileAction,
 )
 from .parsing import summarize_code_file
-from .safety import classify_shell_command, is_sensitive_path, redact_secrets
+from .safety import classify_network_url, classify_shell_command, is_sensitive_path, redact_secrets
 from .verification import detect_verification_commands, suggest_verification_commands
 
 IGNORED_NAMES = {
@@ -334,12 +334,19 @@ class ToolRegistry:
         return ToolResult(ok=True, output=self._truncate(redact_secrets(output), max_chars))
 
     def _web_search(self, query: str) -> ToolResult:
-        if not self._approve("web_search", query):
+        approval_detail = (
+            f"Risk: medium\n"
+            f"Category: public-web-search\n"
+            f"Providers: www.bing.com, duckduckgo.com\n"
+            f"Query: {query}"
+        )
+        if not self._approve("web_search", approval_detail):
             return ToolResult(ok=False, output="Permission denied for web_search.")
 
         results = self._search_bing(query)
         if not results:
             results = self._search_duckduckgo(query)
+        results = self._filter_safe_web_results(results)
         if not results:
             return ToolResult(
                 ok=False,
@@ -376,6 +383,11 @@ class ToolRegistry:
 
     @staticmethod
     def _fetch_url(url: str) -> str:
+        policy = classify_network_url(url)
+        if not policy.allowed:
+            raise ValueError(
+                f"Blocked {policy.category} web target ({policy.risk} risk): {policy.reason}"
+            )
         request = urllib.request.Request(
             url,
             headers={
@@ -387,6 +399,10 @@ class ToolRegistry:
         )
         with urllib.request.urlopen(request, timeout=20) as response:
             return response.read().decode("utf-8", errors="replace")
+
+    @staticmethod
+    def _filter_safe_web_results(results: list[tuple[str, str]]) -> list[tuple[str, str]]:
+        return [(title, href) for title, href in results if classify_network_url(href).allowed]
 
     def _python_search(self, query: str, target: Path) -> str:
         try:

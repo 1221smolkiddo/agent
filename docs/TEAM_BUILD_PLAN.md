@@ -94,6 +94,7 @@ These are already built and should be maintained while new work continues.
 - [x] Approved git status/diff inspection before edits.
 - [x] Run detail views and resumable runs from saved step history.
 - [x] Baseline shell command risk policy and secret redaction.
+- [x] Baseline public-web network policy for web search.
 
 ## Team Task Board
 
@@ -117,7 +118,7 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 - [ ] Issue 8: Permission Scopes. Owner:
 - [x] Issue 9: Shell Command Policy. Owner: Agent47
 - [x] Issue 10: Secret Redaction. Owner: Agent47
-- [ ] Issue 11: Network Permission Policy. Owner:
+- [x] Issue 11: Network Permission Policy. Owner: Agent47
 
 ### Phase 4: Sandbox And Isolation
 
@@ -457,6 +458,8 @@ Acceptance criteria:
 
 - Web access is visible and auditable.
 - User can deny all web access for a run.
+
+Status: **Baseline done**. Web search approval details now include provider domains and query text, outbound fetch URLs are restricted to public HTTP/HTTPS targets, and localhost/private-network result URLs are filtered before model use. Per-run domain allow/deny choices are still future work.
 
 ## Phase 4: Sandbox And Isolation
 

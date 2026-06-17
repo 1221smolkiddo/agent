@@ -91,6 +91,7 @@ There are currently **14 model-requestable actions**:
 | Structured patch application: git apply | Enabled |
 | Shell execution: subprocess | Enabled |
 | Shell command risk policy | Enabled |
+| Web/network policy | Enabled |
 | Secret output redaction | Enabled |
 | Project search: ripgrep plus Python fallback | Enabled |
 | Web search | Enabled with user approval |
@@ -159,6 +160,7 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 - Project search skips local state and secret files such as `.env`, `.git`, `.code-agent`, caches, and virtual environments.
 - Direct file reads and mutations against sensitive credential files such as `.env`, `.npmrc`, `.pypirc`, and `.netrc` are refused by default.
 - Shell commands are classified by risk before approval, and destructive commands such as `git reset --hard`, recursive force deletes, and aggressive `git clean` forms are blocked by policy.
+- Web search approval prompts include provider domains and query text, and localhost/private-network web targets are blocked or filtered.
 - Tool outputs are redacted for common secret key/value pairs, bearer tokens, and OpenAI-style secret keys before model/storage use.
 - `--dry-run` skips writes and shell commands.
 - `agent47` interactive mode starts write-enabled, while `/dry-run` remains available for inspect-only sessions.
