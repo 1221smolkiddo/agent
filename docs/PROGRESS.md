@@ -6,20 +6,22 @@ This document tracks how far the coding agent has come and what collaborators ca
 
 **Stage:** Basic single-model CLI agent with Agent47 engineering protocol
 
-**Approximate progress toward an industry-standard local AI coding agent:** 30%
+**Approximate progress toward an industry-standard local AI coding agent:** 33%
 
-The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, non-workspace intent routing, general web search with provider fallback, structured patch application, approved git-diff awareness, verification command detection/suggestion/automatic execution/outcome summaries, mutation-attempt tracking for truthful final answers, clearer interactive terminal panels with short transcript context and structured session state, run history, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
+The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, non-workspace intent routing, general web search with provider fallback, structured patch application, approved git-diff awareness, verification command detection/suggestion/automatic execution/outcome summaries, mutation-attempt tracking for truthful final answers, clearer interactive terminal panels with short transcript context and structured session state, run history detail views, resumable runs, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
 
 This file should be updated whenever a meaningful Agent47 capability is added. Keep the enabled commands/actions current, move completed items out of "What Is Left" when they land, and update the percentage only when the agent gains real product capability rather than documentation alone.
 
 ## Enabled CLI Commands
 
-There are currently **3 user-facing CLI commands**:
+There are currently **5 user-facing CLI command entries**:
 
 | Command | Purpose |
 | --- | --- |
 | `code-agent run "task"` | Run the agent on a coding task. |
 | `code-agent history` | Show recent saved agent runs from SQLite. |
+| `code-agent history show <run-id>` | Show saved steps for one agent run. |
+| `code-agent resume <run-id>` | Resume a saved run with compact prior context. |
 | `agent47` | Open an interactive terminal session for free-form prompts. |
 
 Common examples:
@@ -30,10 +32,12 @@ uv run code-agent run --dry-run "Find risky areas in the codebase"
 uv run code-agent run --sandbox "Try a risky change in an isolated copy"
 uv run code-agent run --max-failures 5 "Recover from failed tool attempts"
 uv run code-agent history
+uv run code-agent history show 12
+uv run code-agent resume 12 "Continue after the failed check"
 agent47
 ```
 
-Inside `agent47`, there are currently **12 slash commands**:
+Inside `agent47`, there are currently **14 slash commands**:
 
 | Slash command | Purpose |
 | --- | --- |
@@ -47,6 +51,8 @@ Inside `agent47`, there are currently **12 slash commands**:
 | `/max-steps <n>` | Change max agent loop steps. |
 | `/max-failures <n>` | Change consecutive failure recovery budget. |
 | `/history` | Show recent saved agent runs. |
+| `/history-show <run-id>` | Show saved steps for one agent run. |
+| `/resume <run-id> [instruction]` | Resume a saved run with optional extra instruction. |
 | `/stop` | Quit interactive mode. |
 | `/exit` | Quit interactive mode. |
 
@@ -101,6 +107,8 @@ There are currently **14 model-requestable actions**:
 | Bordered interactive terminal panels | Enabled |
 | Short interactive transcript context | Enabled |
 | Structured interactive session state | Enabled |
+| Run detail views | Enabled |
+| Resumable runs | Enabled |
 | Stop shortcut: `Ctrl+C` and `/stop` | Enabled |
 | Code parsing: tree-sitter | Enabled as optional parsing extra |
 | Storage: SQLite | Enabled |
@@ -121,7 +129,7 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 | 2 | Verification loop | Lets Agent47 detect, suggest, run, and summarize the right tests, lint, typecheck, and builds after edits | Baseline done |
 | 3 | Repo intelligence | Helps the agent choose relevant context using symbols, dependencies, git diff, and architecture summaries | Partial, with git awareness baseline |
 | 4 | Safer shell policy | Separates read-only, test/build, install/network, and destructive commands with stronger approvals | Partial |
-| 5 | Durable sessions | Enables pause/resume, plan state, checkpoints, and long task recovery | Partial, with interactive state baseline |
+| 5 | Durable sessions | Enables pause/resume, plan state, checkpoints, and long task recovery | Partial, with resumable run baseline |
 | 6 | Streaming UX | Makes CLI and interactive mode feel alive during model reasoning and tool execution | Partial |
 | 7 | Multi-model/provider layer | Supports planner/coder/reviewer profiles, fallbacks, and cost-aware routing | Not started |
 | 8 | Observability | Captures traces, timings, token use, failures, and debug bundles for reliability work | Partial |
@@ -132,11 +140,11 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 
 ## Next Recommended Build Order
 
-1. Add resumable sessions with run IDs and plan state.
-2. Add streaming output in CLI and `agent47`.
-3. Add model profiles and provider abstraction.
-4. Add a JSON protocol for future VS Code integration.
-5. Add a lightweight repo index with relevance ranking.
+1. Add streaming output in CLI and `agent47`.
+2. Add model profiles and provider abstraction.
+3. Add a JSON protocol for future VS Code integration.
+4. Add a lightweight repo index with relevance ranking.
+5. Add full visible plan state with step updates.
 
 ## Current Safety Notes
 
@@ -151,6 +159,8 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 - Human approval prompts are implemented for write/edit/apply-patch/shell/web-search actions.
 - Mutation attempts are tracked so final answers cannot claim file creation or edits without a verified successful mutation.
 - Interactive session state tracks the current task, pending user info, target files, changed files, blockers, and recent tool results for follow-up turns.
+- `code-agent history show <run-id>` and `/history-show <run-id>` expose saved step details for auditability.
+- `code-agent resume <run-id>` and `/resume <run-id>` continue from compact saved run context while preserving a new run record.
 - `apply_patch` validates target paths, previews the full patch for approval, checks patch applicability, and applies it with `git apply`.
 - `delete_file` removes files through a first-class approved mutation action instead of shell commands.
 - `detect_verification` scans known project files for likely test, lint, typecheck, and build commands.

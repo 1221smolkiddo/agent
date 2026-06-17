@@ -4,7 +4,7 @@ This is the build map for turning Agent47 from a promising CLI agent into an ind
 
 ## Current Position
 
-Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRouter/OpenAI-compatible model access, typed tool actions, non-workspace intent routing, local file/search/shell/web tools with general web-search fallback, structured patch application, git-diff awareness, verification command detection/suggestion/automatic execution/outcome summaries, permission prompts, dry-run mode, local sandbox copies, SQLite run history, operation status labels, cleaner bordered terminal panels with short transcript context and structured session state, failure recovery, optional tree-sitter summaries, and an Agent47 engineering protocol in the system prompt.
+Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRouter/OpenAI-compatible model access, typed tool actions, non-workspace intent routing, local file/search/shell/web tools with general web-search fallback, structured patch application, git-diff awareness, verification command detection/suggestion/automatic execution/outcome summaries, permission prompts, dry-run mode, local sandbox copies, SQLite run history with detail views and resume support, operation status labels, cleaner bordered terminal panels with short transcript context and structured session state, failure recovery, optional tree-sitter summaries, and an Agent47 engineering protocol in the system prompt.
 
 ## Industry-Standard Capability Checklist
 
@@ -16,7 +16,7 @@ Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRou
 | Verification | Agent can detect likely verification commands, suggest focused checks from changed paths, automatically run focused checks after successful mutations, feed failed checks back to the model, and summarize verification outcomes | Add richer retry policy and failure-output parsing |
 | Safety and sandboxing | Workspace path guard, dry-run, permission prompts, copy sandbox | Add command allow/deny policy, environment redaction, network controls, process limits, timeout tiers, and secret scanning |
 | Model layer | Single OpenAI-compatible chat client | Add provider abstraction, model profiles, planner/coder/reviewer routing, fallback models, token/cost tracking, and streaming |
-| Memory and sessions | SQLite run history plus in-memory interactive session state for follow-ups | Add resumable sessions, conversation checkpoints, per-repo memory, decision logs, and context compaction |
+| Memory and sessions | SQLite run history with detail views, resumable runs, and in-memory interactive session state for follow-ups | Add durable plan state, conversation checkpoints, per-repo memory, decision logs, and context compaction |
 | Collaboration | Basic docs and GitHub setup | Add branch/commit/PR workflow, review mode, issue ingestion, changelog generation, and release notes |
 | Developer UX | CLI, `agent47` interactive mode, status labels, bordered panels for prompts and responses, short transcript and session-state context for follow-ups | Add richer TUI streaming, approval diff views, command output panes, transcript export, and VS Code integration |
 | Observability | Stored steps and simple status | Add structured traces, tool timing, model usage metrics, failure analytics, and debug bundles |
@@ -68,8 +68,8 @@ Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRou
 ## Phase 6: Durable Sessions and Memory
 
 - Done: add an in-memory interactive session state for current task, pending user info, target files, changed files, blockers, and recent tool results.
-- Add session IDs and resume support.
-- Save plan state, tool results, patch sets, verification results, and final summaries.
+- Done: add run detail views and resume support from saved tool history.
+- Save durable plan state, patch sets, verification results, and final summaries.
 - Add per-repo memory for conventions, preferred commands, and recurring project facts.
 - Add context compaction for long tasks.
 

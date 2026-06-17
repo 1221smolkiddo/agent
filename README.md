@@ -61,6 +61,8 @@ code-agent run --dry-run "Refactor the CLI argument parser"
 code-agent run --sandbox "Try a risky refactor in an isolated copy"
 code-agent run --max-failures 5 "Fix the issue and recover from failed attempts"
 code-agent history
+code-agent history show 12
+code-agent resume 12 "Continue from the failed verification"
 ```
 
 With `uv`:
@@ -89,6 +91,8 @@ agent47: /write
 agent47: /sandbox
 agent47: /sandbox off
 agent47: /max-failures 5
+agent47: /history-show 12
+agent47: /resume 12 continue from the failed verification
 agent47: /stop
 agent47: /exit
 ```
@@ -197,6 +201,7 @@ src/
     config.py           dotenv + pydantic-settings
     models.py           OpenAI-compatible model client for OpenRouter
     prompts.py          System prompt
+    resume.py           Run detail formatting and resume context
     sandbox.py          Local workspace sandbox copies
     session.py          Interactive session state
     schema.py           Shared action/result models

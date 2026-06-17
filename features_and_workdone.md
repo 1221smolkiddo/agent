@@ -31,12 +31,15 @@ This document summarizes the current state of Agent47 for collaborators.
 - Web search action with user permission.
 - Optional tree-sitter code summaries.
 - SQLite run history.
+- Run detail views through `code-agent history show <run-id>` and `/history-show <run-id>`.
+- Resumable runs through `code-agent resume <run-id>` and `/resume <run-id>`.
 - Automatic recovery loop when a tool fails.
 - Workspace tools are blocked for prompts that do not appear to be about the local project, files, code changes, tests, or commands.
 - Mutation tool results include changed paths and automatic verification results or a verification hint for the next model step.
 - Bordered terminal panels distinguish user prompts, Agent47 responses, help, status, and history.
 - Interactive mode keeps a short in-memory transcript for follow-up summaries and recaps.
 - Interactive mode keeps structured session state for the current task, pending user info, target files, last changed files, blockers, and recent tool results.
+- Saved run steps can be compacted into continuation context for follow-up runs.
 - Guard against false completion after blocked writes, edits, or patch applications.
 - Guard against false completion after unverified file deletion claims.
 - Operation status labels such as `THINKING`, `READING`, `EDITING`, `SEARCHING`, `TESTING`, `BUILDING`, `RECOVERING`, and `DONE`.
@@ -121,6 +124,6 @@ Inside `agent47`:
 - Streaming model output.
 - Better repo context selection with a lightweight repo index, symbol/dependency graph, and context ranking.
 - Full planner state with visible task steps.
-- Session resume.
+- Durable plan-state checkpoints.
 - Multi-provider and multi-model support.
 - VS Code extension frontend.

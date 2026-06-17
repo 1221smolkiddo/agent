@@ -40,6 +40,44 @@ class AgentStorage:
             ).fetchall()
             return list(rows)
 
+    def get_run(self, run_id: int) -> sqlite3.Row | None:
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                select id, created_at, task, model, cwd
+                from runs
+                where id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+
+    def run_steps(self, run_id: int) -> list[sqlite3.Row]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                select id, created_at, role, payload
+                from steps
+                where run_id = ?
+                order by id
+                """,
+                (run_id,),
+            ).fetchall()
+            return list(rows)
+
+    def run_steps_payloads(self, run_id: int) -> list[dict[str, Any]]:
+        payloads: list[dict[str, Any]] = []
+        for row in self.run_steps(run_id):
+            payload = json.loads(row["payload"])
+            payloads.append(
+                {
+                    "id": row["id"],
+                    "created_at": row["created_at"],
+                    "role": row["role"],
+                    "payload": payload,
+                }
+            )
+        return payloads
+
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row

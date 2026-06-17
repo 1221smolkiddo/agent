@@ -25,6 +25,7 @@ Typer CLI
 - `code_agent.permissions`: terminal confirmation prompts for risky tools.
 - `code_agent.sandbox`: local workspace copies for isolated agent runs.
 - `code_agent.parsing`: optional tree-sitter based code structure summaries.
+- `code_agent.resume`: run detail formatting and compact resume context.
 - `code_agent.storage`: SQLite run history.
 - `code_agent.config`: environment and settings.
 - `code_agent.schema`: typed action and tool result models.

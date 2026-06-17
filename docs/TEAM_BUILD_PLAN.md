@@ -92,6 +92,7 @@ These are already built and should be maintained while new work continues.
 - [x] Final-answer gate rejects unverified file creation/edit claims.
 - [x] Baseline interactive session state for follow-up turns.
 - [x] Approved git status/diff inspection before edits.
+- [x] Run detail views and resumable runs from saved step history.
 
 ## Team Task Board
 
@@ -141,7 +142,7 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 
 - [~] Issue 23: Task Plan Object. Owner: Agent47
 - [ ] Issue 24: Visible Step Progress. Owner:
-- [ ] Issue 25: Session Resume. Owner:
+- [x] Issue 25: Session Resume. Owner: Agent47
 
 ### Phase 8: Streaming And UX
 
@@ -158,7 +159,7 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 
 ### Phase 10: Storage And History
 
-- [ ] Issue 33: Run Detail View. Owner:
+- [x] Issue 33: Run Detail View. Owner: Agent47
 - [ ] Issue 34: History Search. Owner:
 - [ ] Issue 35: Storage Migrations. Owner:
 
@@ -743,6 +744,8 @@ Acceptance criteria:
 
 - Agent can continue from previous messages and tool results.
 
+Status: **Baseline done**. `code-agent resume <run-id>` and `/resume <run-id>` now build compact continuation context from saved run steps and continue in a new auditable run. Full durable plan-state checkpoints are still tracked under the task-plan work.
+
 ## Phase 8: Streaming And UX
 
 Goal: make the CLI feel responsive.
@@ -890,6 +893,8 @@ code-agent history show <run-id>
 Acceptance criteria:
 
 - Shows messages, tools, mutations, final report.
+
+Status: **Baseline done**. `code-agent history show <run-id>` and `/history-show <run-id>` show saved run metadata and summarized step payloads. Rich final-report rendering is still part of the structured final work report issue.
 
 #### 34. History Search
 

@@ -9,6 +9,7 @@ from typer._click.exceptions import Abort
 from .config import Settings
 from .factory import create_agent
 from .permissions import confirm_permission
+from .resume import build_resume_task, format_run_detail
 from .sandbox import create_sandbox_workspace
 from .session import SessionState
 from .storage import AgentStorage
@@ -187,6 +188,19 @@ def handle_command(
         print_panel("Max Failures", str(max_failures or settings.agent_max_failures))
     elif command == "/history":
         print_history(settings)
+    elif command == "/resume":
+        run_resume_command(
+            value=value,
+            settings=settings,
+            cwd=cwd,
+            model=model,
+            dry_run=dry_run,
+            max_steps=max_steps,
+            max_failures=max_failures,
+            session_state=session_state,
+        )
+    elif command == "/history-show":
+        print_history_detail(settings, value)
     elif command == "/status":
         print_key_values(
             "Status",
@@ -222,6 +236,8 @@ Commands:
   /max-steps <n>     Change max agent loop steps.
   /max-failures <n>  Change consecutive failure recovery budget.
   /history           Show recent saved agent runs.
+  /history-show <id> Show saved steps for one run.
+  /resume <id> [msg] Resume a saved run with optional extra instruction.
   /stop              Quit.
   /exit              Quit.
 """.strip()
@@ -238,6 +254,66 @@ def print_history(settings: Settings) -> None:
         "History",
         "\n".join(f"{row['id']} | {row['created_at']} | {row['model']} | {row['task']}" for row in rows),
     )
+
+
+def print_history_detail(settings: Settings, value: str) -> None:
+    if not value:
+        print_panel("History", "Usage: /history-show <run-id>")
+        return
+    try:
+        run_id = int(value)
+    except ValueError:
+        print_panel("History", f"Invalid run id: {value}")
+        return
+    storage = AgentStorage(settings.agent_db_path)
+    run_row = storage.get_run(run_id)
+    if run_row is None:
+        print_panel("History", f"No run found with id {run_id}.")
+        return
+    print_panel("History", format_run_detail(run_row, storage.run_steps_payloads(run_id)))
+
+
+def run_resume_command(
+    value: str,
+    settings: Settings,
+    cwd: Path,
+    model: str | None,
+    dry_run: bool,
+    max_steps: int,
+    max_failures: int | None,
+    session_state: SessionState | None,
+) -> None:
+    if not value:
+        print_panel("Resume", "Usage: /resume <run-id> [extra instruction]")
+        return
+    raw_run_id, _, instruction = value.partition(" ")
+    try:
+        run_id = int(raw_run_id)
+    except ValueError:
+        print_panel("Resume", f"Invalid run id: {raw_run_id}")
+        return
+
+    storage = AgentStorage(settings.agent_db_path)
+    run_row = storage.get_run(run_id)
+    if run_row is None:
+        print_panel("Resume", f"No run found with id {run_id}.")
+        return
+
+    task = build_resume_task(run_row, storage.run_steps_payloads(run_id), instruction.strip() or None)
+    agent = create_agent(
+        settings=settings,
+        cwd=cwd,
+        model=model,
+        dry_run=dry_run,
+        max_steps=max_steps,
+        max_failures=max_failures,
+        approval_callback=confirm_permission,
+        reporter=StatusReporter(),
+    )
+    result = agent.run_detailed(task)
+    print_panel("Agent47", result.message)
+    if session_state is not None:
+        session_state.update(f"resume run {run_id}", result)
 
 
 def is_casual_greeting(user_input: str) -> bool:

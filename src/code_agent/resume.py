@@ -1,0 +1,133 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+from typing import Any
+
+
+def format_run_detail(run: sqlite3.Row, steps: list[dict[str, Any]]) -> str:
+    lines = [
+        f"Run {run['id']}",
+        f"Created: {run['created_at']}",
+        f"Model: {run['model']}",
+        f"Workspace: {run['cwd']}",
+        f"Task: {run['task']}",
+        "",
+        "Steps:",
+    ]
+    if not steps:
+        lines.append("<none>")
+        return "\n".join(lines)
+
+    for index, step in enumerate(steps, start=1):
+        payload = step["payload"]
+        lines.append(f"{index}. {step['role']} {step['created_at']}")
+        lines.append(indent(_summarize_payload(payload)))
+    return "\n".join(lines)
+
+
+def build_resume_task(
+    run: sqlite3.Row,
+    steps: list[dict[str, Any]],
+    instruction: str | None = None,
+) -> str:
+    sections = [
+        f"Resume Agent47 run {run['id']}.",
+        "",
+        "Original task:",
+        run["task"],
+        "",
+        "Prior run context:",
+        compact_run_context(steps),
+        "",
+        "Continue from this state. Respect any prior denied permissions, failed tools, changed files, "
+        "and verification outcomes. Re-inspect files or git state before editing if the workspace may have changed.",
+    ]
+    if instruction:
+        sections.extend(["", "New user instruction for this resume:", instruction])
+    return "\n".join(sections)
+
+
+def compact_run_context(steps: list[dict[str, Any]], max_chars: int = 12000) -> str:
+    if not steps:
+        return "<no prior steps were stored>"
+
+    lines: list[str] = []
+    for index, step in enumerate(steps, start=1):
+        payload = step["payload"]
+        summary = _summarize_payload(payload)
+        lines.append(f"{index}. {step['role']}: {summary}")
+
+    output = "\n".join(lines)
+    if len(output) <= max_chars:
+        return output
+    remaining = len(output) - max_chars
+    return output[:max_chars].rstrip() + f"\n<truncated {remaining} chars from prior run>"
+
+
+def _summarize_payload(payload: dict[str, Any]) -> str:
+    payload_type = payload.get("type")
+    if payload_type == "tool_result":
+        return _summarize_tool_result(payload)
+    if payload_type == "automatic_verification_result":
+        return (
+            "automatic verification "
+            f"{payload.get('purpose', '<unknown>')} `{payload.get('command', '<unknown>')}` "
+            f"{payload.get('status', 'unknown')}"
+        )
+    if payload_type == "final":
+        return f"final: {payload.get('message', '')}"
+    if payload_type:
+        return _summarize_action(payload)
+    if "raw" in payload:
+        return _single_line(f"raw assistant response: {payload['raw']}")
+    return _single_line(json.dumps(payload, sort_keys=True))
+
+
+def _summarize_action(payload: dict[str, Any]) -> str:
+    action_type = payload.get("type", "<unknown>")
+    path = payload.get("path")
+    command = payload.get("command")
+    query = payload.get("query")
+    if path:
+        return f"action {action_type} path={path}"
+    if command:
+        return f"action {action_type} command={command}"
+    if query:
+        return f"action {action_type} query={query}"
+    if action_type == "apply_patch":
+        return "action apply_patch"
+    return f"action {action_type}"
+
+
+def _summarize_tool_result(payload: dict[str, Any]) -> str:
+    status = "ok" if payload.get("ok") else "failed"
+    parts = [f"tool_result {status}"]
+    if changed_paths := payload.get("changed_paths"):
+        parts.append("changed_paths=" + ", ".join(str(path) for path in changed_paths))
+    if verification := payload.get("verification_result"):
+        parts.append(
+            "verification="
+            f"{verification.get('purpose')} `{verification.get('command')}` {verification.get('status')}"
+        )
+    if auto := payload.get("automatic_verification_results"):
+        rendered = [
+            f"{item.get('purpose')} `{item.get('command')}` {item.get('status')}" for item in auto
+        ]
+        parts.append("automatic_verification=" + "; ".join(rendered))
+    output = payload.get("output", "")
+    if output:
+        parts.append("output=" + _single_line(str(output), max_chars=600))
+    return "; ".join(parts)
+
+
+def _single_line(value: str, max_chars: int = 1000) -> str:
+    rendered = " ".join(value.split())
+    if len(rendered) <= max_chars:
+        return rendered
+    remaining = len(rendered) - max_chars
+    return rendered[:max_chars].rstrip() + f" <truncated {remaining} chars>"
+
+
+def indent(value: str) -> str:
+    return "\n".join(f"  {line}" for line in value.splitlines())
