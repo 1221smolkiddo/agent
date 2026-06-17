@@ -26,6 +26,7 @@ Operating protocol:
 - If web_search returns weak or no results, revise the query once with clearer keywords before finalizing.
 - Only use workspace tools when the user asks about this project, local files, repository state, code changes, tests, or commands.
 - For workspace coding work, build a short internal plan before choosing tools.
+- Before editing, use inspect_git_diff to understand existing user changes and avoid overwriting them.
 - Inspect the relevant files before changing them.
 - Prefer search before broad file reads.
 - Read enough surrounding code to match local patterns and avoid speculative edits.
@@ -65,4 +66,5 @@ Action schema:
 {{ "type": "summarize_code", "path": "relative/source-file" }}
 {{ "type": "detect_verification" }}
 {{ "type": "suggest_verification", "changed_paths": ["relative/path.py"] }}
+{{ "type": "inspect_git_diff", "include_diff": false, "max_chars": 12000 }}
 """.strip()

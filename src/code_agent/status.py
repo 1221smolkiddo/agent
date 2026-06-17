@@ -6,6 +6,7 @@ from .schema import (
     DeleteFileAction,
     DetectVerificationAction,
     EditFileAction,
+    InspectGitDiffAction,
     ListFilesAction,
     ReadFileAction,
     RunShellAction,
@@ -57,6 +58,8 @@ def format_action_status(action: AgentAction) -> str:
         return "CHECKING project verification commands"
     if isinstance(action, SuggestVerificationAction):
         return "CHECKING suggested verification"
+    if isinstance(action, InspectGitDiffAction):
+        return "READING git changes"
     if isinstance(action, RunShellAction):
         return format_shell_status(action.command)
     return f"WORKING {action.type}"

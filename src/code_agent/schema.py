@@ -73,6 +73,12 @@ class SuggestVerificationAction(BaseModel):
     changed_paths: list[str] = Field(default_factory=list)
 
 
+class InspectGitDiffAction(BaseModel):
+    type: Literal["inspect_git_diff"]
+    include_diff: bool = False
+    max_chars: int = Field(default=12000, ge=1000, le=50000)
+
+
 AgentAction = Union[
     FinalAction,
     ListFilesAction,
@@ -87,6 +93,7 @@ AgentAction = Union[
     SummarizeCodeAction,
     DetectVerificationAction,
     SuggestVerificationAction,
+    InspectGitDiffAction,
 ]
 
 

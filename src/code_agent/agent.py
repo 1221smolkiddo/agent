@@ -446,6 +446,7 @@ class CodingAgent:
             "summarize_code",
             "detect_verification",
             "suggest_verification",
+            "inspect_git_diff",
         }
 
     @staticmethod

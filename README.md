@@ -115,6 +115,7 @@ The agent asks for confirmation before:
 - searching the project
 - summarizing code structure
 - detecting and suggesting verification commands
+- inspecting git status and diffs
 - writing files
 - editing files
 - applying structured patches
@@ -145,6 +146,7 @@ The CLI prints status lines while the agent works:
 - `SEARCHING WEB` for general web search.
 - `CHECKING project verification commands` when detecting test/lint/build commands.
 - `CHECKING suggested verification` when choosing focused checks for changed files.
+- `READING git changes` when inspecting dirty files before editing.
 - `EDITING` for file writes and edits.
 - `EDITING applying patch` for structured patch edits.
 - `INSTALLING`, `BUILDING`, `TESTING`, or `CHECKING` for recognized shell commands.
@@ -200,7 +202,7 @@ src/
     schema.py           Shared action/result models
     storage.py          SQLite run history
     parsing.py          Optional tree-sitter code summaries
-    tools.py            pathlib, difflib, subprocess, ripgrep tools
+    tools.py            pathlib, difflib, subprocess, ripgrep, and git-awareness tools
 tests/
   test_path_safety.py
 ```

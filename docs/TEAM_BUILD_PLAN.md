@@ -91,6 +91,7 @@ These are already built and should be maintained while new work continues.
 - [x] Automatic focused verification after successful file mutations.
 - [x] Final-answer gate rejects unverified file creation/edit claims.
 - [x] Baseline interactive session state for follow-up turns.
+- [x] Approved git status/diff inspection before edits.
 
 ## Team Task Board
 
@@ -134,7 +135,7 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 - [ ] Issue 19: Repo Map. Owner:
 - [ ] Issue 20: File Relevance Ranking. Owner:
 - [ ] Issue 21: Tree-Sitter Symbol Index. Owner:
-- [ ] Issue 22: Git Awareness. Owner:
+- [x] Issue 22: Git Awareness. Owner: Agent47
 
 ### Phase 7: Planner And Task State
 
@@ -677,6 +678,8 @@ Acceptance criteria:
 
 - Agent warns before editing dirty files.
 - Agent final report includes git status summary.
+
+Status: **Baseline done**. Agent47 now exposes an approved `inspect_git_diff` action that reports git status, staged and unstaged changed paths, and optional bounded diff hunks so the model can check dirty work before editing. Final-report integration is still part of the broader structured work report issue.
 
 ## Phase 7: Planner And Task State
 

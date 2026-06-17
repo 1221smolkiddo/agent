@@ -6,9 +6,9 @@ This document tracks how far the coding agent has come and what collaborators ca
 
 **Stage:** Basic single-model CLI agent with Agent47 engineering protocol
 
-**Approximate progress toward an industry-standard local AI coding agent:** 28%
+**Approximate progress toward an industry-standard local AI coding agent:** 30%
 
-The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, non-workspace intent routing, general web search with provider fallback, structured patch application, verification command detection/suggestion/automatic execution/outcome summaries, mutation-attempt tracking for truthful final answers, clearer interactive terminal panels with short transcript context and structured session state, run history, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
+The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, non-workspace intent routing, general web search with provider fallback, structured patch application, approved git-diff awareness, verification command detection/suggestion/automatic execution/outcome summaries, mutation-attempt tracking for truthful final answers, clearer interactive terminal panels with short transcript context and structured session state, run history, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
 
 This file should be updated whenever a meaningful Agent47 capability is added. Keep the enabled commands/actions current, move completed items out of "What Is Left" when they land, and update the percentage only when the agent gains real product capability rather than documentation alone.
 
@@ -52,7 +52,7 @@ Inside `agent47`, there are currently **12 slash commands**:
 
 ## Enabled Agent Actions
 
-There are currently **13 model-requestable actions**:
+There are currently **14 model-requestable actions**:
 
 | Action | Purpose |
 | --- | --- |
@@ -69,6 +69,7 @@ There are currently **13 model-requestable actions**:
 | `summarize_code` | Summarize a source file with tree-sitter when parsing deps are installed. |
 | `detect_verification` | Detect likely test, lint, typecheck, and build commands from project files. |
 | `suggest_verification` | Suggest focused verification commands from changed file paths. |
+| `inspect_git_diff` | Inspect git status, changed paths, and optional bounded diff hunks before editing. |
 
 ## Installed / Supported Stack
 
@@ -90,6 +91,7 @@ There are currently **13 model-requestable actions**:
 | Agent47 engineering protocol | Enabled |
 | Non-workspace question routing | Enabled |
 | General web search provider fallback | Enabled |
+| Git diff awareness | Enabled |
 | Verification command detection | Enabled |
 | Verification command suggestion | Enabled |
 | Automatic focused verification execution | Enabled |
@@ -117,7 +119,7 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 | --- | --- | --- | --- |
 | 1 | Structured patch editing | Gives safe, reviewable multi-file code changes instead of brittle full-file rewrites | Partial |
 | 2 | Verification loop | Lets Agent47 detect, suggest, run, and summarize the right tests, lint, typecheck, and builds after edits | Baseline done |
-| 3 | Repo intelligence | Helps the agent choose relevant context using symbols, dependencies, git diff, and architecture summaries | Partial |
+| 3 | Repo intelligence | Helps the agent choose relevant context using symbols, dependencies, git diff, and architecture summaries | Partial, with git awareness baseline |
 | 4 | Safer shell policy | Separates read-only, test/build, install/network, and destructive commands with stronger approvals | Partial |
 | 5 | Durable sessions | Enables pause/resume, plan state, checkpoints, and long task recovery | Partial, with interactive state baseline |
 | 6 | Streaming UX | Makes CLI and interactive mode feel alive during model reasoning and tool execution | Partial |
@@ -130,11 +132,11 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 
 ## Next Recommended Build Order
 
-1. Add git diff awareness so Agent47 respects existing user changes.
-2. Add resumable sessions with run IDs and plan state.
-3. Add streaming output in CLI and `agent47`.
-4. Add model profiles and provider abstraction.
-5. Add a JSON protocol for future VS Code integration.
+1. Add resumable sessions with run IDs and plan state.
+2. Add streaming output in CLI and `agent47`.
+3. Add model profiles and provider abstraction.
+4. Add a JSON protocol for future VS Code integration.
+5. Add a lightweight repo index with relevance ranking.
 
 ## Current Safety Notes
 
@@ -154,10 +156,11 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 - `detect_verification` scans known project files for likely test, lint, typecheck, and build commands.
 - `suggest_verification` ranks focused checks from changed paths, and successful file mutations now trigger automatic focused verification when commands are detected.
 - Verification-like shell commands are recorded and appended to final summaries as pass/fail outcomes.
+- `inspect_git_diff` shows dirty files and optional bounded diff hunks so Agent47 can avoid overwriting existing user changes.
 - Failed automatic verification is fed back to the model for recovery instead of allowing a premature final answer.
 - Failed tool calls are automatically fed back to the model for recovery until the failure budget is exhausted.
 - Multi-file change set metadata and richer patch conflict recovery are not implemented yet.
 
 ## Last Updated
 
-June 14, 2026
+June 17, 2026

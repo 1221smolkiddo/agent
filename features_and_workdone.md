@@ -17,6 +17,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - Interactive mode starts write-enabled, and write mode is also available through `/write` or non-dry-run CLI usage.
 - Local workspace sandbox mode through `--sandbox` or `/sandbox`.
 - Workspace path guardrails to block access outside the selected workspace.
+- Git-diff awareness through an approved `inspect_git_diff` action that reports dirty paths and can include bounded diff hunks when needed.
 - File operations with `pathlib`.
 - Diff previews for write, edit, delete, and structured patch operations.
 - Structured `apply_patch` action backed by `git apply`.
@@ -118,7 +119,7 @@ Inside `agent47`:
 - Stronger sandboxing for shell process isolation.
 - Network policy controls.
 - Streaming model output.
-- Better repo context selection.
+- Better repo context selection with a lightweight repo index, symbol/dependency graph, and context ranking.
 - Full planner state with visible task steps.
 - Session resume.
 - Multi-provider and multi-model support.

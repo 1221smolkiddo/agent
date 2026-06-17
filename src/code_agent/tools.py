@@ -16,6 +16,7 @@ from .schema import (
     DeleteFileAction,
     DetectVerificationAction,
     EditFileAction,
+    InspectGitDiffAction,
     ListFilesAction,
     ReadFileAction,
     RunShellAction,
@@ -79,6 +80,8 @@ class ToolRegistry:
             return self._detect_verification()
         if isinstance(action, SuggestVerificationAction):
             return self._suggest_verification(action.changed_paths)
+        if isinstance(action, InspectGitDiffAction):
+            return self._inspect_git_diff(action.include_diff, action.max_chars)
         return ToolResult(ok=False, output=f"Unsupported action: {action.type}")
 
     def resolve_inside_workspace(self, requested_path: str | None = None) -> Path:
@@ -263,6 +266,41 @@ class ToolRegistry:
             return ToolResult(ok=False, output="Permission denied for suggest_verification.")
         return ToolResult(ok=True, output=suggest_verification_commands(self.workspace, changed_paths))
 
+    def _inspect_git_diff(self, include_diff: bool, max_chars: int) -> ToolResult:
+        detail = "Inspect git status and changed paths"
+        if include_diff:
+            detail += " with diff hunks"
+        if not self._approve("inspect_git_diff", detail):
+            return ToolResult(ok=False, output="Permission denied for inspect_git_diff.")
+
+        inside_work_tree = self._git(["rev-parse", "--is-inside-work-tree"], timeout=15)
+        if not inside_work_tree.ok or inside_work_tree.output.strip() != "true":
+            return ToolResult(ok=False, output="Workspace is not inside a git work tree.")
+
+        sections = [
+            ("Status", self._git(["status", "--short"], timeout=30)),
+            ("Unstaged changes", self._git(["diff", "--name-status"], timeout=30)),
+            ("Staged changes", self._git(["diff", "--cached", "--name-status"], timeout=30)),
+        ]
+        output_parts: list[str] = []
+        for title, result in sections:
+            if not result.ok:
+                return result
+            output_parts.append(f"{title}:\n{result.output.strip() or '<clean>'}")
+
+        if include_diff:
+            diff_sections = [
+                ("Unstaged diff", self._git(["diff", "--no-ext-diff"], timeout=60)),
+                ("Staged diff", self._git(["diff", "--cached", "--no-ext-diff"], timeout=60)),
+            ]
+            for title, result in diff_sections:
+                if not result.ok:
+                    return result
+                output_parts.append(f"{title}:\n{result.output.strip() or '<empty>'}")
+
+        output = "\n\n".join(output_parts)
+        return ToolResult(ok=True, output=self._truncate(output, max_chars))
+
     def _web_search(self, query: str) -> ToolResult:
         if not self._approve("web_search", query):
             return ToolResult(ok=False, output="Permission denied for web_search.")
@@ -406,6 +444,25 @@ class ToolRegistry:
             return ToolResult(ok=True, output="Patch can be applied." if check else "Patch applied.")
         stage = "Patch check failed" if check else "Patch apply failed"
         return ToolResult(ok=False, output=f"{stage}: {output or '<no output>'}")
+
+    def _git(self, args: list[str], timeout: int) -> ToolResult:
+        completed = subprocess.run(
+            ["git", *args],
+            cwd=self.workspace,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+        output = "\n".join(part for part in [completed.stdout, completed.stderr] if part).strip()
+        return ToolResult(ok=completed.returncode == 0, output=output)
+
+    @staticmethod
+    def _truncate(output: str, max_chars: int) -> str:
+        if len(output) <= max_chars:
+            return output
+        remaining = len(output) - max_chars
+        return output[:max_chars].rstrip() + f"\n<truncated {remaining} chars>"
 
 
 class DuckDuckGoParser(html.parser.HTMLParser):

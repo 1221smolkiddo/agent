@@ -21,7 +21,7 @@ Typer CLI
 - `code_agent.factory`: shared agent construction.
 - `code_agent.agent`: agent loop and action parsing.
 - `code_agent.models`: OpenAI-compatible model client pointed at OpenRouter by default.
-- `code_agent.tools`: local filesystem, shell, search, and code summary tools.
+- `code_agent.tools`: local filesystem, shell, search, git-awareness, and code summary tools.
 - `code_agent.permissions`: terminal confirmation prompts for risky tools.
 - `code_agent.sandbox`: local workspace copies for isolated agent runs.
 - `code_agent.parsing`: optional tree-sitter based code structure summaries.
@@ -35,6 +35,7 @@ Typer CLI
 We cannot clone any proprietary internals, but we can build the same kind of product experience:
 
 - repo-aware context gathering
+- approved git status/diff inspection before edits
 - tool-using agent loop
 - automatic recovery from failed tool attempts
 - careful file editing
