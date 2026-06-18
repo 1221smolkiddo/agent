@@ -30,6 +30,7 @@ def run(
     model: Optional[str] = typer.Option(None, "--model", help="Model override."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Inspect only; skip writes and shell."),
     sandbox: bool = typer.Option(False, "--sandbox", help="Run inside an isolated workspace copy."),
+    stream: bool = typer.Option(True, "--stream/--no-stream", help="Show compact model streaming progress."),
     max_steps: int = typer.Option(12, "--max-steps", min=1, help="Maximum agent loop steps."),
     max_failures: Optional[int] = typer.Option(
         None,
@@ -55,6 +56,7 @@ def run(
         max_failures=max_failures,
         approval_callback=confirm_permission,
         reporter=StatusReporter(),
+        stream_model=stream,
     )
     try:
         result = agent.run_detailed(task)
@@ -73,6 +75,7 @@ def resume(
     model: Optional[str] = typer.Option(None, "--model", help="Model override."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Inspect only; skip writes and shell."),
     sandbox: bool = typer.Option(False, "--sandbox", help="Run inside an isolated workspace copy."),
+    stream: bool = typer.Option(True, "--stream/--no-stream", help="Show compact model streaming progress."),
     max_steps: int = typer.Option(12, "--max-steps", min=1, help="Maximum agent loop steps."),
     max_failures: Optional[int] = typer.Option(
         None,
@@ -110,6 +113,7 @@ def resume(
         max_failures=max_failures,
         approval_callback=confirm_permission,
         reporter=StatusReporter(),
+        stream_model=stream,
     )
     try:
         result = agent.run_detailed(task)

@@ -20,6 +20,47 @@ class FakeModel:
         return self.responses.pop(0)
 
 
+class StreamingFakeModel(FakeModel):
+    def __init__(self, responses: list[str]) -> None:
+        super().__init__(responses)
+        self.streamed = False
+
+    def stream_complete(self, messages: list[ChatMessage], on_token) -> str:
+        self.streamed = True
+        self.messages_seen.append([message.copy() for message in messages])
+        response = self.responses.pop(0)
+        for chunk in [response[:10], response[10:]]:
+            if chunk:
+                on_token(chunk)
+        return response
+
+
+class RecordingReporter:
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+    def thinking(self, step: int) -> None:
+        self.events.append(f"thinking:{step}")
+
+    def action(self, action: AgentAction) -> None:
+        self.events.append(f"action:{action.type}")
+
+    def recovery(self, detail: str) -> None:
+        self.events.append(f"recovery:{detail}")
+
+    def done(self) -> None:
+        self.events.append("done")
+
+    def model_stream_start(self, step: int) -> None:
+        self.events.append(f"stream_start:{step}")
+
+    def model_stream_chunk(self, chunk: str) -> None:
+        self.events.append(f"stream_chunk:{chunk}")
+
+    def model_stream_end(self) -> None:
+        self.events.append("stream_end")
+
+
 class RecoveringTools:
     def __init__(self) -> None:
         self.calls = 0
@@ -41,6 +82,56 @@ def make_agent(tmp_path: Path, model: FakeModel, tools: RecoveringTools) -> Codi
         tools=tools,  # type: ignore[arg-type]
         storage=AgentStorage(tmp_path / "agent.db"),
     )
+
+
+def test_agent_uses_streaming_client_when_available(tmp_path: Path) -> None:
+    model = StreamingFakeModel(
+        [
+            '{"type":"list_files","path":"."}',
+            '{"type":"final","message":"done"}',
+        ]
+    )
+    tools = RecoveringTools()
+    reporter = RecordingReporter()
+    agent = CodingAgent(
+        cwd=tmp_path,
+        dry_run=False,
+        max_steps=5,
+        max_failures=3,
+        model_client=model,
+        tools=tools,  # type: ignore[arg-type]
+        storage=AgentStorage(tmp_path / "agent.db"),
+        reporter=reporter,  # type: ignore[arg-type]
+        stream_model=True,
+    )
+
+    result = agent.run("inspect this project")
+
+    assert result == "done"
+    assert model.streamed
+    assert "stream_start:1" in reporter.events
+    assert "stream_end" in reporter.events
+    assert any(event.startswith("stream_chunk:") for event in reporter.events)
+
+
+def test_agent_can_disable_streaming_even_when_client_supports_it(tmp_path: Path) -> None:
+    model = StreamingFakeModel(['{"type":"final","message":"done"}'])
+    tools = RecoveringTools()
+    agent = CodingAgent(
+        cwd=tmp_path,
+        dry_run=False,
+        max_steps=5,
+        max_failures=3,
+        model_client=model,
+        tools=tools,  # type: ignore[arg-type]
+        storage=AgentStorage(tmp_path / "agent.db"),
+        stream_model=False,
+    )
+
+    result = agent.run("inspect this project")
+
+    assert result == "done"
+    assert not model.streamed
 
 
 def test_agent_recovers_after_failed_tool_result(tmp_path: Path) -> None:

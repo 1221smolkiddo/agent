@@ -59,6 +59,7 @@ code-agent run "Fix the failing pytest"
 code-agent run --cwd ../some-project --model qwen/qwen3-coder "Add tests for the parser"
 code-agent run --dry-run "Refactor the CLI argument parser"
 code-agent run --sandbox "Try a risky refactor in an isolated copy"
+code-agent run --no-stream "Run without compact model streaming progress"
 code-agent run --max-failures 5 "Fix the issue and recover from failed attempts"
 code-agent history
 code-agent history show 12
@@ -89,6 +90,8 @@ agent47: Inspect this project and suggest the next feature
 agent47: /status
 agent47: /dry-run
 agent47: /write
+agent47: /stream
+agent47: /stream off
 agent47: /sandbox
 agent47: /sandbox off
 agent47: /max-failures 5
@@ -109,6 +112,7 @@ agent47: /exit
 - `AGENT_MAX_TOKENS` is optional and defaults to `4096`.
 - `AGENT_MAX_FAILURES` is optional and defaults to `3`.
 - `AGENT_DB_PATH` is optional and defaults to `.code-agent/agent.db`.
+- `AGENT_STREAM` is optional and defaults to `true`. It enables compact model streaming progress without printing raw JSON action tokens.
 - `OPENAI_API_KEY` and `OPENAI_BASE_URL` are still accepted as a temporary fallback.
 
 ## Permissions
@@ -150,6 +154,7 @@ It stops after the configured consecutive failure budget is exhausted.
 The CLI prints status lines while the agent works:
 
 - `THINKING` before model reasoning.
+- `STREAMING` while a streaming-capable model response is arriving. Agent47 shows compact progress markers instead of raw JSON action text.
 - `READING` when listing or reading files.
 - `SEARCHING` for project search.
 - `SEARCHING WEB` for general web search.

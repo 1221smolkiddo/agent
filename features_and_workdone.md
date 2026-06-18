@@ -15,6 +15,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - User approval prompts for file listing, reading, project search, code summary, verification detection/suggestion, file writes, file edits, patch application, shell commands, and web search.
 - Dry-run mode for inspect-only sessions.
 - Interactive mode starts write-enabled, and write mode is also available through `/write` or non-dry-run CLI usage.
+- Compact model streaming progress is available through `AGENT_STREAM`, `--stream/--no-stream`, and `/stream [off]`.
 - Local workspace sandbox mode through `--sandbox` or `/sandbox`.
 - Workspace path guardrails to block access outside the selected workspace.
 - Git-diff awareness through an approved `inspect_git_diff` action that reports dirty paths and can include bounded diff hunks when needed.
@@ -56,7 +57,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - Saved run steps can be compacted into continuation context for follow-up runs.
 - Guard against false completion after blocked writes, edits, or patch applications.
 - Guard against false completion after unverified file deletion claims.
-- Operation status labels such as `THINKING`, `READING`, `EDITING`, `SEARCHING`, `TESTING`, `BUILDING`, `RECOVERING`, and `DONE`.
+- Operation status labels such as `THINKING`, `STREAMING`, `READING`, `EDITING`, `SEARCHING`, `TESTING`, `BUILDING`, `RECOVERING`, and `DONE`.
 - Planner status labels such as `PLANNING updating task plan`.
 - Centered interactive startup banner with optional terminal colors for panels, prompts, and status labels.
 - Stop controls with `Ctrl+C`, `/stop`, and `/exit`.
@@ -146,7 +147,7 @@ Inside `agent47`:
 - Multi-file change set metadata and richer patch conflict recovery.
 - Stronger sandboxing for shell process isolation.
 - Network policy controls.
-- Streaming model output.
+- Rich token-level streaming views for future non-JSON frontends.
 - Better repo context selection with a lightweight repo index, symbol/dependency graph, and context ranking.
 - Richer planner fields for files touched, blockers, checks, and ownership.
 - Multi-provider and multi-model support.

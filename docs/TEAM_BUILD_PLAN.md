@@ -151,7 +151,7 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 
 ### Phase 8: Streaming And UX
 
-- [ ] Issue 26: Streaming Model Output. Owner:
+- [x] Issue 26: Streaming Model Output. Owner: Agent47
 - [ ] Issue 27: Better Terminal UI. Owner:
 - [ ] Issue 28: Multiline Input. Owner:
 
@@ -778,6 +778,8 @@ Stream tokens/status where useful.
 Acceptance criteria:
 
 - User sees progress during long model responses.
+
+Status: **Baseline done**. OpenAI-compatible clients support streamed chat completions, the agent consumes streamed chunks when enabled, and CLI/`agent47` show compact `STREAMING` progress markers without dumping raw JSON action tokens. Controls are available through `AGENT_STREAM`, `--stream/--no-stream`, and `/stream [off]`.
 
 #### 27. Better Terminal UI
 

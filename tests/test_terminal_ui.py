@@ -13,6 +13,9 @@ from code_agent.terminal_ui import (
     format_plan_panel,
     format_prompt_footer,
     format_prompt_header,
+    print_stream_end,
+    print_stream_marker,
+    print_stream_start,
 )
 from code_agent.work_report import format_work_report_body, should_show_work_report
 
@@ -144,6 +147,24 @@ def test_should_show_work_report_stays_quiet_for_simple_chat() -> None:
 def test_format_prompt_border_parts() -> None:
     assert format_prompt_header("You", width=24) == "+ YOU -----------------+"
     assert format_prompt_footer(width=24) == "+----------------------+"
+
+
+def test_stream_helpers_render_compact_progress(monkeypatch) -> None:
+    echoed: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        "code_agent.terminal_ui.typer.echo",
+        lambda value="", nl=True, **_kwargs: echoed.append((value, nl)),
+    )
+
+    print_stream_start("model response for step 1")
+    print_stream_marker()
+    print_stream_end()
+
+    assert "STREAMING" in echoed[0][0]
+    assert "model response for step 1" in echoed[0][0]
+    assert echoed[0][1] is False
+    assert echoed[1] == (".", False)
+    assert echoed[2] == ("", True)
 
 
 def test_interactive_mode_starts_write_enabled() -> None:

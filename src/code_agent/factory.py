@@ -20,6 +20,7 @@ def create_agent(
     max_failures: int | None = None,
     approval_callback: Callable[[str, str], bool] | None = None,
     reporter: StatusReporter | None = None,
+    stream_model: bool | None = None,
 ) -> CodingAgent:
     workspace = cwd.resolve()
     selected_model = model or settings.agent_model
@@ -44,4 +45,5 @@ def create_agent(
         ),
         storage=storage,
         reporter=reporter,
+        stream_model=settings.agent_stream if stream_model is None else stream_model,
     )

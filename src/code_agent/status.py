@@ -17,10 +17,13 @@ from .schema import (
     WebSearchAction,
     WriteFileAction,
 )
-from .terminal_ui import print_status_line
+from .terminal_ui import print_status_line, print_stream_end, print_stream_marker, print_stream_start
 
 
 class StatusReporter:
+    def __init__(self) -> None:
+        self._stream_chars = 0
+
     def thinking(self, step: int) -> None:
         print_status_line("THINKING", f"step {step}")
 
@@ -34,6 +37,19 @@ class StatusReporter:
 
     def done(self) -> None:
         print_status_line("DONE", "")
+
+    def model_stream_start(self, step: int) -> None:
+        self._stream_chars = 0
+        print_stream_start(f"model response for step {step}")
+
+    def model_stream_chunk(self, chunk: str) -> None:
+        self._stream_chars += len(chunk)
+        if self._stream_chars >= 120:
+            print_stream_marker()
+            self._stream_chars = 0
+
+    def model_stream_end(self) -> None:
+        print_stream_end()
 
 
 def format_action_status(action: AgentAction) -> str:

@@ -53,6 +53,7 @@ STATUS_COLORS = {
     "BUILDING": typer.colors.BLUE,
     "RUNNING": typer.colors.WHITE,
     "RECOVERING": typer.colors.YELLOW,
+    "STREAMING": typer.colors.BLUE,
     "DONE": typer.colors.GREEN,
 }
 
@@ -155,6 +156,21 @@ def print_status_line(label: str, detail: str) -> None:
     rendered_label = style(f"{label:<10}", fg=color, bold=True)
     rendered_detail = style(detail, fg=typer.colors.WHITE)
     typer.echo(f"  {rendered_label} {rendered_detail}")
+
+
+def print_stream_start(detail: str) -> None:
+    color = STATUS_COLORS.get("STREAMING", typer.colors.BLUE)
+    rendered_label = style(f"{'STREAMING':<10}", fg=color, bold=True)
+    rendered_detail = style(detail, fg=typer.colors.WHITE)
+    typer.echo(f"  {rendered_label} {rendered_detail}", nl=False)
+
+
+def print_stream_marker(marker: str = ".") -> None:
+    typer.echo(style(marker, fg=typer.colors.BLUE), nl=False)
+
+
+def print_stream_end() -> None:
+    typer.echo("")
 
 
 def format_prompt_header(title: str, *, width: int = PANEL_WIDTH) -> str:

@@ -37,6 +37,7 @@ def main() -> None:
     cwd = base_cwd
     model: str | None = None
     dry_run = DEFAULT_DRY_RUN
+    stream_model = settings.agent_stream
     sandbox_enabled = False
     max_steps = 12
     max_failures: int | None = None
@@ -76,6 +77,7 @@ def main() -> None:
                 cwd,
                 model,
                 dry_run,
+                stream_model,
                 sandbox_enabled,
                 max_steps,
                 max_failures,
@@ -88,6 +90,7 @@ def main() -> None:
             cwd = command_result.cwd
             model = command_result.model
             dry_run = command_result.dry_run
+            stream_model = command_result.stream_model
             sandbox_enabled = command_result.sandbox_enabled
             max_steps = command_result.max_steps
             max_failures = command_result.max_failures
@@ -102,6 +105,7 @@ def main() -> None:
             max_failures=max_failures,
             approval_callback=confirm_permission,
             reporter=StatusReporter(),
+            stream_model=stream_model,
         )
         try:
             transcript = run_interactive_turn(user_input, agent, transcript, session_state)
@@ -117,6 +121,7 @@ class CommandState:
         cwd: Path,
         model: str | None,
         dry_run: bool,
+        stream_model: bool,
         sandbox_enabled: bool,
         max_steps: int,
         max_failures: int | None,
@@ -126,6 +131,7 @@ class CommandState:
         self.cwd = cwd
         self.model = model
         self.dry_run = dry_run
+        self.stream_model = stream_model
         self.sandbox_enabled = sandbox_enabled
         self.max_steps = max_steps
         self.max_failures = max_failures
@@ -139,6 +145,7 @@ def handle_command(
     cwd: Path,
     model: str | None,
     dry_run: bool,
+    stream_model: bool,
     sandbox_enabled: bool,
     max_steps: int,
     max_failures: int | None,
@@ -154,6 +161,7 @@ def handle_command(
             cwd,
             model,
             dry_run,
+            stream_model,
             sandbox_enabled,
             max_steps,
             max_failures,
@@ -167,6 +175,9 @@ def handle_command(
     elif command == "/write":
         dry_run = False
         print_panel("Mode", "write-enabled")
+    elif command == "/stream":
+        stream_model = value.lower() != "off"
+        print_panel("Streaming", "on" if stream_model else "off")
     elif command == "/cwd":
         if value:
             base_cwd = Path(value).expanduser().resolve()
@@ -204,6 +215,7 @@ def handle_command(
             cwd=cwd,
             model=model,
             dry_run=dry_run,
+            stream_model=stream_model,
             max_steps=max_steps,
             max_failures=max_failures,
             session_state=session_state,
@@ -218,6 +230,7 @@ def handle_command(
                 ("Workspace", cwd),
                 ("Model", model or settings.agent_model),
                 ("Mode", "dry-run" if dry_run else "write-enabled"),
+                ("Streaming", "on" if stream_model else "off"),
                 ("Sandbox", "on" if sandbox_enabled else "off"),
                 ("Max steps", max_steps),
                 ("Max failures", max_failures or settings.agent_max_failures),
@@ -227,7 +240,16 @@ def handle_command(
     else:
         print_panel("Unknown Command", f"{command}\nUse /help to see available commands.")
 
-    return CommandState(base_cwd, cwd, model, dry_run, sandbox_enabled, max_steps, max_failures)
+    return CommandState(
+        base_cwd,
+        cwd,
+        model,
+        dry_run,
+        stream_model,
+        sandbox_enabled,
+        max_steps,
+        max_failures,
+    )
 
 
 def print_help() -> None:
@@ -239,6 +261,7 @@ Commands:
   /status            Show current workspace, model, mode, and max steps.
   /dry-run           Inspect only; skip writes and shell commands.
   /write             Allow writes and shell commands.
+  /stream [off]      Turn compact model streaming progress on or off.
   /cwd <path>        Change workspace.
   /sandbox [off]     Create and use a sandbox copy, or turn it off.
   /model <name>      Change model for this session.
@@ -295,6 +318,7 @@ def run_resume_command(
     cwd: Path,
     model: str | None,
     dry_run: bool,
+    stream_model: bool,
     max_steps: int,
     max_failures: int | None,
     session_state: SessionState | None,
@@ -330,6 +354,7 @@ def run_resume_command(
         max_failures=max_failures,
         approval_callback=confirm_permission,
         reporter=StatusReporter(),
+        stream_model=stream_model,
     )
     result = agent.run_detailed(task)
     print_work_report_panel(result)

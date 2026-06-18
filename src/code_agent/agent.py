@@ -46,6 +46,7 @@ class CodingAgent:
         tools: ToolRegistry,
         storage: AgentStorage,
         reporter: StatusReporter | None = None,
+        stream_model: bool = True,
     ) -> None:
         self.cwd = cwd
         self.dry_run = dry_run
@@ -55,6 +56,7 @@ class CodingAgent:
         self.tools = tools
         self.storage = storage
         self.reporter = reporter
+        self.stream_model = stream_model
 
     def run(self, task: str) -> str:
         return self.run_detailed(task).message
@@ -79,7 +81,7 @@ class CodingAgent:
 
         for step in range(1, self.max_steps + 1):
             self._report_thinking(step)
-            response = self.model_client.complete(messages)
+            response = self._complete_model(messages, step)
             action, parse_error = self._parse_action(response)
             if parse_error:
                 if not workspace_task and self._can_use_raw_final(response):
@@ -374,6 +376,23 @@ class CodingAgent:
             if isinstance(data, dict):
                 return data
         raise ValueError("No JSON object found in model response.")
+
+    def _complete_model(self, messages: list[ChatMessage], step: int) -> str:
+        stream_complete = getattr(self.model_client, "stream_complete", None)
+        if not self.stream_model or stream_complete is None:
+            return self.model_client.complete(messages)
+
+        if self.reporter:
+            self.reporter.model_stream_start(step)
+        try:
+            return stream_complete(messages, self._report_model_stream_chunk)
+        finally:
+            if self.reporter:
+                self.reporter.model_stream_end()
+
+    def _report_model_stream_chunk(self, chunk: str) -> None:
+        if self.reporter:
+            self.reporter.model_stream_chunk(chunk)
 
     def _run_tool(self, action: AgentAction) -> ToolResult:
         try:

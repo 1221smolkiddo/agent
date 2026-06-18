@@ -37,7 +37,7 @@ uv run code-agent resume 12 "Continue after the failed check"
 agent47
 ```
 
-Inside `agent47`, there are currently **14 slash commands**:
+Inside `agent47`, there are currently **15 slash commands**:
 
 | Slash command | Purpose |
 | --- | --- |
@@ -45,6 +45,7 @@ Inside `agent47`, there are currently **14 slash commands**:
 | `/status` | Show workspace, model, mode, and max steps. |
 | `/dry-run` | Inspect only; skip writes and shell commands. |
 | `/write` | Allow writes and shell commands. |
+| `/stream [off]` | Turn compact model streaming progress on or off. |
 | `/cwd <path>` | Change workspace. |
 | `/sandbox [off]` | Create and use a sandbox copy, or return to the base workspace. |
 | `/model <name>` | Change model for this session. |
@@ -112,6 +113,7 @@ There are currently **15 model-requestable actions**:
 | Verification outcome summaries | Enabled |
 | Mutation-attempt tracking for final-answer honesty | Enabled |
 | Operation status labels | Enabled |
+| Compact model streaming progress | Enabled |
 | Bordered interactive terminal panels | Enabled |
 | Centered interactive banner and terminal color theme | Enabled |
 | Short interactive transcript context | Enabled |
@@ -139,7 +141,7 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 | 3 | Repo intelligence | Helps the agent choose relevant context using symbols, dependencies, git diff, and architecture summaries | Partial, with git awareness baseline |
 | 4 | Safer shell policy | Separates read-only, test/build, install/network, and destructive commands with stronger approvals | Baseline done |
 | 5 | Durable sessions | Enables pause/resume, plan state, checkpoints, and long task recovery | Partial, with resumable runs, visible durable plan checkpoints, and persisted structured work reports |
-| 6 | Streaming UX | Makes CLI and interactive mode feel alive during model reasoning and tool execution | Partial |
+| 6 | Streaming UX | Makes CLI and interactive mode feel alive during model reasoning and tool execution | Baseline done |
 | 7 | Multi-model/provider layer | Supports planner/coder/reviewer profiles, fallbacks, and cost-aware routing | Not started |
 | 8 | Observability | Captures traces, timings, token use, failures, and debug bundles for reliability work | Partial |
 | 9 | Collaboration workflow | Adds review mode, branch/commit/PR helpers, issue context, changelogs, and release notes | Partial |
@@ -149,11 +151,11 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 
 ## Next Recommended Build Order
 
-1. Add streaming output in CLI and `agent47`.
-2. Add model profiles and provider abstraction.
-3. Add a JSON protocol for future VS Code integration.
-4. Add a lightweight repo index with relevance ranking.
-5. Add richer planner fields for blockers, checks, and file ownership.
+1. Add model profiles and provider abstraction.
+2. Add a JSON protocol for future VS Code integration.
+3. Add a lightweight repo index with relevance ranking.
+4. Add richer planner fields for blockers, checks, and file ownership.
+5. Add local eval harness and regression tasks.
 
 ## Current Safety Notes
 
@@ -174,6 +176,7 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 - Mutation attempts are tracked so final answers cannot claim file creation or edits without a verified successful mutation.
 - Interactive session state tracks the current task, pending user info, target files, changed files, blockers, and recent tool results for follow-up turns.
 - Interactive mode starts with a centered `A G E N T 4 7` banner and uses optional terminal colors for panels, prompts, and status labels.
+- Streaming-capable model clients now feed compact `STREAMING` progress markers in CLI and `agent47`, with `/stream [off]`, `--stream/--no-stream`, and `AGENT_STREAM` controls.
 - `code-agent history show <run-id>` and `/history-show <run-id>` expose saved step details for auditability.
 - `code-agent resume <run-id>` and `/resume <run-id>` continue from compact saved run context while preserving a new run record.
 - `update_plan` stores durable plan steps in run history and resume context, with validation that only one step is `in_progress`.
