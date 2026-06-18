@@ -96,6 +96,7 @@ These are already built and should be maintained while new work continues.
 - [x] Baseline shell command risk policy and secret redaction.
 - [x] Baseline public-web network policy for web search.
 - [x] Durable `update_plan` action with persisted step status checkpoints.
+- [x] Visible plan snapshots in CLI and `agent47`.
 
 ## Team Task Board
 
@@ -144,7 +145,7 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 ### Phase 7: Planner And Task State
 
 - [x] Issue 23: Task Plan Object. Owner: Agent47
-- [ ] Issue 24: Visible Step Progress. Owner:
+- [x] Issue 24: Visible Step Progress. Owner: Agent47
 - [x] Issue 25: Session Resume. Owner: Agent47
 
 ### Phase 8: Streaming And UX
@@ -736,6 +737,8 @@ Tasks:
 Acceptance criteria:
 
 - User can tell what the agent is doing without reading raw tool output.
+
+Status: **Baseline done**. CLI and `agent47` now render the latest durable plan snapshot when a run updates its plan, and plan updates also continue to appear in saved history details and resume context.
 
 #### 25. Session Resume
 

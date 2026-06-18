@@ -12,6 +12,7 @@ from .resume import build_resume_task, format_run_detail
 from .sandbox import create_sandbox_workspace
 from .storage import AgentStorage
 from .status import StatusReporter
+from .terminal_ui import print_plan_panel
 
 app = typer.Typer(help="A CLI-first coding agent.")
 history_app = typer.Typer(
@@ -56,11 +57,12 @@ def run(
         reporter=StatusReporter(),
     )
     try:
-        result = agent.run(task)
+        result = agent.run_detailed(task)
     except KeyboardInterrupt:
         typer.echo("\nSTOPPED by user")
         raise typer.Exit(code=130)
-    typer.echo(result)
+    print_plan_panel(result.plan_updates)
+    typer.echo(result.message)
 
 
 @app.command()
@@ -105,11 +107,12 @@ def resume(
         reporter=StatusReporter(),
     )
     try:
-        result = agent.run(task)
+        result = agent.run_detailed(task)
     except KeyboardInterrupt:
         typer.echo("\nSTOPPED by user")
         raise typer.Exit(code=130)
-    typer.echo(result)
+    print_plan_panel(result.plan_updates)
+    typer.echo(result.message)
 
 
 @history_app.callback(invoke_without_command=True)

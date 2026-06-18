@@ -9,6 +9,8 @@ from code_agent.terminal_ui import (
     format_agent_banner,
     format_key_values,
     format_panel,
+    format_plan_body,
+    format_plan_panel,
     format_prompt_footer,
     format_prompt_header,
 )
@@ -45,6 +47,43 @@ def test_format_key_values_uses_panel_body() -> None:
 
     assert "| Mode: dry-run                  |" in panel
     assert "| Sandbox: off                   |" in panel
+
+
+def test_format_plan_body_uses_latest_plan_update() -> None:
+    body = format_plan_body(
+        [
+            {
+                "steps": [
+                    {"step": "Old step", "status": "in_progress"},
+                ]
+            },
+            {
+                "steps": [
+                    {"step": "Inspect docs", "status": "completed"},
+                    {"step": "Render plan panel", "status": "in_progress"},
+                    {"step": "Handle blocker", "status": "blocked", "note": "needs approval"},
+                    {"step": "Update docs", "status": "pending"},
+                ]
+            },
+        ]
+    )
+
+    assert body == (
+        "[x] 1. Inspect docs\n"
+        "[>] 2. Render plan panel\n"
+        "[!] 3. Handle blocker (needs approval)\n"
+        "[ ] 4. Update docs"
+    )
+
+
+def test_format_plan_panel_labels_plan() -> None:
+    panel = format_plan_panel(
+        [{"steps": [{"step": "Render visible progress", "status": "in_progress"}]}],
+        width=40,
+    )
+
+    assert panel.splitlines()[0] == "+ PLAN --------------------------------+"
+    assert "| [>] 1. Render visible progress       |" in panel
 
 
 def test_format_prompt_border_parts() -> None:
@@ -90,3 +129,36 @@ def test_interactive_turn_does_not_print_user_panel(monkeypatch) -> None:
 
     assert printed == [("Agent47", "done")]
     assert transcript == [("make a file", "done")]
+
+
+def test_interactive_turn_prints_plan_before_agent_message(monkeypatch) -> None:
+    printed: list[tuple[str, str]] = []
+    monkeypatch.setattr(interactive, "print_panel", lambda title, body: printed.append((title, body)))
+    monkeypatch.setattr(
+        interactive,
+        "print_plan_panel",
+        lambda updates: printed.append(("Plan", format_plan_body(updates))) if updates else None,
+    )
+
+    class Agent:
+        def run_detailed(self, _task: str) -> AgentRunResult:
+            return AgentRunResult(
+                message="done",
+                run_id=1,
+                plan_updates=[
+                    {
+                        "steps": [
+                            {"step": "Inspect docs", "status": "completed"},
+                            {"step": "Render plan", "status": "in_progress"},
+                        ]
+                    }
+                ],
+            )
+
+    transcript = run_interactive_turn("make progress visible", Agent(), [], SessionState())
+
+    assert printed == [
+        ("Plan", "[x] 1. Inspect docs\n[>] 2. Render plan"),
+        ("Agent47", "done"),
+    ]
+    assert transcript == [("make progress visible", "done")]

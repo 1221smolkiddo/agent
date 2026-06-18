@@ -21,6 +21,7 @@ from .terminal_ui import (
     print_agent_banner,
     print_key_values,
     print_panel,
+    print_plan_panel,
 )
 
 DEFAULT_DRY_RUN = False
@@ -319,6 +320,7 @@ def run_resume_command(
         reporter=StatusReporter(),
     )
     result = agent.run_detailed(task)
+    print_plan_panel(result.plan_updates)
     print_panel("Agent47", result.message)
     if session_state is not None:
         session_state.update(f"resume run {run_id}", result)
@@ -345,6 +347,7 @@ def run_interactive_turn(
 ) -> list[tuple[str, str]]:
     task = task_with_context(user_input, transcript, session_state)
     result = agent.run_detailed(task)
+    print_plan_panel(result.plan_updates)
     print_panel("Agent47", result.message)
     session_state.update(user_input, result)
     transcript.append((user_input, result.message))

@@ -31,6 +31,7 @@ Typer CLI
 - `code_agent.config`: environment and settings.
 - `code_agent.schema`: typed action and tool result models.
 - `code_agent.status`: operation labels for thinking, editing, searching, testing, building, and recovery.
+- `code_agent.terminal_ui`: bordered panels, prompts, status lines, banners, colors, and plan snapshots.
 
 ## Codex-Like Direction
 
@@ -48,6 +49,7 @@ We cannot clone any proprietary internals, but we can build the same kind of pro
 - run history
 - resumable sessions
 - durable plan checkpoints
+- visible plan snapshots
 - eventually editor integration
 
 ## Future VS Code Shape

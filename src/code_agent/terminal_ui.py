@@ -20,6 +20,7 @@ PANEL_COLORS = {
     "Help": typer.colors.BLUE,
     "Status": typer.colors.CYAN,
     "History": typer.colors.MAGENTA,
+    "Plan": typer.colors.BLUE,
     "Resume": typer.colors.MAGENTA,
     "Mode": typer.colors.YELLOW,
     "Workspace": typer.colors.CYAN,
@@ -86,6 +87,50 @@ def format_key_values(title: str, rows: Iterable[tuple[str, object]], *, width: 
 
 def print_key_values(title: str, rows: Iterable[tuple[str, object]], *, width: int = PANEL_WIDTH) -> None:
     typer.echo(colorize_panel(format_key_values(title, rows, width=width), title))
+
+
+def format_plan_panel(plan_updates: list[dict[str, object]], *, width: int = PANEL_WIDTH) -> str:
+    body = format_plan_body(plan_updates)
+    return format_panel("Plan", body, width=width)
+
+
+def print_plan_panel(plan_updates: list[dict[str, object]], *, width: int = PANEL_WIDTH) -> None:
+    if not plan_updates:
+        return
+    typer.echo(colorize_panel(format_plan_panel(plan_updates, width=width), "Plan"))
+
+
+def format_plan_body(plan_updates: list[dict[str, object]]) -> str:
+    if not plan_updates:
+        return ""
+
+    latest = plan_updates[-1]
+    raw_steps = latest.get("steps", [])
+    if not isinstance(raw_steps, list) or not raw_steps:
+        return str(latest.get("output", "Plan updated"))
+
+    lines: list[str] = []
+    for index, item in enumerate(raw_steps, start=1):
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("status", "pending"))
+        marker = _plan_status_marker(status)
+        step = str(item.get("step", "<unnamed step>"))
+        note = item.get("note")
+        line = f"{marker} {index}. {step}"
+        if note:
+            line += f" ({note})"
+        lines.append(line)
+    return "\n".join(lines) if lines else str(latest.get("output", "Plan updated"))
+
+
+def _plan_status_marker(status: str) -> str:
+    return {
+        "pending": "[ ]",
+        "in_progress": "[>]",
+        "completed": "[x]",
+        "blocked": "[!]",
+    }.get(status, "[ ]")
 
 
 def print_status_line(label: str, detail: str) -> None:

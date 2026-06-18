@@ -4,13 +4,13 @@ This is the build map for turning Agent47 from a promising CLI agent into an ind
 
 ## Current Position
 
-Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRouter/OpenAI-compatible model access, typed tool actions, durable plan checkpoints, non-workspace intent routing, local file/search/shell/web tools with general web-search fallback, structured patch application, git-diff awareness, verification command detection/suggestion/automatic execution/outcome summaries, permission prompts, dry-run mode, local sandbox copies, SQLite run history with detail views and resume support, operation status labels, cleaner bordered terminal panels with short transcript context and structured session state, failure recovery, optional tree-sitter summaries, and an Agent47 engineering protocol in the system prompt.
+Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRouter/OpenAI-compatible model access, typed tool actions, durable plan checkpoints with visible plan snapshots, non-workspace intent routing, local file/search/shell/web tools with general web-search fallback, structured patch application, git-diff awareness, verification command detection/suggestion/automatic execution/outcome summaries, permission prompts, dry-run mode, local sandbox copies, SQLite run history with detail views and resume support, operation status labels, cleaner bordered terminal panels with short transcript context and structured session state, failure recovery, optional tree-sitter summaries, and an Agent47 engineering protocol in the system prompt.
 
 ## Industry-Standard Capability Checklist
 
 | Capability area | Current state | What is left |
 | --- | --- | --- |
-| Agent loop | Basic typed action loop with failure recovery, non-workspace routing, and durable plan checkpoints | Add richer task decomposition, cancellation, pause/resume, and bounded long-running work |
+| Agent loop | Basic typed action loop with failure recovery, non-workspace routing, durable plan checkpoints, and visible plan snapshots | Add richer task decomposition, cancellation, pause/resume, and bounded long-running work |
 | Code editing | Full-file writes, exact text replacement, and approved `git apply` patches | Add multi-file change set metadata, conflict handling, rollback support, and formatting hooks |
 | Repository intelligence | File listing, ripgrep search, optional code summaries, approved git status/diff inspection | Add repo index, symbol graph, dependency graph, ownership hints, and context ranking |
 | Verification | Agent can detect likely verification commands, suggest focused checks from changed paths, automatically run focused checks after successful mutations, feed failed checks back to the model, and summarize verification outcomes | Add richer retry policy and failure-output parsing |
@@ -18,7 +18,7 @@ Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRou
 | Model layer | Single OpenAI-compatible chat client | Add provider abstraction, model profiles, planner/coder/reviewer routing, fallback models, token/cost tracking, and streaming |
 | Memory and sessions | SQLite run history with detail views, resumable runs, durable plan checkpoints, and in-memory interactive session state for follow-ups | Add conversation checkpoints, per-repo memory, decision logs, and context compaction |
 | Collaboration | Basic docs and GitHub setup | Add branch/commit/PR workflow, review mode, issue ingestion, changelog generation, and release notes |
-| Developer UX | CLI, `agent47` interactive mode, status labels, bordered panels for prompts and responses, short transcript and session-state context for follow-ups | Add richer TUI streaming, approval diff views, command output panes, transcript export, and VS Code integration |
+| Developer UX | CLI, `agent47` interactive mode, status labels, bordered panels for prompts, responses, history, and plan snapshots, short transcript and session-state context for follow-ups | Add richer TUI streaming, approval diff views, command output panes, transcript export, and VS Code integration |
 | Observability | Stored steps and simple status | Add structured traces, tool timing, model usage metrics, failure analytics, and debug bundles |
 | Evaluation | Unit tests for core behavior | Add agent task benchmarks, golden transcript tests, sandboxed fixture repos, regression scenarios, and quality gates |
 | Packaging | Python package with uv workflow | Add signed releases, config profiles, install docs for common platforms, and upgrade/migration notes |
