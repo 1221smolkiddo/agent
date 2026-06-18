@@ -6,9 +6,9 @@ This document tracks how far the coding agent has come and what collaborators ca
 
 **Stage:** Basic single-model CLI agent with Agent47 engineering protocol
 
-**Approximate progress toward an industry-standard local AI coding agent:** 33%
+**Approximate progress toward an industry-standard local AI coding agent:** 35%
 
-The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, non-workspace intent routing, general web search with provider fallback, structured patch application, approved git-diff awareness, verification command detection/suggestion/automatic execution/outcome summaries, mutation-attempt tracking for truthful final answers, clearer interactive terminal panels with short transcript context and structured session state, run history detail views, resumable runs, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
+The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, durable plan checkpoints, non-workspace intent routing, general web search with provider fallback, structured patch application, approved git-diff awareness, verification command detection/suggestion/automatic execution/outcome summaries, mutation-attempt tracking for truthful final answers, clearer interactive terminal panels with short transcript context and structured session state, run history detail views, resumable runs, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
 
 This file should be updated whenever a meaningful Agent47 capability is added. Keep the enabled commands/actions current, move completed items out of "What Is Left" when they land, and update the percentage only when the agent gains real product capability rather than documentation alone.
 
@@ -58,11 +58,12 @@ Inside `agent47`, there are currently **14 slash commands**:
 
 ## Enabled Agent Actions
 
-There are currently **14 model-requestable actions**:
+There are currently **15 model-requestable actions**:
 
 | Action | Purpose |
 | --- | --- |
 | `final` | Finish and summarize the result for the user. |
+| `update_plan` | Checkpoint durable task steps with `pending`, `in_progress`, `completed`, or `blocked` status. |
 | `list_files` | List files inside the workspace. |
 | `read_file` | Read a file inside the workspace. |
 | `write_file` | Write a full file inside the workspace. |
@@ -89,6 +90,7 @@ There are currently **14 model-requestable actions**:
 | File ops: pathlib | Enabled |
 | Diffs: difflib | Enabled |
 | Structured patch application: git apply | Enabled |
+| Durable plan checkpoints | Enabled |
 | Shell execution: subprocess | Enabled |
 | Shell command risk policy | Enabled |
 | Web/network policy | Enabled |
@@ -133,7 +135,7 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 | 2 | Verification loop | Lets Agent47 detect, suggest, run, and summarize the right tests, lint, typecheck, and builds after edits | Baseline done |
 | 3 | Repo intelligence | Helps the agent choose relevant context using symbols, dependencies, git diff, and architecture summaries | Partial, with git awareness baseline |
 | 4 | Safer shell policy | Separates read-only, test/build, install/network, and destructive commands with stronger approvals | Baseline done |
-| 5 | Durable sessions | Enables pause/resume, plan state, checkpoints, and long task recovery | Partial, with resumable run baseline |
+| 5 | Durable sessions | Enables pause/resume, plan state, checkpoints, and long task recovery | Partial, with resumable runs and durable plan checkpoints |
 | 6 | Streaming UX | Makes CLI and interactive mode feel alive during model reasoning and tool execution | Partial |
 | 7 | Multi-model/provider layer | Supports planner/coder/reviewer profiles, fallbacks, and cost-aware routing | Not started |
 | 8 | Observability | Captures traces, timings, token use, failures, and debug bundles for reliability work | Partial |
@@ -144,11 +146,11 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 
 ## Next Recommended Build Order
 
-1. Add streaming output in CLI and `agent47`.
-2. Add model profiles and provider abstraction.
-3. Add a JSON protocol for future VS Code integration.
-4. Add a lightweight repo index with relevance ranking.
-5. Add full visible plan state with step updates.
+1. Add visible plan rendering in CLI and `agent47` so users can see completed/current/blocked steps live.
+2. Add streaming output in CLI and `agent47`.
+3. Add model profiles and provider abstraction.
+4. Add a JSON protocol for future VS Code integration.
+5. Add a lightweight repo index with relevance ranking.
 
 ## Current Safety Notes
 
@@ -170,6 +172,7 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 - Interactive mode starts with a centered `A G E N T 4 7` banner and uses optional terminal colors for panels, prompts, and status labels.
 - `code-agent history show <run-id>` and `/history-show <run-id>` expose saved step details for auditability.
 - `code-agent resume <run-id>` and `/resume <run-id>` continue from compact saved run context while preserving a new run record.
+- `update_plan` stores durable plan steps in run history and resume context, with validation that only one step is `in_progress`.
 - `apply_patch` validates target paths, previews the full patch for approval, checks patch applicability, and applies it with `git apply`.
 - `delete_file` removes files through a first-class approved mutation action instead of shell commands.
 - `detect_verification` scans known project files for likely test, lint, typecheck, and build commands.
@@ -182,4 +185,4 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 
 ## Last Updated
 
-June 17, 2026
+June 18, 2026

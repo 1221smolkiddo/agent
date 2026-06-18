@@ -69,6 +69,8 @@ def _summarize_payload(payload: dict[str, Any]) -> str:
     payload_type = payload.get("type")
     if payload_type == "tool_result":
         return _summarize_tool_result(payload)
+    if payload_type == "plan_updated":
+        return _summarize_plan_update(payload)
     if payload_type == "automatic_verification_result":
         return (
             "automatic verification "
@@ -97,7 +99,23 @@ def _summarize_action(payload: dict[str, Any]) -> str:
         return f"action {action_type} query={query}"
     if action_type == "apply_patch":
         return "action apply_patch"
+    if action_type == "update_plan":
+        steps = payload.get("steps", [])
+        statuses = [
+            f"{step.get('status', 'unknown')}:{step.get('step', '<unnamed>')}" for step in steps
+        ]
+        return "action update_plan " + "; ".join(statuses)
     return f"action {action_type}"
+
+
+def _summarize_plan_update(payload: dict[str, Any]) -> str:
+    steps = payload.get("steps", [])
+    if not steps:
+        return "plan updated"
+    rendered = [
+        f"{step.get('status', 'unknown')}:{step.get('step', '<unnamed>')}" for step in steps
+    ]
+    return "plan updated " + "; ".join(rendered)
 
 
 def _summarize_tool_result(payload: dict[str, Any]) -> str:

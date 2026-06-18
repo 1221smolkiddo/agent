@@ -47,6 +47,7 @@ We cannot clone any proprietary internals, but we can build the same kind of pro
 - local sandbox runs
 - run history
 - resumable sessions
+- durable plan checkpoints
 - eventually editor integration
 
 ## Future VS Code Shape

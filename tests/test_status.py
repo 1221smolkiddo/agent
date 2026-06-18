@@ -6,6 +6,7 @@ from code_agent.schema import (
     RunShellAction,
     SearchAction,
     SuggestVerificationAction,
+    UpdatePlanAction,
     WebSearchAction,
 )
 from code_agent.status import format_action_status, format_shell_status
@@ -56,6 +57,17 @@ def test_format_action_status_for_suggest_verification() -> None:
     )
 
     assert status == "CHECKING suggested verification"
+
+
+def test_format_action_status_for_update_plan() -> None:
+    status = format_action_status(
+        UpdatePlanAction(
+            type="update_plan",
+            steps=[{"step": "Inspect docs", "status": "in_progress"}],
+        )
+    )
+
+    assert status == "PLANNING updating task plan"
 
 
 def test_format_shell_status_for_install() -> None:

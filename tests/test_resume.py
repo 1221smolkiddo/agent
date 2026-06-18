@@ -83,6 +83,45 @@ def test_format_run_detail_summarizes_steps(tmp_path: Path) -> None:
     assert "verification=test `uv run pytest` failed" in detail
 
 
+def test_run_detail_and_resume_context_include_plan_updates(tmp_path: Path) -> None:
+    storage = AgentStorage(tmp_path / "agent.db")
+    run_id = storage.create_run("build planner", "fake-model", tmp_path)
+    storage.add_step(
+        run_id,
+        "assistant",
+        {
+            "type": "update_plan",
+            "steps": [
+                {"step": "Inspect docs", "status": "completed"},
+                {"step": "Add durable plan action", "status": "in_progress"},
+            ],
+        },
+    )
+    storage.add_step(
+        run_id,
+        "tool",
+        {
+            "type": "plan_updated",
+            "ok": True,
+            "steps": [
+                {"step": "Inspect docs", "status": "completed"},
+                {"step": "Add durable plan action", "status": "in_progress"},
+            ],
+            "output": "Plan updated",
+        },
+    )
+    run = storage.get_run(run_id)
+    assert run is not None
+    steps = storage.run_steps_payloads(run_id)
+
+    detail = format_run_detail(run, steps)
+    resume_task = build_resume_task(run, steps, "continue")
+
+    assert "action update_plan completed:Inspect docs; in_progress:Add durable plan action" in detail
+    assert "plan updated completed:Inspect docs; in_progress:Add durable plan action" in detail
+    assert "plan updated completed:Inspect docs" in resume_task
+
+
 def test_compact_run_context_truncates_large_history() -> None:
     steps = [
         {

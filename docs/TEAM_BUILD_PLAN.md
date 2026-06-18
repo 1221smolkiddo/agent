@@ -95,6 +95,7 @@ These are already built and should be maintained while new work continues.
 - [x] Run detail views and resumable runs from saved step history.
 - [x] Baseline shell command risk policy and secret redaction.
 - [x] Baseline public-web network policy for web search.
+- [x] Durable `update_plan` action with persisted step status checkpoints.
 
 ## Team Task Board
 
@@ -142,7 +143,7 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 
 ### Phase 7: Planner And Task State
 
-- [~] Issue 23: Task Plan Object. Owner: Agent47
+- [x] Issue 23: Task Plan Object. Owner: Agent47
 - [ ] Issue 24: Visible Step Progress. Owner:
 - [x] Issue 25: Session Resume. Owner: Agent47
 
@@ -717,7 +718,7 @@ Acceptance criteria:
 
 - Agent creates and updates a plan for non-trivial tasks.
 
-Status: **In progress**. Interactive mode now keeps structured session state for current task, pending user info, target files, changed files, blockers, and recent tool results; full visible plans and step updates are still needed.
+Status: **Baseline done**. Agent47 now has a typed `update_plan` action with durable step status checkpoints stored in run history and resume context. Interactive session state still tracks current task, pending user info, target files, changed files, blockers, and recent tool results; richer planner fields and live visible rendering are tracked by follow-up work.
 
 #### 24. Visible Step Progress
 

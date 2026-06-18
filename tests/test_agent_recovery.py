@@ -61,6 +61,71 @@ def test_agent_recovers_after_failed_tool_result(tmp_path: Path) -> None:
     assert "recovery_instruction" in model.messages_seen[1][-1]["content"]
 
 
+def test_agent_records_plan_updates_without_calling_tools(tmp_path: Path) -> None:
+    model = FakeModel(
+        [
+            (
+                '{"type":"update_plan","steps":['
+                '{"step":"Inspect docs","status":"completed"},'
+                '{"step":"Patch planner state","status":"in_progress"}'
+                "]}"
+            ),
+            '{"type":"final","message":"plan checkpointed"}',
+        ]
+    )
+    tools = RecoveringTools()
+    agent = make_agent(tmp_path, model, tools)
+
+    result = agent.run_detailed("update this project planner")
+    stored_steps = agent.storage.run_steps_payloads(result.run_id)
+
+    assert result.message == "plan checkpointed"
+    assert result.plan_updates == [
+        {
+            "type": "plan_updated",
+            "step": 1,
+            "ok": True,
+            "steps": [
+                {"step": "Inspect docs", "status": "completed"},
+                {"step": "Patch planner state", "status": "in_progress"},
+            ],
+            "output": "Plan updated: 1. completed: Inspect docs; 2. in_progress: Patch planner state",
+        }
+    ]
+    assert tools.calls == 0
+    assert stored_steps[1]["payload"]["type"] == "plan_updated"
+    assert "Plan updated" in model.messages_seen[1][-1]["content"]
+
+
+def test_agent_rejects_plan_with_multiple_in_progress_steps(tmp_path: Path) -> None:
+    model = FakeModel(
+        [
+            (
+                '{"type":"update_plan","steps":['
+                '{"step":"One","status":"in_progress"},'
+                '{"step":"Two","status":"in_progress"}'
+                "]}"
+            ),
+            (
+                '{"type":"update_plan","steps":['
+                '{"step":"One","status":"completed"},'
+                '{"step":"Two","status":"in_progress"}'
+                "]}"
+            ),
+            '{"type":"final","message":"corrected"}',
+        ]
+    )
+    tools = RecoveringTools()
+    agent = make_agent(tmp_path, model, tools)
+
+    result = agent.run("update this project planner")
+
+    assert result == "corrected"
+    assert tools.calls == 0
+    assert "parse_failure" in model.messages_seen[1][-1]["content"]
+    assert "Only one plan step can be in_progress" in model.messages_seen[1][-1]["content"]
+
+
 def test_agent_retries_after_invalid_model_action(tmp_path: Path) -> None:
     model = FakeModel(
         [

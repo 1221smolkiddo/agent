@@ -40,6 +40,8 @@ This document summarizes the current state of Agent47 for collaborators.
 - SQLite run history.
 - Run detail views through `code-agent history show <run-id>` and `/history-show <run-id>`.
 - Resumable runs through `code-agent resume <run-id>` and `/resume <run-id>`.
+- Durable `update_plan` checkpoints with `pending`, `in_progress`, `completed`, and `blocked` step statuses.
+- Plan updates are saved in run history and included in resume context.
 - Automatic recovery loop when a tool fails.
 - Workspace tools are blocked for prompts that do not appear to be about the local project, files, code changes, tests, or commands.
 - Mutation tool results include changed paths and automatic verification results or a verification hint for the next model step.
@@ -50,6 +52,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - Guard against false completion after blocked writes, edits, or patch applications.
 - Guard against false completion after unverified file deletion claims.
 - Operation status labels such as `THINKING`, `READING`, `EDITING`, `SEARCHING`, `TESTING`, `BUILDING`, `RECOVERING`, and `DONE`.
+- Planner status labels such as `PLANNING updating task plan`.
 - Centered interactive startup banner with optional terminal colors for panels, prompts, and status labels.
 - Stop controls with `Ctrl+C`, `/stop`, and `/exit`.
 
@@ -129,6 +132,7 @@ Inside `agent47`:
 - Transcript-aware interactive summaries.
 - Interactive session-state follow-up handling.
 - Operation status label formatting.
+- Durable planner action validation, storage, resume summaries, and status formatting.
 - Casual greeting handling.
 
 ## What Still Needs Work
@@ -138,7 +142,7 @@ Inside `agent47`:
 - Network policy controls.
 - Streaming model output.
 - Better repo context selection with a lightweight repo index, symbol/dependency graph, and context ranking.
-- Full planner state with visible task steps.
-- Durable plan-state checkpoints.
+- Live visible planner rendering in the CLI and interactive UI.
+- Richer planner fields for files touched, blockers, checks, and final work reports.
 - Multi-provider and multi-model support.
 - VS Code extension frontend.

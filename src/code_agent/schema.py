@@ -2,12 +2,30 @@ from __future__ import annotations
 
 from typing import Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class FinalAction(BaseModel):
     type: Literal["final"]
     message: str
+
+
+class PlanStep(BaseModel):
+    step: str
+    status: Literal["pending", "in_progress", "completed", "blocked"]
+    note: Optional[str] = None
+
+
+class UpdatePlanAction(BaseModel):
+    type: Literal["update_plan"]
+    steps: list[PlanStep] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def only_one_step_in_progress(self) -> "UpdatePlanAction":
+        in_progress = [step for step in self.steps if step.status == "in_progress"]
+        if len(in_progress) > 1:
+            raise ValueError("Only one plan step can be in_progress at a time.")
+        return self
 
 
 class ListFilesAction(BaseModel):
@@ -81,6 +99,7 @@ class InspectGitDiffAction(BaseModel):
 
 AgentAction = Union[
     FinalAction,
+    UpdatePlanAction,
     ListFilesAction,
     ReadFileAction,
     WriteFileAction,

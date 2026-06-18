@@ -13,6 +13,7 @@ from .schema import (
     SearchAction,
     SuggestVerificationAction,
     SummarizeCodeAction,
+    UpdatePlanAction,
     WebSearchAction,
     WriteFileAction,
 )
@@ -60,6 +61,8 @@ def format_action_status(action: AgentAction) -> str:
         return "CHECKING suggested verification"
     if isinstance(action, InspectGitDiffAction):
         return "READING git changes"
+    if isinstance(action, UpdatePlanAction):
+        return "PLANNING updating task plan"
     if isinstance(action, RunShellAction):
         return format_shell_status(action.command)
     return f"WORKING {action.type}"

@@ -10,7 +10,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from .models import ChatMessage, ModelClient
 from .prompts import system_prompt
-from .schema import AgentAction, FinalAction, RunShellAction, ToolResult
+from .schema import AgentAction, FinalAction, RunShellAction, ToolResult, UpdatePlanAction
 from .storage import AgentStorage
 from .status import StatusReporter
 from .tools import ToolRegistry
@@ -26,6 +26,7 @@ class AgentRunResult:
     changed_paths: list[str] = field(default_factory=list)
     mutation_records: list[dict[str, Any]] = field(default_factory=list)
     verification_results: list[dict[str, str | bool]] = field(default_factory=list)
+    plan_updates: list[dict[str, Any]] = field(default_factory=list)
     failed_actions: list[dict[str, Any]] = field(default_factory=list)
     denied_actions: list[dict[str, Any]] = field(default_factory=list)
     blocked: bool = False
@@ -63,6 +64,7 @@ class CodingAgent:
         previous_failure_allows_final = False
         blocked_mutation_failure = False
         verification_results: list[dict[str, str | bool]] = []
+        plan_updates: list[dict[str, Any]] = []
         mutation_records: list[dict[str, Any]] = []
         failed_actions: list[dict[str, Any]] = []
         denied_actions: list[dict[str, Any]] = []
@@ -136,6 +138,19 @@ class CodingAgent:
                 blocked_mutation_failure = False
                 continue
 
+            if isinstance(action, UpdatePlanAction):
+                self._report_action(action)
+                plan_payload = self._plan_payload(step, action)
+                plan_updates.append(plan_payload)
+                self.storage.add_step(run_id, "tool", plan_payload)
+                consecutive_failures = 0
+                previous_tool_failed = False
+                previous_failure_allows_final = False
+                blocked_mutation_failure = False
+                messages.append({"role": "assistant", "content": action.model_dump_json()})
+                messages.append({"role": "user", "content": json.dumps(plan_payload)})
+                continue
+
             if isinstance(action, FinalAction):
                 final_claim_rejection = self._final_claim_rejection(action.message, mutation_records)
                 if final_claim_rejection or (
@@ -163,6 +178,7 @@ class CodingAgent:
                             changed_paths=self._successful_mutation_paths(mutation_records),
                             mutation_records=mutation_records,
                             verification_results=verification_results,
+                            plan_updates=plan_updates,
                             failed_actions=failed_actions,
                             denied_actions=denied_actions,
                             blocked=True,
@@ -195,6 +211,7 @@ class CodingAgent:
                     changed_paths=self._successful_mutation_paths(mutation_records),
                     mutation_records=mutation_records,
                     verification_results=verification_results,
+                    plan_updates=plan_updates,
                     failed_actions=failed_actions,
                     denied_actions=denied_actions,
                     blocked=bool(failed_actions and not mutation_records),
@@ -275,6 +292,7 @@ class CodingAgent:
                     changed_paths=self._successful_mutation_paths(mutation_records),
                     mutation_records=mutation_records,
                     verification_results=verification_results,
+                    plan_updates=plan_updates,
                     failed_actions=failed_actions,
                     denied_actions=denied_actions,
                     blocked=True,
@@ -290,6 +308,7 @@ class CodingAgent:
             changed_paths=self._successful_mutation_paths(mutation_records),
             mutation_records=mutation_records,
             verification_results=verification_results,
+            plan_updates=plan_updates,
             failed_actions=failed_actions,
             denied_actions=denied_actions,
             blocked=True,
@@ -354,6 +373,24 @@ class CodingAgent:
                 "Do not produce a final answer yet."
             ),
         }
+
+    @staticmethod
+    def _plan_payload(step: int, action: UpdatePlanAction) -> dict[str, Any]:
+        return {
+            "type": "plan_updated",
+            "step": step,
+            "ok": True,
+            "steps": [item.model_dump(exclude_none=True) for item in action.steps],
+            "output": CodingAgent._plan_summary(action),
+        }
+
+    @staticmethod
+    def _plan_summary(action: UpdatePlanAction) -> str:
+        rendered = [
+            f"{index}. {item.status}: {item.step}"
+            for index, item in enumerate(action.steps, start=1)
+        ]
+        return "Plan updated: " + "; ".join(rendered)
 
     @staticmethod
     def _failure_summary(consecutive_failures: int, output: str) -> str:

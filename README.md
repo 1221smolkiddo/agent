@@ -4,7 +4,7 @@ A Python CLI-first AI coding agent scaffold. The core logic lives outside the CL
 
 The long-term goal is Agent47: a real AI engineering assistant that is repo-aware, tool-using, careful with edits, test-aware, and eventually available inside VS Code.
 
-Agent47 now uses an engineering protocol in its system prompt: classify the request, plan internally, inspect relevant files, make focused edits, verify changes when practical, recover from failures, and report honestly about what changed and what was checked.
+Agent47 now uses an engineering protocol in its system prompt: classify the request, create durable plans for non-trivial workspace tasks, inspect relevant files, make focused edits, verify changes when practical, recover from failures, and report honestly about what changed and what was checked.
 
 Agent47 is not limited to the current folder. It can answer general questions directly, use web search for current external information when needed, and only inspect project files when the request is actually about the local workspace.
 
@@ -155,6 +155,7 @@ The CLI prints status lines while the agent works:
 - `SEARCHING WEB` for general web search.
 - `CHECKING project verification commands` when detecting test/lint/build commands.
 - `CHECKING suggested verification` when choosing focused checks for changed files.
+- `PLANNING updating task plan` when checkpointing durable plan steps.
 - `READING git changes` when inspecting dirty files before editing.
 - `EDITING` for file writes and edits.
 - `EDITING applying patch` for structured patch edits.

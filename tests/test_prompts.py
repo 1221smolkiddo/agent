@@ -13,7 +13,9 @@ def test_system_prompt_names_agent47_engineering_protocol() -> None:
     assert "For current external info such as time, weather, prices" in prompt
     assert "For basic questions that can be answered from stable general knowledge" in prompt
     assert "If web_search returns weak or no results" in prompt
-    assert "build a short internal plan" in prompt
+    assert "create and update a short durable plan with update_plan" in prompt
+    assert "only one step as in_progress" in prompt
+    assert '{ "type": "update_plan"' in prompt
     assert "Prefer apply_patch for code edits" in prompt
     assert "Use delete_file for file removal" in prompt
     assert "use a file mutation tool instead of giving the user a template" in prompt
