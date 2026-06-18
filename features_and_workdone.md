@@ -26,6 +26,8 @@ This document summarizes the current state of Agent47 for collaborators.
 - Lightweight repo mapping through an approved `repo_map` action that reports important project files, file counts, and top-level layout while skipping ignored local state.
 - Task-aware context ranking through an approved `rank_context` action that scores likely relevant files before broad reads.
 - Repo-map and ranking actions are saved in run history and summarized in structured work reports as context analysis.
+- Offline deterministic eval harness through `code-agent evals`.
+- Built-in safety regressions for greeting routing, blocked-write honesty, denied-read non-leakage, and sandbox write isolation.
 - File operations with `pathlib`.
 - Bounded diff previews for write, edit, delete, and structured patch operations.
 - Structured `apply_patch` action backed by `git apply`.
@@ -76,6 +78,7 @@ agent47
 code-agent run --dry-run "Inspect this project"
 code-agent run --sandbox "Try a risky change in a copied workspace"
 code-agent history
+code-agent evals
 ```
 
 Inside `agent47`:
@@ -142,6 +145,7 @@ Inside `agent47`:
 - Clean terminal panel formatting.
 - Project search fallback when `ripgrep` is unavailable.
 - Lightweight repo index and context ranking.
+- Local deterministic eval harness.
 - Non-workspace routing guard.
 - General web-search provider fallback.
 - Transcript-aware interactive summaries.
@@ -156,6 +160,7 @@ Inside `agent47`:
 - Stronger sandboxing for shell process isolation.
 - Network policy controls.
 - Rich token-level streaming views for future non-JSON frontends.
+- Fixture-based coding evals beyond the baseline deterministic safety regressions.
 - Deeper repo intelligence with symbol/dependency graphs on top of the baseline repo index.
 - Richer planner fields for files touched, blockers, checks, and ownership.
 - Additional providers beyond OpenAI-compatible APIs, model fallback, and token/cost tracking.

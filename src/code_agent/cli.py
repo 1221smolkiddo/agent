@@ -6,6 +6,7 @@ from typing import Optional
 import typer
 
 from .config import Settings
+from .evals import run_builtin_evals
 from .factory import create_agent
 from .model_profiles import validate_profile_name
 from .permissions import confirm_permission
@@ -82,6 +83,15 @@ def run(
         raise typer.Exit(code=130)
     print_work_report_panel(result)
     typer.echo(result.message)
+
+
+@app.command("evals")
+def evals_command() -> None:
+    """Run local deterministic safety and regression evals."""
+    result = run_builtin_evals()
+    typer.echo(result.format())
+    if not result.ok:
+        raise typer.Exit(code=1)
 
 
 @app.command()

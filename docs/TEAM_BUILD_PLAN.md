@@ -99,6 +99,7 @@ These are already built and should be maintained while new work continues.
 - [x] Visible plan snapshots in CLI and `agent47`.
 - [x] Structured work reports with changed-line diff review.
 - [x] Lightweight repo map and task-aware relevance ranking.
+- [x] Local deterministic eval harness with baseline safety regressions.
 
 ## Team Task Board
 
@@ -178,8 +179,8 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 
 ### Phase 12: Evals And Reliability
 
-- [ ] Issue 40: Local Eval Harness. Owner:
-- [ ] Issue 41: Regression Tasks. Owner:
+- [x] Issue 40: Local Eval Harness. Owner: Agent47
+- [x] Issue 41: Regression Tasks. Owner: Agent47
 - [ ] Issue 42: Error Reporting. Owner:
 
 ### Phase 13: Documentation
@@ -1032,6 +1033,8 @@ Acceptance criteria:
 
 - Evals run in CI or locally.
 
+Status: **Done for baseline**. Agent47 now has `code-agent evals`, an offline deterministic eval harness that runs scripted safety and reliability checks through the real agent loop.
+
 #### 41. Regression Tasks
 
 Owner suggestion: Agent Core Owner
@@ -1048,6 +1051,8 @@ Must include:
 Acceptance criteria:
 
 - These never regress silently.
+
+Status: **Done for baseline**. Built-in local evals cover greeting-without-workspace-inspection, blocked-write honesty, denied-read non-leakage, and sandbox write isolation.
 
 #### 42. Error Reporting
 
