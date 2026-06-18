@@ -31,6 +31,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - Repo-map and ranking actions are saved in run history and summarized in structured work reports as context analysis.
 - Offline deterministic eval harness through `code-agent evals`.
 - Built-in safety regressions for greeting routing, blocked-write honesty, denied-read non-leakage, and sandbox write isolation.
+- Built-in fixture coding evals for create-file, edit-file, fix-test, and failed-read recovery tasks.
 - Versioned newline-delimited JSON protocol through `code-agent run-json` for future VS Code and non-terminal frontends.
 - JSON protocol events cover run start/finish, status, action starts, approval requests, recovery, failures, work reports, and final results.
 - JSON protocol approval handling fails closed by default, with explicit `--approve-all` only for trusted automation.
@@ -156,6 +157,7 @@ Inside `agent47`:
 - Project search fallback when `ripgrep` is unavailable.
 - Lightweight repo index and context ranking.
 - Local deterministic eval harness.
+- Fixture-based coding evals.
 - Versioned NDJSON protocol for frontend integrations.
 - Install doctor and cross-platform install guide.
 - Model fallback and usage/cost tracking.
@@ -173,7 +175,7 @@ Inside `agent47`:
 - Stronger sandboxing for shell process isolation.
 - Network policy controls.
 - Rich token-level streaming views for future non-JSON frontends.
-- Fixture-based coding evals beyond the baseline deterministic safety regressions.
+- Broader fixture evals with multi-file patches, larger repos, and prompt-injection scenarios.
 - Deeper repo intelligence with symbol/dependency graphs on top of the baseline repo index.
 - Interactive JSON approval response handling for editor frontends.
 - Richer planner fields for files touched, blockers, checks, and ownership.

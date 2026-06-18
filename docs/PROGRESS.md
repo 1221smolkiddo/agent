@@ -6,9 +6,9 @@ This document tracks how far the coding agent has come and what collaborators ca
 
 **Stage:** Basic single-model CLI agent with Agent47 engineering protocol
 
-**Approximate progress toward an industry-standard local AI coding agent:** 51%
+**Approximate progress toward an industry-standard local AI coding agent:** 53%
 
-The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, durable plan checkpoints with persisted structured work reports, non-workspace intent routing, general web search with provider fallback, structured patch application, approved git-diff awareness, lightweight repo mapping and task-aware relevance ranking, deterministic local evals for baseline safety regressions, a versioned newline-delimited JSON protocol for future frontends, model fallback with usage/cost tracking, install diagnostics and cross-platform install guidance, verification command detection/suggestion/automatic execution/outcome summaries, mutation-attempt tracking for truthful final answers, clearer interactive terminal panels with short transcript context and structured session state, run history detail views, resumable runs, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
+The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, durable plan checkpoints with persisted structured work reports, non-workspace intent routing, general web search with provider fallback, structured patch application, approved git-diff awareness, lightweight repo mapping and task-aware relevance ranking, deterministic local evals for baseline safety regressions and fixture-based coding tasks, a versioned newline-delimited JSON protocol for future frontends, model fallback with usage/cost tracking, install diagnostics and cross-platform install guidance, verification command detection/suggestion/automatic execution/outcome summaries, mutation-attempt tracking for truthful final answers, clearer interactive terminal panels with short transcript context and structured session state, run history detail views, resumable runs, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
 
 This file should be updated whenever a meaningful Agent47 capability is added. Keep the enabled commands/actions current, move completed items out of "What Is Left" when they land, and update the percentage only when the agent gains real product capability rather than documentation alone.
 
@@ -165,16 +165,16 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 | 8 | Observability | Captures traces, timings, token use, failures, and debug bundles for reliability work | Partial, with model usage and work reports |
 | 9 | Collaboration workflow | Adds review mode, branch/commit/PR helpers, issue context, changelogs, and release notes | Partial |
 | 10 | Editor integration | Brings Agent47 into VS Code with file context, diffs, approvals, and terminal output | Protocol baseline done |
-| 11 | Evaluation harness | Measures solve rate, edit correctness, verification rate, and regressions on fixture repos | Baseline deterministic safety evals done |
+| 11 | Evaluation harness | Measures solve rate, edit correctness, verification rate, and regressions on fixture repos | Baseline safety and fixture coding evals done |
 | 12 | Packaging hardening | Adds release profiles, install docs, upgrade notes, and platform-specific validation | Partial, with install guide and doctor command |
 
 ## Next Recommended Build Order
 
-1. Expand evals into fixture-based coding tasks.
-2. Add richer planner fields for blockers, checks, and file ownership.
-3. Add richer JSON approval response handling for editor frontends.
-4. Add structured patch preview/apply metadata for multi-file changes.
-5. Add package metadata, license, and release checklist.
+1. Add richer planner fields for blockers, checks, and file ownership.
+2. Add richer JSON approval response handling for editor frontends.
+3. Add structured patch preview/apply metadata for multi-file changes.
+4. Add package metadata, license, and release checklist.
+5. Add prompt-injection defenses for untrusted repo content.
 
 ## Current Safety Notes
 
@@ -212,7 +212,7 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 - `inspect_git_diff` shows dirty files and optional bounded diff hunks so Agent47 can avoid overwriting existing user changes.
 - `repo_map` and `rank_context` give Agent47 a lightweight repository index and task-aware file ranking before broad reads.
 - Repo-map and ranking actions are stored in run history and summarized in structured work reports as context analysis.
-- `code-agent evals` runs offline deterministic checks for greeting routing, blocked-write honesty, denied-read non-leakage, and sandbox isolation.
+- `code-agent evals` runs offline deterministic checks for greeting routing, blocked-write honesty, denied-read non-leakage, sandbox isolation, file creation, file editing, test fixing, and failed-read recovery.
 - `code-agent run-json` emits versioned NDJSON events and fails closed on approvals unless `--approve-all` is explicitly supplied for trusted automation.
 - `code-agent doctor` checks Python version, platform, workspace writability, SQLite storage, console scripts, Git, ripgrep, API-key presence, and `.env` setup without exposing secrets.
 - `docs/INSTALL.md` documents Windows, macOS, Linux, uv, editable pip, and pipx installation paths.

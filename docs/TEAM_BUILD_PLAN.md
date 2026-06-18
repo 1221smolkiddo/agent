@@ -103,6 +103,7 @@ These are already built and should be maintained while new work continues.
 - [x] Baseline newline-delimited JSON protocol for future frontends.
 - [x] Model fallback and usage/cost tracking baseline.
 - [x] Install doctor and cross-platform install guide.
+- [x] Fixture-based coding evals for create/edit/fix/recover tasks.
 
 ## Team Task Board
 
@@ -1042,7 +1043,7 @@ Acceptance criteria:
 
 - Evals run in CI or locally.
 
-Status: **Done for baseline**. Agent47 now has `code-agent evals`, an offline deterministic eval harness that runs scripted safety and reliability checks through the real agent loop.
+Status: **Done for baseline**. Agent47 now has `code-agent evals`, an offline deterministic eval harness that runs scripted safety and fixture-based coding checks through the real agent loop.
 
 #### 41. Regression Tasks
 
@@ -1061,7 +1062,7 @@ Acceptance criteria:
 
 - These never regress silently.
 
-Status: **Done for baseline**. Built-in local evals cover greeting-without-workspace-inspection, blocked-write honesty, denied-read non-leakage, and sandbox write isolation.
+Status: **Done for baseline**. Built-in local evals cover greeting-without-workspace-inspection, blocked-write honesty, denied-read non-leakage, sandbox write isolation, create-file, edit-file, fix-test, and recover-after-failed-read behaviors.
 
 #### 42. Error Reporting
 

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Protocol
 
-from .agent import CodingAgent
+from .agent import AgentRunResult, CodingAgent
 from .models import ChatMessage
 from .sandbox import create_sandbox_workspace
 from .schema import AgentAction, ReadFileAction, ToolResult
@@ -58,6 +58,10 @@ class DenyingReadTools:
         return ToolResult(ok=True, output=self.secret)
 
 
+ApprovalPolicy = Callable[[str, str], bool]
+FixtureValidator = Callable[[Path, "CodingAgent", "AgentRunResult"], tuple[bool, str]]
+
+
 @dataclass(frozen=True)
 class EvalCase:
     name: str
@@ -70,6 +74,7 @@ class EvalResult:
     name: str
     ok: bool
     detail: str
+    category: str = "safety"
 
 
 @dataclass(frozen=True)
@@ -92,15 +97,31 @@ class EvalSuiteResult:
         lines = [f"Agent47 local evals: {self.passed} passed, {self.failed} failed"]
         for result in self.results:
             marker = "PASS" if result.ok else "FAIL"
-            lines.append(f"- {marker} {result.name}: {result.detail}")
+            lines.append(f"- {marker} {result.category}/{result.name}: {result.detail}")
         return "\n".join(lines)
 
 
 EvalRunner = Callable[[], tuple[bool, str]]
 
 
+@dataclass(frozen=True)
+class FixtureEvalCase:
+    name: str
+    description: str
+    task: str
+    files: dict[str, str]
+    responses: list[str]
+    validators: tuple[FixtureValidator, ...]
+    approval_policy: ApprovalPolicy = lambda _action, _detail: True
+    max_steps: int = 8
+    max_failures: int = 3
+
+
 def run_builtin_evals() -> EvalSuiteResult:
-    results = [_run_case(case) for case in builtin_eval_cases()]
+    results = [
+        *[_run_case(case) for case in builtin_eval_cases()],
+        *[_run_fixture_case(case) for case in builtin_fixture_eval_cases()],
+    ]
     return EvalSuiteResult(results=results)
 
 
@@ -129,12 +150,108 @@ def builtin_eval_cases() -> list[EvalCase]:
     ]
 
 
+def builtin_fixture_eval_cases() -> list[FixtureEvalCase]:
+    return [
+        FixtureEvalCase(
+            name="create_file",
+            description="Create a requested file in an empty fixture repo.",
+            task="create a TODO file in this project",
+            files={"README.md": "# Fixture\n"},
+            responses=[
+                (
+                    '{"type":"write_file","path":"TODO.md",'
+                    '"content":"# TODO\\n\\n- Ship Agent47 safely.\\n"}'
+                ),
+                '{"type":"final","message":"Created TODO.md."}',
+            ],
+            validators=(
+                file_equals("TODO.md", "# TODO\n\n- Ship Agent47 safely.\n"),
+                message_contains("Created TODO.md"),
+            ),
+        ),
+        FixtureEvalCase(
+            name="edit_file",
+            description="Edit an existing file through the real edit tool.",
+            task="update the greeting in app.py",
+            files={"app.py": 'GREETING = "hello"\n'},
+            responses=[
+                (
+                    '{"type":"edit_file","path":"app.py",'
+                    '"find":"GREETING = \\"hello\\"","replace":"GREETING = \\"hi\\""}'
+                ),
+                '{"type":"final","message":"Updated app.py."}',
+            ],
+            validators=(file_equals("app.py", 'GREETING = "hi"\n'),),
+        ),
+        FixtureEvalCase(
+            name="fix_test",
+            description="Patch code and run a focused test command successfully.",
+            task="fix the failing arithmetic test",
+            files={
+                "pyproject.toml": (
+                    "[project]\n"
+                    'name = "fixture"\n'
+                    'dependencies = ["pytest"]\n\n'
+                    "[tool.pytest.ini_options]\n"
+                    'testpaths = ["tests"]\n'
+                ),
+                "calculator.py": "def add(a, b):\n    return a - b\n",
+                "tests/test_calculator.py": (
+                    "from calculator import add\n\n"
+                    "def test_add():\n"
+                    "    assert add(2, 3) == 5\n"
+                ),
+            },
+            responses=[
+                (
+                    '{"type":"edit_file","path":"calculator.py",'
+                    '"find":"return a - b","replace":"return a + b"}'
+                ),
+                '{"type":"final","message":"Fixed calculator.py and tests pass."}',
+            ],
+            validators=(
+                file_contains("calculator.py", "return a + b"),
+                verification_passed("test"),
+            ),
+        ),
+        FixtureEvalCase(
+            name="recover_after_failed_read",
+            description="Recover after an initial missing-file read by listing files and reading the right one.",
+            task="summarize the project notes",
+            files={"NOTES.md": "Agent47 should recover from failed reads.\n"},
+            responses=[
+                '{"type":"read_file","path":"MISSING.md"}',
+                '{"type":"list_files","path":"."}',
+                '{"type":"read_file","path":"NOTES.md"}',
+                '{"type":"final","message":"The notes say Agent47 should recover from failed reads."}',
+            ],
+            validators=(
+                message_contains("recover from failed reads"),
+                tool_failed("read_file"),
+            ),
+        ),
+    ]
+
+
 def _run_case(case: EvalCase) -> EvalResult:
     try:
         ok, detail = case.run()
     except Exception as exc:
         return EvalResult(name=case.name, ok=False, detail=f"raised {type(exc).__name__}: {exc}")
     return EvalResult(name=case.name, ok=ok, detail=detail)
+
+
+def _run_fixture_case(case: FixtureEvalCase) -> EvalResult:
+    try:
+        ok, detail = run_fixture_eval(case)
+    except Exception as exc:
+        return EvalResult(
+            name=case.name,
+            ok=False,
+            detail=f"raised {type(exc).__name__}: {exc}",
+            category="fixture",
+        )
+    return EvalResult(name=case.name, ok=ok, detail=detail, category="fixture")
 
 
 def _make_agent(workspace: Path, model: ScriptedModel, tools: EvalTools, *, dry_run: bool) -> CodingAgent:
@@ -148,6 +265,108 @@ def _make_agent(workspace: Path, model: ScriptedModel, tools: EvalTools, *, dry_
         storage=AgentStorage(workspace / ".code-agent" / "eval.db"),
         stream_model=False,
     )
+
+
+def _make_fixture_agent(
+    workspace: Path,
+    model: ScriptedModel,
+    tools: ToolRegistry,
+    *,
+    max_steps: int,
+    max_failures: int,
+) -> CodingAgent:
+    return CodingAgent(
+        cwd=workspace,
+        dry_run=False,
+        max_steps=max_steps,
+        max_failures=max_failures,
+        model_client=model,
+        tools=tools,
+        storage=AgentStorage(workspace / ".code-agent" / "eval.db"),
+        stream_model=False,
+    )
+
+
+def run_fixture_eval(case: FixtureEvalCase) -> tuple[bool, str]:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw_workspace:
+        workspace = Path(raw_workspace)
+        _write_fixture_files(workspace, case.files)
+        model = ScriptedModel(list(case.responses))
+        tools = ToolRegistry(
+            workspace=workspace,
+            dry_run=False,
+            approval_callback=case.approval_policy,
+        )
+        agent = _make_fixture_agent(
+            workspace,
+            model,
+            tools,
+            max_steps=case.max_steps,
+            max_failures=case.max_failures,
+        )
+
+        result = agent.run_detailed(case.task)
+        results = [validator(workspace, agent, result) for validator in case.validators]
+
+    failures = [detail for ok, detail in results if not ok]
+    if failures:
+        return False, "; ".join(failures)
+    return True, f"{case.description} message={result.message!r}"
+
+
+def _write_fixture_files(workspace: Path, files: dict[str, str]) -> None:
+    for relative, content in files.items():
+        path = workspace / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+
+def file_equals(relative_path: str, expected: str) -> FixtureValidator:
+    def validate(workspace: Path, _agent: CodingAgent, _result: AgentRunResult) -> tuple[bool, str]:
+        path = workspace / relative_path
+        if not path.exists():
+            return False, f"{relative_path} missing"
+        actual = path.read_text(encoding="utf-8")
+        return actual == expected, f"{relative_path} expected {expected!r}, got {actual!r}"
+
+    return validate
+
+
+def file_contains(relative_path: str, expected: str) -> FixtureValidator:
+    def validate(workspace: Path, _agent: CodingAgent, _result: AgentRunResult) -> tuple[bool, str]:
+        path = workspace / relative_path
+        if not path.exists():
+            return False, f"{relative_path} missing"
+        actual = path.read_text(encoding="utf-8")
+        return expected in actual, f"{relative_path} did not contain {expected!r}"
+
+    return validate
+
+
+def message_contains(expected: str) -> FixtureValidator:
+    def validate(_workspace: Path, _agent: CodingAgent, result: AgentRunResult) -> tuple[bool, str]:
+        return expected.lower() in result.message.lower(), f"message did not contain {expected!r}"
+
+    return validate
+
+
+def verification_passed(purpose: str) -> FixtureValidator:
+    def validate(_workspace: Path, _agent: CodingAgent, result: AgentRunResult) -> tuple[bool, str]:
+        matched = any(
+            item.get("purpose") == purpose and item.get("status") == "passed"
+            for item in result.verification_results
+        )
+        return matched, f"no passed {purpose} validation recorded"
+
+    return validate
+
+
+def tool_failed(action_type: str) -> FixtureValidator:
+    def validate(_workspace: Path, _agent: CodingAgent, result: AgentRunResult) -> tuple[bool, str]:
+        matched = any(item.get("action") == action_type for item in result.failed_actions)
+        return matched, f"no failed {action_type} action recorded"
+
+    return validate
 
 
 def _eval_greeting_without_workspace_inspection() -> tuple[bool, str]:

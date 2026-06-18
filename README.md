@@ -66,6 +66,7 @@ code-agent run --sandbox "Try a risky refactor in an isolated copy"
 code-agent run --no-stream "Run without compact model streaming progress"
 code-agent run --max-failures 5 "Fix the issue and recover from failed attempts"
 code-agent run-json --dry-run "Inspect this project and emit JSON protocol events"
+code-agent evals
 code-agent history
 code-agent history show 12
 code-agent resume 12 "Continue from the failed verification"
@@ -84,6 +85,14 @@ uv run code-agent run-json --dry-run "Inspect this project"
 ```
 
 `run-json` emits versioned newline-delimited JSON events for frontend integrations. It includes run lifecycle events, status updates, action starts, approval requests, recovery events, failures, work reports, and final results. Approval requests are denied by default in JSON mode so a frontend can safely observe required permissions; use `--approve-all` only in trusted automation.
+
+Local evals:
+
+```bash
+uv run code-agent evals
+```
+
+The eval suite runs deterministic safety regressions plus fixture coding tasks for file creation, file editing, test fixing, and failed-read recovery.
 
 Interactive mode:
 
