@@ -19,13 +19,31 @@ class PlanStep(BaseModel):
 class UpdatePlanAction(BaseModel):
     type: Literal["update_plan"]
     steps: list[PlanStep] = Field(min_length=1)
+    target_files: list[str] = Field(default_factory=list, max_length=20)
+    owned_files: list[str] = Field(default_factory=list, max_length=20)
+    checks: list[str] = Field(default_factory=list, max_length=20)
+    blockers: list[str] = Field(default_factory=list, max_length=10)
+    risk_notes: list[str] = Field(default_factory=list, max_length=10)
 
     @model_validator(mode="after")
-    def only_one_step_in_progress(self) -> "UpdatePlanAction":
+    def validate_plan(self) -> "UpdatePlanAction":
         in_progress = [step for step in self.steps if step.status == "in_progress"]
         if len(in_progress) > 1:
             raise ValueError("Only one plan step can be in_progress at a time.")
+        for field_name in ["target_files", "owned_files"]:
+            for path in getattr(self, field_name):
+                if not _is_safe_relative_plan_path(path):
+                    raise ValueError(
+                        f"{field_name} must contain workspace-relative paths without '..': {path}"
+                    )
         return self
+
+
+def _is_safe_relative_plan_path(path: str) -> bool:
+    normalized = path.replace("\\", "/").strip()
+    if not normalized or normalized.startswith("/") or ":" in normalized:
+        return False
+    return ".." not in normalized.split("/")
 
 
 class ListFilesAction(BaseModel):

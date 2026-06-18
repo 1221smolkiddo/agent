@@ -6,9 +6,9 @@ This document tracks how far the coding agent has come and what collaborators ca
 
 **Stage:** Basic single-model CLI agent with Agent47 engineering protocol
 
-**Approximate progress toward an industry-standard local AI coding agent:** 53%
+**Approximate progress toward an industry-standard local AI coding agent:** 55%
 
-The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, durable plan checkpoints with persisted structured work reports, non-workspace intent routing, general web search with provider fallback, structured patch application, approved git-diff awareness, lightweight repo mapping and task-aware relevance ranking, deterministic local evals for baseline safety regressions and fixture-based coding tasks, a versioned newline-delimited JSON protocol for future frontends, model fallback with usage/cost tracking, install diagnostics and cross-platform install guidance, verification command detection/suggestion/automatic execution/outcome summaries, mutation-attempt tracking for truthful final answers, clearer interactive terminal panels with short transcript context and structured session state, run history detail views, resumable runs, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
+The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, durable plan checkpoints with target-file, ownership, check, blocker, and risk metadata, persisted structured work reports, non-workspace intent routing, general web search with provider fallback, structured patch application, approved git-diff awareness, lightweight repo mapping and task-aware relevance ranking, deterministic local evals for baseline safety regressions and fixture-based coding tasks, a versioned newline-delimited JSON protocol for future frontends, model fallback with usage/cost tracking, install diagnostics and cross-platform install guidance, verification command detection/suggestion/automatic execution/outcome summaries, disk-verified mutation tracking for truthful final answers, clearer interactive terminal panels with short transcript context and structured session state, run history detail views, resumable runs, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
 
 This file should be updated whenever a meaningful Agent47 capability is added. Keep the enabled commands/actions current, move completed items out of "What Is Left" when they land, and update the percentage only when the agent gains real product capability rather than documentation alone.
 
@@ -71,7 +71,7 @@ There are currently **17 model-requestable actions**:
 | Action | Purpose |
 | --- | --- |
 | `final` | Finish and summarize the result for the user. |
-| `update_plan` | Checkpoint durable task steps with `pending`, `in_progress`, `completed`, or `blocked` status. |
+| `update_plan` | Checkpoint durable task steps with status plus target files, owned files, intended checks, blockers, and risk notes. |
 | `list_files` | List files inside the workspace. |
 | `read_file` | Read a file inside the workspace. |
 | `write_file` | Write a full file inside the workspace. |
@@ -105,7 +105,7 @@ There are currently **17 model-requestable actions**:
 | File ops: pathlib | Enabled |
 | Diffs: difflib | Enabled |
 | Structured patch application: git apply | Enabled |
-| Durable plan checkpoints | Enabled |
+| Durable plan checkpoints with file/check/risk metadata | Enabled |
 | Structured work reports in CLI and `agent47` | Enabled |
 | Persisted work reports in SQLite history and resume context | Enabled |
 | Shell execution: subprocess | Enabled |
@@ -127,7 +127,7 @@ There are currently **17 model-requestable actions**:
 | Verification command suggestion | Enabled |
 | Automatic focused verification execution | Enabled |
 | Verification outcome summaries | Enabled |
-| Mutation-attempt tracking for final-answer honesty | Enabled |
+| Disk-verified mutation tracking for final-answer honesty | Enabled |
 | Operation status labels | Enabled |
 | Compact model streaming progress | Enabled |
 | Bordered interactive terminal panels | Enabled |
@@ -159,7 +159,7 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 | 2 | Verification loop | Lets Agent47 detect, suggest, run, and summarize the right tests, lint, typecheck, and builds after edits | Baseline done |
 | 3 | Repo intelligence | Helps the agent choose relevant context using symbols, dependencies, git diff, and architecture summaries | Baseline done for repo map, ranking, and git awareness |
 | 4 | Safer shell policy | Separates read-only, test/build, install/network, and destructive commands with stronger approvals | Baseline done |
-| 5 | Durable sessions | Enables pause/resume, plan state, checkpoints, and long task recovery | Partial, with resumable runs, visible durable plan checkpoints, and persisted structured work reports |
+| 5 | Durable sessions | Enables pause/resume, plan state, checkpoints, and long task recovery | Partial, with resumable runs, visible durable plan checkpoints, planner metadata, and persisted structured work reports |
 | 6 | Streaming UX | Makes CLI and interactive mode feel alive during model reasoning and tool execution | Baseline done |
 | 7 | Multi-model/provider layer | Supports planner/coder/reviewer profiles, fallbacks, and cost-aware routing | Baseline done for profiles, fallback, and usage/cost tracking |
 | 8 | Observability | Captures traces, timings, token use, failures, and debug bundles for reliability work | Partial, with model usage and work reports |
@@ -170,11 +170,11 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 
 ## Next Recommended Build Order
 
-1. Add richer planner fields for blockers, checks, and file ownership.
-2. Add richer JSON approval response handling for editor frontends.
-3. Add structured patch preview/apply metadata for multi-file changes.
-4. Add package metadata, license, and release checklist.
-5. Add prompt-injection defenses for untrusted repo content.
+1. Add richer JSON approval response handling for editor frontends.
+2. Add structured patch preview/apply metadata for multi-file changes.
+3. Add package metadata, license, and release checklist.
+4. Add prompt-injection defenses for untrusted repo content.
+5. Add symbol/dependency indexing on top of the baseline repo map.
 
 ## Current Safety Notes
 
@@ -192,7 +192,7 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 - `--dry-run` skips writes and shell commands.
 - `agent47` interactive mode starts write-enabled, while `/dry-run` remains available for inspect-only sessions.
 - Human approval prompts are implemented for write/edit/apply-patch/shell/web-search actions.
-- Mutation attempts are tracked so final answers cannot claim file creation or edits without a verified successful mutation.
+- Mutation attempts are tracked and verified against disk state so final answers cannot claim file creation, edits, patches, or deletions without a verified successful mutation.
 - Interactive session state tracks the current task, pending user info, target files, changed files, blockers, and recent tool results for follow-up turns.
 - Interactive mode starts with a centered `A G E N T 4 7` banner and uses optional terminal colors for panels, prompts, and status labels.
 - Streaming-capable model clients now feed compact `STREAMING` progress markers in CLI and `agent47`, with `/stream [off]`, `--stream/--no-stream`, and `AGENT_STREAM` controls.
@@ -201,8 +201,8 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 - Model attempts, token usage, fallback transitions, and optional cost estimates are stored in SQLite and summarized in work reports and JSON results.
 - `code-agent history show <run-id>` and `/history-show <run-id>` expose saved step details for auditability.
 - `code-agent resume <run-id>` and `/resume <run-id>` continue from compact saved run context while preserving a new run record.
-- `update_plan` stores durable plan steps in run history and resume context, with validation that only one step is `in_progress`.
-- CLI and `agent47` render a structured work report before the final response for non-trivial runs, including current task, current step, files, progress, commands, validation, change summary, changed-line diff review, and final outcome.
+- `update_plan` stores durable plan steps plus target files, owned files, intended checks, blockers, and risk notes in run history and resume context, with validation that only one step is `in_progress` and planned file paths stay workspace-relative.
+- CLI and `agent47` render a structured work report before the final response for non-trivial runs, including current task, current step, files, planned targets, file ownership, planned checks, blockers, risk notes, progress, commands, validation, change summary, changed-line diff review, and final outcome.
 - Structured work reports are persisted in SQLite, shown in `history show`, and included in resume context.
 - `apply_patch` validates target paths, previews the full patch for approval, checks patch applicability, and applies it with `git apply`.
 - `delete_file` removes files through a first-class approved mutation action instead of shell commands.

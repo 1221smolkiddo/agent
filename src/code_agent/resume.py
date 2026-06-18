@@ -117,7 +117,7 @@ def _summarize_action(payload: dict[str, Any]) -> str:
         statuses = [
             f"{step.get('status', 'unknown')}:{step.get('step', '<unnamed>')}" for step in steps
         ]
-        return "action update_plan " + "; ".join(statuses)
+        return "action update_plan " + "; ".join(statuses) + _plan_metadata_suffix(payload)
     return f"action {action_type}"
 
 
@@ -128,7 +128,26 @@ def _summarize_plan_update(payload: dict[str, Any]) -> str:
     rendered = [
         f"{step.get('status', 'unknown')}:{step.get('step', '<unnamed>')}" for step in steps
     ]
-    return "plan updated " + "; ".join(rendered)
+    return "plan updated " + "; ".join(rendered) + _plan_metadata_suffix(payload)
+
+
+def _plan_metadata_suffix(payload: dict[str, Any]) -> str:
+    labels = [
+        ("target_files", "targets"),
+        ("owned_files", "owned"),
+        ("checks", "checks"),
+        ("blockers", "blockers"),
+        ("risk_notes", "risks"),
+    ]
+    rendered: list[str] = []
+    for key, label in labels:
+        values = payload.get(key, [])
+        if not isinstance(values, list):
+            continue
+        value_text = ", ".join(str(value) for value in values if str(value).strip())
+        if value_text:
+            rendered.append(f"{label}={value_text}")
+    return " | " + " | ".join(rendered) if rendered else ""
 
 
 def _summarize_tool_result(payload: dict[str, Any]) -> str:

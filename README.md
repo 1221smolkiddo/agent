@@ -4,7 +4,7 @@ A Python CLI-first AI coding agent scaffold. The core logic lives outside the CL
 
 The long-term goal is Agent47: a real AI engineering assistant that is repo-aware, tool-using, careful with edits, test-aware, and eventually available inside VS Code.
 
-Agent47 now uses an engineering protocol in its system prompt: classify the request, create durable plans for non-trivial workspace tasks, inspect relevant files, make focused edits, verify changes when practical, recover from failures, and report honestly about what changed and what was checked.
+Agent47 now uses an engineering protocol in its system prompt: classify the request, create durable plans with intended files/checks/risks for non-trivial workspace tasks, inspect relevant files, make focused edits, verify changes when practical, recover from failures, and report honestly about what changed and what was checked.
 
 Agent47 is not limited to the current folder. It can answer general questions directly, use web search for current external information when needed, and only inspect project files when the request is actually about the local workspace.
 
@@ -16,7 +16,7 @@ Agent47 is being built toward the baseline expected from a serious AI coding age
 - Structured patch editing with diff preview, approval, conflict handling, and rollback-friendly history.
 - Automatic test, lint, typecheck, and build detection with focused verification loops.
 - Safer autonomy through command policies, sandbox limits, secret redaction, and explicit approvals.
-- Durable sessions with resumable plans, run history, per-repo memory, and compacted context.
+- Durable sessions with resumable plans, target-file/check/risk metadata, run history, per-repo memory, and compacted context.
 - Multi-model support with provider abstraction, model profiles, fallback routing, streaming, and cost tracking.
 - Collaboration workflows for review, commits, branches, pull requests, issues, changelogs, and release notes.
 - Editor integration, starting with a JSON protocol and eventually a VS Code extension.
@@ -172,6 +172,8 @@ Project search uses `ripgrep` when available and falls back to a built-in Python
 
 Shell commands are classified before approval. Destructive commands such as `git reset --hard`, recursive force deletes, and aggressive `git clean` forms are blocked by policy; install/network commands are labeled high risk; verification and read-only commands get lower-risk labels. Tool outputs are redacted for common secret patterns before they are returned to the model or stored. Large approval previews and mutation diffs are bounded so long generated files do not flood the terminal or model context.
 
+File mutations are verified against disk state before Agent47 trusts them in final answers. Writes must leave the requested content on disk, edits and patches must change content, and deletes must remove a file that existed before the action.
+
 Web search approval prompts include the provider domains and query. Agent47 blocks localhost, private-network, link-local, reserved, and multicast web targets, and filters unsafe result URLs before returning search results.
 
 ## Failure Recovery
@@ -195,7 +197,7 @@ The CLI prints status lines while the agent works:
 - `SEARCHING WEB` for general web search.
 - `CHECKING project verification commands` when detecting test/lint/build commands.
 - `CHECKING suggested verification` when choosing focused checks for changed files.
-- `PLANNING updating task plan` when checkpointing durable plan steps.
+- `PLANNING updating task plan` when checkpointing durable plan steps and planner metadata.
 - `READING git changes` when inspecting dirty files before editing.
 - `EDITING` for file writes and edits.
 - `EDITING applying patch` for structured patch edits.
@@ -204,7 +206,7 @@ The CLI prints status lines while the agent works:
 - Invalid model action responses are retried automatically, including common cases where a valid JSON action is wrapped in prose or a code fence.
 - `DONE` when the agent reaches a final answer.
 
-After non-trivial runs, the CLI and interactive shell render a structured work report before the final response. It shows current task, current step, files being modified, progress, context analysis, model usage, commands executed, validation status, modified files, change summary, changed-line diff review, and final outcome.
+After non-trivial runs, the CLI and interactive shell render a structured work report before the final response. It shows current task, current step, files being modified, planned targets, file ownership, planned checks, blockers, risk notes, progress, context analysis, model usage, commands executed, validation status, modified files, change summary, changed-line diff review, and final outcome.
 
 ## Stopping The Agent
 

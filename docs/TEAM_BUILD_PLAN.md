@@ -89,6 +89,7 @@ These are already built and should be maintained while new work continues.
 - [x] Progress tracker in `docs/PROGRESS.md`.
 - [x] Feature summary in `features_and_workdone.md`.
 - [x] Automatic focused verification after successful file mutations.
+- [x] Mutation tracking verifies write content, edit/patch content changes, and delete removal before final claims are trusted.
 - [x] Final-answer gate rejects unverified file creation/edit claims.
 - [x] Baseline interactive session state for follow-up turns.
 - [x] Approved git status/diff inspection before edits.
@@ -97,6 +98,7 @@ These are already built and should be maintained while new work continues.
 - [x] Baseline public-web network policy for web search.
 - [x] Durable `update_plan` action with persisted step status checkpoints.
 - [x] Visible plan snapshots in CLI and `agent47`.
+- [x] Planner metadata for target files, owned files, checks, blockers, and risk notes.
 - [x] Structured work reports with changed-line diff review.
 - [x] Lightweight repo map and task-aware relevance ranking.
 - [x] Local deterministic eval harness with baseline safety regressions.
@@ -111,7 +113,7 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 
 ### Phase 1: Trust And Verification
 
-- [~] Issue 1: Mutation Tracking. Owner: Agent47
+- [x] Issue 1: Mutation Tracking. Owner: Agent47
 - [x] Issue 2: Final Answer Verification Gate. Owner: Agent47
 - [x] Issue 3: Final Work Report. Owner: Agent47
 
@@ -238,7 +240,7 @@ Acceptance criteria:
 - If a write succeeds, final answer can include verified path.
 - Tests cover success, dry-run skip, permission denied, and missing file.
 
-Status: **In progress**. Agent47 now records mutation attempts in run steps and uses them to reject unverified final claims; richer file-exists/content-changed checks are still needed.
+Status: **Done for baseline**. Agent47 records write, edit, patch, and delete mutation attempts in run steps, verifies successful tool reports against disk state, stores post-mutation facts such as file existence, content match, and content-changed status, and uses those records to reject unverified final claims.
 
 #### 2. Final Answer Verification Gate
 
@@ -732,7 +734,7 @@ Acceptance criteria:
 
 - Agent creates and updates a plan for non-trivial tasks.
 
-Status: **Baseline done**. Agent47 now has a typed `update_plan` action with durable step status checkpoints stored in run history and resume context. Interactive session state still tracks current task, pending user info, target files, changed files, blockers, and recent tool results; richer planner fields and live visible rendering are tracked by follow-up work.
+Status: **Baseline done**. Agent47 now has a typed `update_plan` action with durable step status checkpoints plus target files, owned files, intended checks, blockers, and risk notes. These checkpoints are stored in run history, resume context, live plan rendering, JSON payloads, and structured work reports so the intended blast radius is visible before edits.
 
 #### 24. Visible Step Progress
 

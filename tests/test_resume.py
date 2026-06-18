@@ -139,6 +139,11 @@ def test_run_detail_and_resume_context_include_plan_updates(tmp_path: Path) -> N
                 {"step": "Inspect docs", "status": "completed"},
                 {"step": "Add durable plan action", "status": "in_progress"},
             ],
+            "target_files": ["src/code_agent/resume.py"],
+            "owned_files": ["src/code_agent/resume.py"],
+            "checks": ["uv run pytest tests/test_resume.py"],
+            "blockers": ["none"],
+            "risk_notes": ["preserve compact history"],
         },
     )
     storage.add_step(
@@ -151,6 +156,11 @@ def test_run_detail_and_resume_context_include_plan_updates(tmp_path: Path) -> N
                 {"step": "Inspect docs", "status": "completed"},
                 {"step": "Add durable plan action", "status": "in_progress"},
             ],
+            "target_files": ["src/code_agent/resume.py"],
+            "owned_files": ["src/code_agent/resume.py"],
+            "checks": ["uv run pytest tests/test_resume.py"],
+            "blockers": ["none"],
+            "risk_notes": ["preserve compact history"],
             "output": "Plan updated",
         },
     )
@@ -162,8 +172,13 @@ def test_run_detail_and_resume_context_include_plan_updates(tmp_path: Path) -> N
     resume_task = build_resume_task(run, steps, "continue")
 
     assert "action update_plan completed:Inspect docs; in_progress:Add durable plan action" in detail
+    assert "targets=src/code_agent/resume.py" in detail
+    assert "checks=uv run pytest tests/test_resume.py" in detail
+    assert "risks=preserve compact history" in detail
     assert "plan updated completed:Inspect docs; in_progress:Add durable plan action" in detail
     assert "plan updated completed:Inspect docs" in resume_task
+    assert "owned=src/code_agent/resume.py" in resume_task
+    assert "blockers=none" in resume_task
 
 
 def test_compact_run_context_truncates_large_history() -> None:

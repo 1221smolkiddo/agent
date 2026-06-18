@@ -4,7 +4,15 @@ from pathlib import Path
 
 from code_agent.agent import CodingAgent
 from code_agent.models import ChatMessage
-from code_agent.schema import AgentAction, ReadFileAction, RunShellAction, ToolResult
+from code_agent.schema import (
+    AgentAction,
+    DeleteFileAction,
+    EditFileAction,
+    ReadFileAction,
+    RunShellAction,
+    ToolResult,
+    WriteFileAction,
+)
 from code_agent.storage import AgentStorage
 
 
@@ -62,17 +70,44 @@ class RecordingReporter:
 
 
 class RecoveringTools:
-    def __init__(self) -> None:
+    def __init__(self, workspace: Path | None = None) -> None:
         self.calls = 0
+        self.workspace = workspace
 
     def run(self, action: AgentAction) -> ToolResult:
         self.calls += 1
         if isinstance(action, ReadFileAction):
             return ToolResult(ok=False, output="missing file")
+        if isinstance(action, WriteFileAction):
+            target = self.resolve_inside_workspace(action.path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(action.content, encoding="utf-8")
+            return ToolResult(ok=True, output="changed")
+        if isinstance(action, EditFileAction):
+            target = self.resolve_inside_workspace(action.path)
+            content = target.read_text(encoding="utf-8")
+            if action.find not in content:
+                return ToolResult(ok=False, output="missing exact text")
+            target.write_text(content.replace(action.find, action.replace, 1), encoding="utf-8")
+            return ToolResult(ok=True, output="changed")
+        if isinstance(action, DeleteFileAction):
+            target = self.resolve_inside_workspace(action.path)
+            if target.exists():
+                target.unlink()
+            return ToolResult(ok=True, output="recovered")
         return ToolResult(ok=True, output="recovered")
+
+    def resolve_inside_workspace(self, requested_path: str | None = None) -> Path:
+        if self.workspace is None:
+            raise ValueError("test workspace is not configured")
+        target = (self.workspace / (requested_path or ".")).resolve()
+        if target != self.workspace and self.workspace not in target.parents:
+            raise ValueError(f"Path escapes workspace: {requested_path}")
+        return target
 
 
 def make_agent(tmp_path: Path, model: FakeModel, tools: RecoveringTools) -> CodingAgent:
+    tools.workspace = tmp_path
     return CodingAgent(
         cwd=tmp_path,
         dry_run=False,
@@ -175,7 +210,12 @@ def test_agent_records_plan_updates_without_calling_tools(tmp_path: Path) -> Non
                 '{"type":"update_plan","steps":['
                 '{"step":"Inspect docs","status":"completed"},'
                 '{"step":"Patch planner state","status":"in_progress"}'
-                "]}"
+                '],"target_files":["src/code_agent/agent.py"],'
+                '"owned_files":["src/code_agent/agent.py"],'
+                '"checks":["uv run pytest tests/test_agent_recovery.py"],'
+                '"blockers":["needs approval before write"],'
+                '"risk_notes":["avoid unrelated files"]'
+                "}"
             ),
             '{"type":"final","message":"plan checkpointed"}',
         ]
@@ -196,7 +236,17 @@ def test_agent_records_plan_updates_without_calling_tools(tmp_path: Path) -> Non
                 {"step": "Inspect docs", "status": "completed"},
                 {"step": "Patch planner state", "status": "in_progress"},
             ],
-            "output": "Plan updated: 1. completed: Inspect docs; 2. in_progress: Patch planner state",
+            "target_files": ["src/code_agent/agent.py"],
+            "owned_files": ["src/code_agent/agent.py"],
+            "checks": ["uv run pytest tests/test_agent_recovery.py"],
+            "blockers": ["needs approval before write"],
+            "risk_notes": ["avoid unrelated files"],
+            "output": (
+                "Plan updated: 1. completed: Inspect docs; 2. in_progress: Patch planner state | "
+                "targets=src/code_agent/agent.py | owned=src/code_agent/agent.py | "
+                "checks=uv run pytest tests/test_agent_recovery.py | blockers=needs approval before write | "
+                "risks=avoid unrelated files"
+            ),
         }
     ]
     assert tools.calls == 0
@@ -231,6 +281,30 @@ def test_agent_rejects_plan_with_multiple_in_progress_steps(tmp_path: Path) -> N
     assert tools.calls == 0
     assert "parse_failure" in model.messages_seen[1][-1]["content"]
     assert "Only one plan step can be in_progress" in model.messages_seen[1][-1]["content"]
+
+
+def test_agent_rejects_plan_with_unsafe_target_file(tmp_path: Path) -> None:
+    model = FakeModel(
+        [
+            (
+                '{"type":"update_plan","steps":[{"step":"Inspect","status":"in_progress"}],'
+                '"target_files":["../outside.py"]}'
+            ),
+            (
+                '{"type":"update_plan","steps":[{"step":"Inspect","status":"completed"}],'
+                '"target_files":["src/code_agent/schema.py"]}'
+            ),
+            '{"type":"final","message":"corrected"}',
+        ]
+    )
+    tools = RecoveringTools()
+    agent = make_agent(tmp_path, model, tools)
+
+    result = agent.run("update this project planner")
+
+    assert result == "corrected"
+    assert tools.calls == 0
+    assert "workspace-relative paths" in model.messages_seen[1][-1]["content"]
 
 
 def test_agent_retries_after_invalid_model_action(tmp_path: Path) -> None:
@@ -341,7 +415,69 @@ def test_agent_rejects_template_claim_after_failed_write(tmp_path: Path) -> None
     assert "no mutation succeeded" in model.messages_seen[2][-1]["content"]
 
 
+def test_agent_rejects_write_success_when_file_is_not_on_disk(tmp_path: Path) -> None:
+    model = FakeModel(
+        [
+            '{"type":"write_file","path":"notes.md","content":"# Notes"}',
+            '{"type":"final","message":"I created notes.md."}',
+            '{"type":"final","message":"I could not verify notes.md was written."}',
+        ]
+    )
+
+    class LyingWriteTools(RecoveringTools):
+        def run(self, action: AgentAction) -> ToolResult:
+            self.calls += 1
+            if isinstance(action, WriteFileAction):
+                return ToolResult(ok=True, output="claimed write")
+            return super().run(action)
+
+    tools = LyingWriteTools()
+    agent = make_agent(tmp_path, model, tools)
+
+    result = agent.run_detailed("create notes.md in this project")
+
+    assert result.message == "I could not verify notes.md was written."
+    assert result.changed_paths == []
+    assert result.mutation_records[0]["ok"] is False
+    assert result.mutation_records[0]["exists_after"] is False
+    assert result.mutation_records[0]["content_matches"] is False
+    assert "no mutation succeeded" in model.messages_seen[2][-1]["content"]
+
+
+def test_agent_rejects_edit_success_when_content_did_not_change(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "app.py"
+    target.parent.mkdir()
+    target.write_text("print('hi')\n", encoding="utf-8")
+    model = FakeModel(
+        [
+            '{"type":"edit_file","path":"src/app.py","find":"hi","replace":"hello"}',
+            '{"type":"final","message":"I updated src/app.py."}',
+            '{"type":"final","message":"I could not verify src/app.py changed."}',
+        ]
+    )
+
+    class LyingEditTools(RecoveringTools):
+        def run(self, action: AgentAction) -> ToolResult:
+            self.calls += 1
+            if isinstance(action, EditFileAction):
+                return ToolResult(ok=True, output="claimed edit")
+            return super().run(action)
+
+    tools = LyingEditTools()
+    agent = make_agent(tmp_path, model, tools)
+
+    result = agent.run_detailed("update src/app.py in this project")
+
+    assert result.message == "I could not verify src/app.py changed."
+    assert result.changed_paths == []
+    assert result.mutation_records[0]["ok"] is False
+    assert result.mutation_records[0]["exists_after"] is True
+    assert result.mutation_records[0]["content_changed"] is False
+    assert "no mutation succeeded" in model.messages_seen[2][-1]["content"]
+
+
 def test_agent_accepts_deleted_claim_after_delete_file(tmp_path: Path) -> None:
+    (tmp_path / "hello_world.py").write_text("print('hello')\n", encoding="utf-8")
     model = FakeModel(
         [
             '{"type":"delete_file","path":"hello_world.py"}',
@@ -361,6 +497,9 @@ def test_agent_accepts_deleted_claim_after_delete_file(tmp_path: Path) -> None:
             "path": "hello_world.py",
             "ok": True,
             "output": "recovered",
+            "verified": True,
+            "exists_after": False,
+            "content_changed": True,
         }
     ]
     report = agent.storage.get_work_report(result.run_id)
@@ -431,11 +570,11 @@ testpaths = ["tests"]
             self.commands: list[str] = []
 
         def run(self, action: AgentAction) -> ToolResult:
-            self.calls += 1
             if isinstance(action, RunShellAction):
+                self.calls += 1
                 self.commands.append(action.command)
                 return ToolResult(ok=True, output="tests passed")
-            return ToolResult(ok=True, output="changed")
+            return super().run(action)
 
     tools = VerifyingTools()
     agent = make_agent(tmp_path, model, tools)
@@ -480,12 +619,12 @@ testpaths = ["tests"]
             self.commands: list[str] = []
 
         def run(self, action: AgentAction) -> ToolResult:
-            self.calls += 1
             if isinstance(action, RunShellAction):
+                self.calls += 1
                 self.commands.append(action.command)
                 ok = len(self.commands) > 1
                 return ToolResult(ok=ok, output="passed" if ok else "failed tests")
-            return ToolResult(ok=True, output="changed")
+            return super().run(action)
 
     tools = FailingVerificationTools()
     agent = make_agent(tmp_path, model, tools)

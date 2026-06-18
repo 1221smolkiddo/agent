@@ -15,9 +15,12 @@ def test_system_prompt_names_agent47_engineering_protocol() -> None:
     assert "If web_search returns weak or no results" in prompt
     assert "create and update a short durable plan with update_plan" in prompt
     assert "only one step as in_progress" in prompt
+    assert "include target_files, owned_files, checks, blockers, and risk_notes" in prompt
     assert "Use repo_map to understand unfamiliar repositories" in prompt
     assert "Use rank_context with the user's task" in prompt
     assert '{ "type": "update_plan"' in prompt
+    assert '"target_files": ["src/app.py"]' in prompt
+    assert '"risk_notes": ["avoid unrelated refactors"]' in prompt
     assert '{ "type": "repo_map"' in prompt
     assert '{ "type": "rank_context"' in prompt
     assert "Prefer apply_patch for code edits" in prompt

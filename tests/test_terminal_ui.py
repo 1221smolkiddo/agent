@@ -59,7 +59,8 @@ def test_format_plan_body_uses_latest_plan_update() -> None:
             {
                 "steps": [
                     {"step": "Old step", "status": "in_progress"},
-                ]
+                ],
+                "target_files": ["old.py"],
             },
             {
                 "steps": [
@@ -67,7 +68,12 @@ def test_format_plan_body_uses_latest_plan_update() -> None:
                     {"step": "Render plan panel", "status": "in_progress"},
                     {"step": "Handle blocker", "status": "blocked", "note": "needs approval"},
                     {"step": "Update docs", "status": "pending"},
-                ]
+                ],
+                "target_files": ["src/code_agent/terminal_ui.py"],
+                "owned_files": ["src/code_agent/terminal_ui.py"],
+                "checks": ["uv run pytest tests/test_terminal_ui.py"],
+                "blockers": ["needs approval"],
+                "risk_notes": ["avoid unrelated UI changes"],
             },
         ]
     )
@@ -76,7 +82,12 @@ def test_format_plan_body_uses_latest_plan_update() -> None:
         "[x] 1. Inspect docs\n"
         "[>] 2. Render plan panel\n"
         "[!] 3. Handle blocker (needs approval)\n"
-        "[ ] 4. Update docs"
+        "[ ] 4. Update docs\n"
+        "Targets: src/code_agent/terminal_ui.py\n"
+        "Owned: src/code_agent/terminal_ui.py\n"
+        "Checks: uv run pytest tests/test_terminal_ui.py\n"
+        "Blockers: needs approval\n"
+        "Risks: avoid unrelated UI changes"
     )
 
 
@@ -101,7 +112,12 @@ def test_format_work_report_body_uses_requested_sections_and_changed_diff_lines(
                 "steps": [
                     {"step": "Inspect docs", "status": "completed"},
                     {"step": "Update report UI", "status": "completed"},
-                ]
+                ],
+                "target_files": ["docs/PROGRESS.md"],
+                "owned_files": ["docs/PROGRESS.md"],
+                "checks": ["uv run pytest tests/test_terminal_ui.py"],
+                "blockers": ["none"],
+                "risk_notes": ["docs-only change"],
             }
         ],
         mutation_records=[
@@ -142,6 +158,11 @@ def test_format_work_report_body_uses_requested_sections_and_changed_diff_lines(
     assert "Current Task:\n  update the docs" in body
     assert "Current Step:\n  Update report UI" in body
     assert "Files Being Modified:\n  docs/PROGRESS.md" in body
+    assert "Planned Target Files:\n  docs/PROGRESS.md" in body
+    assert "Owned Files:\n  docs/PROGRESS.md" in body
+    assert "Planned Checks:\n  uv run pytest tests/test_terminal_ui.py" in body
+    assert "Blockers:\n  none" in body
+    assert "Risk Notes:\n  docs-only change" in body
     assert "Context Analysis:\n  - repo_map: ok\n  - rank_context: ok for `update report UI`" in body
     assert "Model Usage:\n  - primary-model: ok, tokens=42, cost=0.0012" in body
     assert "Commands Executed:\n  - `uv run pytest`: passed" in body

@@ -28,6 +28,11 @@ def build_work_report_payload(result: AgentRunResult) -> dict[str, Any]:
         "current_step": _current_step(result.plan_updates),
         "files_being_modified": result.changed_paths,
         "progress": _progress_summary(result),
+        "planned_target_files": _latest_plan_list(result.plan_updates, "target_files"),
+        "owned_files": _latest_plan_list(result.plan_updates, "owned_files"),
+        "planned_checks": _latest_plan_list(result.plan_updates, "checks"),
+        "blockers": _latest_plan_list(result.plan_updates, "blockers"),
+        "risk_notes": _latest_plan_list(result.plan_updates, "risk_notes"),
         "context_analysis": _context_items(result),
         "model_usage": _model_usage_items(result),
         "commands_executed": _command_items(result),
@@ -51,6 +56,11 @@ def format_work_report_body(result: AgentRunResult) -> str:
         ("Current Step", _current_step(result.plan_updates)),
         ("Files Being Modified", _list_or_none(result.changed_paths)),
         ("Progress", _progress_summary(result)),
+        ("Planned Target Files", _list_or_none(_latest_plan_list(result.plan_updates, "target_files"))),
+        ("Owned Files", _list_or_none(_latest_plan_list(result.plan_updates, "owned_files"))),
+        ("Planned Checks", _list_or_none(_latest_plan_list(result.plan_updates, "checks"))),
+        ("Blockers", _list_or_none(_latest_plan_list(result.plan_updates, "blockers"))),
+        ("Risk Notes", _list_or_none(_latest_plan_list(result.plan_updates, "risk_notes"))),
         ("Context Analysis", _context_summary(result)),
         ("Model Usage", _model_usage_summary(result)),
         ("Commands Executed", _commands_summary(result)),
@@ -99,6 +109,15 @@ def _progress_summary(result: AgentRunResult) -> str:
         f"{counts['completed']} completed, {counts['in_progress']} current, "
         f"{counts['pending']} pending, {counts['blocked']} blocked."
     )
+
+
+def _latest_plan_list(plan_updates: list[dict[str, Any]], key: str) -> list[str]:
+    if not plan_updates:
+        return []
+    values = plan_updates[-1].get(key, [])
+    if not isinstance(values, list):
+        return []
+    return [str(value) for value in values if str(value).strip()]
 
 
 def _commands_summary(result: AgentRunResult) -> str:

@@ -3,7 +3,7 @@ from pathlib import Path
 from code_agent.agent import AgentRunResult, CodingAgent
 from code_agent.interactive import task_with_context
 from code_agent.models import ChatMessage
-from code_agent.schema import AgentAction, ToolResult
+from code_agent.schema import AgentAction, ToolResult, WriteFileAction
 from code_agent.session import SessionState, extract_file_refs
 from code_agent.storage import AgentStorage
 
@@ -21,15 +21,29 @@ class FakeModel:
 
 
 class FakeTools:
-    def __init__(self) -> None:
+    def __init__(self, workspace: Path | None = None) -> None:
         self.actions: list[AgentAction] = []
+        self.workspace = workspace
 
     def run(self, action: AgentAction) -> ToolResult:
         self.actions.append(action)
+        if isinstance(action, WriteFileAction):
+            target = self.resolve_inside_workspace(action.path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(action.content, encoding="utf-8")
         return ToolResult(ok=True, output="changed")
+
+    def resolve_inside_workspace(self, requested_path: str | None = None) -> Path:
+        if self.workspace is None:
+            raise ValueError("test workspace is not configured")
+        target = (self.workspace / (requested_path or ".")).resolve()
+        if target != self.workspace and self.workspace not in target.parents:
+            raise ValueError(f"Path escapes workspace: {requested_path}")
+        return target
 
 
 def make_agent(tmp_path: Path, model: FakeModel, tools: FakeTools) -> CodingAgent:
+    tools.workspace = tmp_path
     return CodingAgent(
         cwd=tmp_path,
         dry_run=False,

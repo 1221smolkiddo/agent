@@ -60,15 +60,15 @@ This document summarizes the current state of Agent47 for collaborators.
 - SQLite run history.
 - Run detail views through `code-agent history show <run-id>` and `/history-show <run-id>`.
 - Resumable runs through `code-agent resume <run-id>` and `/resume <run-id>`.
-- Durable `update_plan` checkpoints with `pending`, `in_progress`, `completed`, and `blocked` step statuses.
-- Plan updates are saved in run history and included in resume context.
+- Durable `update_plan` checkpoints with `pending`, `in_progress`, `completed`, and `blocked` step statuses plus target files, owned files, checks, blockers, and risk notes.
+- Plan updates are saved in run history, rendered in live CLI panels, summarized in work reports, and included in resume context.
 - CLI and `agent47` render structured work reports before the final response for non-trivial runs.
-- Work reports include current task, current step, files being modified, progress, context analysis, model usage, commands executed, validation status, modified files, change summary, changed-line diff review, and final outcome.
+- Work reports include current task, current step, files being modified, planned targets, file ownership, planned checks, blockers, risk notes, progress, context analysis, model usage, commands executed, validation status, modified files, change summary, changed-line diff review, and final outcome.
 - Work reports are stored in SQLite, surfaced in history details, and included in resume context.
 - Automatic recovery loop when a tool fails.
 - More tolerant action parsing for valid JSON actions wrapped in prose or code fences.
 - Workspace tools are blocked for prompts that do not appear to be about the local project, files, code changes, tests, or commands.
-- Mutation tool results include changed paths and automatic verification results or a verification hint for the next model step.
+- Mutation tool results include verified changed paths, post-mutation disk facts, and automatic verification results or a verification hint for the next model step.
 - Bordered terminal panels distinguish user prompts, Agent47 responses, help, status, and history.
 - Interactive mode keeps a short in-memory transcript for follow-up summaries and recaps.
 - Interactive mode keeps structured session state for the current task, pending user info, target files, last changed files, blockers, and recent tool results.
@@ -124,7 +124,7 @@ Inside `agent47`:
 - Destructive shell commands are blocked by policy instead of being sent to a normal approval prompt.
 - Web search is limited to public HTTP/HTTPS targets and filters local/private-network URLs.
 - Tool outputs redact common key/value secrets, bearer tokens, and OpenAI-style secret keys.
-- The agent tracks mutation attempts and rejects final answers that claim unverified, blocked, skipped, or failed file changes succeeded.
+- The agent tracks mutation attempts, verifies them against disk state, and rejects final answers that claim unverified, blocked, skipped, or failed file changes succeeded.
 
 ## Collaboration Work Completed
 
@@ -166,7 +166,7 @@ Inside `agent47`:
 - Transcript-aware interactive summaries.
 - Interactive session-state follow-up handling.
 - Operation status label formatting.
-- Durable planner action validation, storage, resume summaries, and status formatting.
+- Durable planner action validation, metadata storage, resume summaries, work report sections, and status formatting.
 - Casual greeting handling.
 
 ## What Still Needs Work
@@ -178,7 +178,6 @@ Inside `agent47`:
 - Broader fixture evals with multi-file patches, larger repos, and prompt-injection scenarios.
 - Deeper repo intelligence with symbol/dependency graphs on top of the baseline repo index.
 - Interactive JSON approval response handling for editor frontends.
-- Richer planner fields for files touched, blockers, checks, and ownership.
 - Additional concrete providers beyond OpenAI-compatible APIs.
 - Package metadata, license, changelog, and release checklist.
 - VS Code extension frontend.

@@ -280,10 +280,11 @@ class CodingAgent:
                     )
                 )
 
+            before_mutation = self._mutation_state_for_action(action)
             self._report_action(action)
             result = self._run_tool(action)
-            changed_paths = self._changed_paths_from_action(action) if result.ok else []
-            new_mutation_records = self._mutation_records_from_action(action, result)
+            new_mutation_records = self._mutation_records_from_action(action, result, before_mutation)
+            changed_paths = self._successful_mutation_paths(new_mutation_records)
             mutation_records.extend(new_mutation_records)
             verification_result = self._verification_result_from_action(action, result)
             command_record = self._command_record_from_action(action, result)
@@ -514,13 +515,18 @@ class CodingAgent:
 
     @staticmethod
     def _plan_payload(step: int, action: UpdatePlanAction) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "type": "plan_updated",
             "step": step,
             "ok": True,
             "steps": [item.model_dump(exclude_none=True) for item in action.steps],
             "output": CodingAgent._plan_summary(action),
         }
+        for field_name in ["target_files", "owned_files", "checks", "blockers", "risk_notes"]:
+            values = getattr(action, field_name)
+            if values:
+                payload[field_name] = values
+        return payload
 
     @staticmethod
     def _plan_summary(action: UpdatePlanAction) -> str:
@@ -528,7 +534,19 @@ class CodingAgent:
             f"{index}. {item.status}: {item.step}"
             for index, item in enumerate(action.steps, start=1)
         ]
-        return "Plan updated: " + "; ".join(rendered)
+        metadata: list[str] = []
+        if action.target_files:
+            metadata.append("targets=" + ", ".join(action.target_files))
+        if action.owned_files:
+            metadata.append("owned=" + ", ".join(action.owned_files))
+        if action.checks:
+            metadata.append("checks=" + ", ".join(action.checks))
+        if action.blockers:
+            metadata.append("blockers=" + ", ".join(action.blockers))
+        if action.risk_notes:
+            metadata.append("risks=" + ", ".join(action.risk_notes))
+        suffix = " | " + " | ".join(metadata) if metadata else ""
+        return "Plan updated: " + "; ".join(rendered) + suffix
 
     @staticmethod
     def _failure_summary(consecutive_failures: int, output: str) -> str:
@@ -645,22 +663,107 @@ class CodingAgent:
             return sorted(ToolRegistry._paths_from_patch(patch))
         return []
 
-    @staticmethod
-    def _mutation_records_from_action(action: AgentAction, result: ToolResult) -> list[dict[str, Any]]:
+    def _mutation_state_for_action(self, action: AgentAction) -> dict[str, dict[str, Any]]:
+        if action.type not in {"write_file", "edit_file", "apply_patch", "delete_file"}:
+            return {}
+        state: dict[str, dict[str, Any]] = {}
+        for path in self._changed_paths_from_action(action):
+            try:
+                target = self.tools.resolve_inside_workspace(path)
+            except Exception:
+                state[path] = {"exists": False, "content": None, "error": "path resolution failed"}
+                continue
+            try:
+                state[path] = {
+                    "exists": target.exists(),
+                    "content": target.read_text(encoding="utf-8") if target.is_file() else None,
+                }
+            except (OSError, UnicodeDecodeError) as exc:
+                state[path] = {"exists": target.exists(), "content": None, "error": str(exc)}
+        return state
+
+    def _mutation_records_from_action(
+        self,
+        action: AgentAction,
+        result: ToolResult,
+        before_mutation: dict[str, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         if action.type not in {"write_file", "edit_file", "apply_patch", "delete_file"}:
             return []
         paths = CodingAgent._changed_paths_from_action(action)
         if not paths:
             paths = ["<unknown>"]
         return [
-            {
-                "action": action.type,
-                "path": path,
-                "ok": result.ok,
-                "output": result.output,
-            }
+            self._mutation_record_for_path(action, result, path, before_mutation.get(path, {}))
             for path in paths
         ]
+
+    def _mutation_record_for_path(
+        self,
+        action: AgentAction,
+        result: ToolResult,
+        path: str,
+        before: dict[str, Any],
+    ) -> dict[str, Any]:
+        record: dict[str, Any] = {
+            "action": action.type,
+            "path": path,
+            "ok": result.ok,
+            "output": result.output,
+        }
+        if path == "<unknown>" or not result.ok:
+            return record
+
+        after = self._mutation_state_after_path(path)
+        if "error" in after:
+            record.update({"ok": False, "verified": False, "verification_error": after["error"]})
+            return record
+
+        before_exists = bool(before.get("exists"))
+        before_content = before.get("content")
+        after_exists = bool(after.get("exists"))
+        after_content = after.get("content")
+        content_changed = before_exists != after_exists or before_content != after_content
+        record.update(
+            {
+                "verified": True,
+                "exists_after": after_exists,
+                "content_changed": content_changed,
+            }
+        )
+
+        if action.type == "write_file":
+            expected = getattr(action, "content", None)
+            content_matches = after_exists and after_content == expected
+            record["content_matches"] = content_matches
+            record["ok"] = content_matches
+            if not content_matches:
+                record["verification_error"] = "write_file did not leave the requested content on disk"
+        elif action.type in {"edit_file", "apply_patch"}:
+            record["ok"] = after_exists and content_changed
+            if not record["ok"]:
+                record["verification_error"] = f"{action.type} did not change file content on disk"
+        elif action.type == "delete_file":
+            record["ok"] = before_exists and not after_exists
+            record["content_changed"] = before_exists and not after_exists
+            if after_exists:
+                record["verification_error"] = "delete_file reported success but file still exists"
+            elif not before_exists:
+                record["verification_error"] = "delete_file target did not exist before mutation"
+        return record
+
+    def _mutation_state_after_path(self, path: str) -> dict[str, Any]:
+        try:
+            target = self.tools.resolve_inside_workspace(path)
+        except Exception as exc:
+            return {"exists": False, "content": None, "error": str(exc)}
+        try:
+            return {
+                "exists": target.exists(),
+                "content": target.read_text(encoding="utf-8") if target.is_file() else None,
+            }
+        except (OSError, UnicodeDecodeError) as exc:
+            return {"exists": target.exists(), "content": None, "error": str(exc)}
 
     @staticmethod
     def _successful_mutation_paths(mutation_records: list[dict[str, Any]]) -> list[str]:

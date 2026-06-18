@@ -139,7 +139,27 @@ def format_plan_body(plan_updates: list[dict[str, object]]) -> str:
         if note:
             line += f" ({note})"
         lines.append(line)
+    lines.extend(_plan_metadata_lines(latest))
     return "\n".join(lines) if lines else str(latest.get("output", "Plan updated"))
+
+
+def _plan_metadata_lines(plan_update: dict[str, object]) -> list[str]:
+    labels = [
+        ("target_files", "Targets"),
+        ("owned_files", "Owned"),
+        ("checks", "Checks"),
+        ("blockers", "Blockers"),
+        ("risk_notes", "Risks"),
+    ]
+    lines: list[str] = []
+    for key, label in labels:
+        values = plan_update.get(key, [])
+        if not isinstance(values, list) or not values:
+            continue
+        rendered = ", ".join(str(value) for value in values if str(value).strip())
+        if rendered:
+            lines.append(f"{label}: {rendered}")
+    return lines
 
 
 def _plan_status_marker(status: str) -> str:
