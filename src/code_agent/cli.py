@@ -95,7 +95,12 @@ def resume(
         workspace = sandbox_workspace.path
         typer.echo(f"Sandbox: {workspace}")
 
-    task = build_resume_task(run_row, storage.run_steps_payloads(run_id), instruction or None)
+    task = build_resume_task(
+        run_row,
+        storage.run_steps_payloads(run_id),
+        instruction or None,
+        storage.get_work_report(run_id),
+    )
     agent = create_agent(
         settings=settings,
         cwd=workspace,
@@ -141,4 +146,10 @@ def history_show(run_id: int = typer.Argument(..., help="Run ID to inspect.")) -
     if run_row is None:
         typer.echo(f"No run found with id {run_id}.")
         raise typer.Exit(code=1)
-    typer.echo(format_run_detail(run_row, storage.run_steps_payloads(run_id)))
+    typer.echo(
+        format_run_detail(
+            run_row,
+            storage.run_steps_payloads(run_id),
+            storage.get_work_report(run_id),
+        )
+    )

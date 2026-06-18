@@ -28,6 +28,29 @@ def test_storage_returns_run_and_decoded_steps(tmp_path: Path) -> None:
     assert steps[1]["payload"]["output"] == "parser source"
 
 
+def test_storage_saves_and_updates_work_report(tmp_path: Path) -> None:
+    storage = AgentStorage(tmp_path / "agent.db")
+    run_id = storage.create_run("fix the parser", "fake-model", tmp_path)
+
+    storage.save_work_report(
+        run_id,
+        "Current Task:\n  fix the parser",
+        {"type": "work_report", "sections": {"current_task": "fix the parser"}},
+    )
+    storage.save_work_report(
+        run_id,
+        "Current Task:\n  fix the parser\nFinal Outcome:\n  done",
+        {"type": "work_report", "sections": {"final_outcome": "done"}},
+    )
+
+    report = storage.get_work_report(run_id)
+
+    assert report is not None
+    assert report["run_id"] == run_id
+    assert "Final Outcome" in report["body"]
+    assert report["payload"]["sections"]["final_outcome"] == "done"
+
+
 def test_resume_task_includes_original_task_prior_steps_and_instruction(tmp_path: Path) -> None:
     storage = AgentStorage(tmp_path / "agent.db")
     run_id = storage.create_run("fix the parser", "fake-model", tmp_path)
@@ -45,12 +68,25 @@ def test_resume_task_includes_original_task_prior_steps_and_instruction(tmp_path
     run = storage.get_run(run_id)
     assert run is not None
 
-    task = build_resume_task(run, storage.run_steps_payloads(run_id), "run focused tests")
+    storage.save_work_report(
+        run_id,
+        "Current Task:\n  fix the parser\nModified Files:\n  src/parser.py",
+        {"type": "work_report"},
+    )
+
+    task = build_resume_task(
+        run,
+        storage.run_steps_payloads(run_id),
+        "run focused tests",
+        storage.get_work_report(run_id),
+    )
 
     assert f"Resume Agent47 run {run_id}." in task
     assert "Original task:\nfix the parser" in task
     assert "action edit_file path=src/parser.py" in task
     assert "changed_paths=src/parser.py" in task
+    assert "Prior work report:" in task
+    assert "Modified Files:\n  src/parser.py" in task
     assert "New user instruction for this resume:\nrun focused tests" in task
 
 
@@ -75,10 +111,18 @@ def test_format_run_detail_summarizes_steps(tmp_path: Path) -> None:
     run = storage.get_run(run_id)
     assert run is not None
 
-    detail = format_run_detail(run, storage.run_steps_payloads(run_id))
+    storage.save_work_report(
+        run_id,
+        "Current Task:\n  run tests\nValidation Status:\n  - test `uv run pytest`: failed",
+        {"type": "work_report"},
+    )
+
+    detail = format_run_detail(run, storage.run_steps_payloads(run_id), storage.get_work_report(run_id))
 
     assert f"Run {run_id}" in detail
     assert "Task: run tests" in detail
+    assert "Work Report:" in detail
+    assert "Validation Status:" in detail
     assert "action run_shell command=uv run pytest" in detail
     assert "verification=test `uv run pytest` failed" in detail
 

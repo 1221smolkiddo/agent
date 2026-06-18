@@ -45,6 +45,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - Plan updates are saved in run history and included in resume context.
 - CLI and `agent47` render structured work reports before the final response for non-trivial runs.
 - Work reports include current task, current step, files being modified, progress, commands executed, validation status, modified files, change summary, changed-line diff review, and final outcome.
+- Work reports are stored in SQLite, surfaced in history details, and included in resume context.
 - Automatic recovery loop when a tool fails.
 - More tolerant action parsing for valid JSON actions wrapped in prose or code fences.
 - Workspace tools are blocked for prompts that do not appear to be about the local project, files, code changes, tests, or commands.

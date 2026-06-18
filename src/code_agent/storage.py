@@ -27,6 +27,45 @@ class AgentStorage:
                 (run_id, role, json.dumps(payload)),
             )
 
+    def save_work_report(
+        self,
+        run_id: int,
+        body: str,
+        payload: dict[str, Any],
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                insert into work_reports (run_id, body, payload)
+                values (?, ?, ?)
+                on conflict(run_id) do update set
+                    created_at = current_timestamp,
+                    body = excluded.body,
+                    payload = excluded.payload
+                """,
+                (run_id, body, json.dumps(payload)),
+            )
+
+    def get_work_report(self, run_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                select id, created_at, run_id, body, payload
+                from work_reports
+                where run_id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "created_at": row["created_at"],
+            "run_id": row["run_id"],
+            "body": row["body"],
+            "payload": json.loads(row["payload"]),
+        }
+
     def recent_runs(self, limit: int) -> list[sqlite3.Row]:
         with self._connect() as conn:
             rows = conn.execute(
@@ -100,6 +139,14 @@ class AgentStorage:
                     run_id integer not null references runs(id),
                     created_at text not null default current_timestamp,
                     role text not null,
+                    payload text not null
+                );
+
+                create table if not exists work_reports (
+                    id integer primary key autoincrement,
+                    run_id integer not null unique references runs(id),
+                    created_at text not null default current_timestamp,
+                    body text not null,
                     payload text not null
                 );
                 """

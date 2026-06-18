@@ -272,6 +272,12 @@ def test_agent_accepts_deleted_claim_after_delete_file(tmp_path: Path) -> None:
             "output": "recovered",
         }
     ]
+    report = agent.storage.get_work_report(result.run_id)
+    assert report is not None
+    assert report["payload"]["type"] == "work_report"
+    assert report["payload"]["sections"]["current_task"] == "remove the file you just created"
+    assert report["payload"]["sections"]["modified_files"] == ["hello_world.py"]
+    assert "Change Summary:" in report["body"]
 
 
 def test_agent_rejects_deleted_claim_without_delete_file(tmp_path: Path) -> None:

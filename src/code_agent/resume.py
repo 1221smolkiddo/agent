@@ -5,7 +5,11 @@ import sqlite3
 from typing import Any
 
 
-def format_run_detail(run: sqlite3.Row, steps: list[dict[str, Any]]) -> str:
+def format_run_detail(
+    run: sqlite3.Row,
+    steps: list[dict[str, Any]],
+    work_report: dict[str, Any] | None = None,
+) -> str:
     lines = [
         f"Run {run['id']}",
         f"Created: {run['created_at']}",
@@ -13,8 +17,10 @@ def format_run_detail(run: sqlite3.Row, steps: list[dict[str, Any]]) -> str:
         f"Workspace: {run['cwd']}",
         f"Task: {run['task']}",
         "",
-        "Steps:",
     ]
+    if work_report:
+        lines.extend(["Work Report:", indent(str(work_report["body"])), ""])
+    lines.append("Steps:")
     if not steps:
         lines.append("<none>")
         return "\n".join(lines)
@@ -30,6 +36,7 @@ def build_resume_task(
     run: sqlite3.Row,
     steps: list[dict[str, Any]],
     instruction: str | None = None,
+    work_report: dict[str, Any] | None = None,
 ) -> str:
     sections = [
         f"Resume Agent47 run {run['id']}.",
@@ -39,10 +46,16 @@ def build_resume_task(
         "",
         "Prior run context:",
         compact_run_context(steps),
-        "",
-        "Continue from this state. Respect any prior denied permissions, failed tools, changed files, "
-        "and verification outcomes. Re-inspect files or git state before editing if the workspace may have changed.",
     ]
+    if work_report:
+        sections.extend(["", "Prior work report:", str(work_report["body"])])
+    sections.extend(
+        [
+            "",
+            "Continue from this state. Respect any prior denied permissions, failed tools, changed files, "
+            "and verification outcomes. Re-inspect files or git state before editing if the workspace may have changed.",
+        ]
+    )
     if instruction:
         sections.extend(["", "New user instruction for this resume:", instruction])
     return "\n".join(sections)

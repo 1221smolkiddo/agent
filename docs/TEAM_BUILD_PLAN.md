@@ -107,7 +107,7 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 
 - [~] Issue 1: Mutation Tracking. Owner: Agent47
 - [x] Issue 2: Final Answer Verification Gate. Owner: Agent47
-- [~] Issue 3: Final Work Report. Owner: Agent47
+- [x] Issue 3: Final Work Report. Owner: Agent47
 
 ### Phase 2: Patch-Based Editing
 
@@ -278,7 +278,7 @@ Acceptance criteria:
 - Report is stored in SQLite.
 - User can understand exactly what happened.
 
-Status: **Baseline UI done**. CLI and `agent47` now show a structured work report for non-trivial runs with current task, current step, files being modified, progress, commands executed, validation status, modified files, change summary, changed-line diff review, and final outcome. Rich persisted final-report records are still needed to fully close this issue.
+Status: **Done for baseline**. CLI and `agent47` now show a structured work report for non-trivial runs with current task, current step, files being modified, progress, commands executed, validation status, modified files, change summary, changed-line diff review, and final outcome. Reports are persisted in SQLite, shown in history detail, and included in resume context.
 
 ## Phase 2: Patch-Based Editing
 

@@ -279,7 +279,14 @@ def print_history_detail(settings: Settings, value: str) -> None:
     if run_row is None:
         print_panel("History", f"No run found with id {run_id}.")
         return
-    print_panel("History", format_run_detail(run_row, storage.run_steps_payloads(run_id)))
+    print_panel(
+        "History",
+        format_run_detail(
+            run_row,
+            storage.run_steps_payloads(run_id),
+            storage.get_work_report(run_id),
+        ),
+    )
 
 
 def run_resume_command(
@@ -308,7 +315,12 @@ def run_resume_command(
         print_panel("Resume", f"No run found with id {run_id}.")
         return
 
-    task = build_resume_task(run_row, storage.run_steps_payloads(run_id), instruction.strip() or None)
+    task = build_resume_task(
+        run_row,
+        storage.run_steps_payloads(run_id),
+        instruction.strip() or None,
+        storage.get_work_report(run_id),
+    )
     agent = create_agent(
         settings=settings,
         cwd=cwd,

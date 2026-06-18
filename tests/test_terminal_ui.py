@@ -13,9 +13,8 @@ from code_agent.terminal_ui import (
     format_plan_panel,
     format_prompt_footer,
     format_prompt_header,
-    format_work_report_body,
-    should_show_work_report,
 )
+from code_agent.work_report import format_work_report_body, should_show_work_report
 
 
 def test_format_panel_makes_labeled_box() -> None:
