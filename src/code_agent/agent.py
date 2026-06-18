@@ -30,6 +30,7 @@ class AgentRunResult:
     command_records: list[dict[str, str | bool]] = field(default_factory=list)
     verification_results: list[dict[str, str | bool]] = field(default_factory=list)
     context_records: list[dict[str, Any]] = field(default_factory=list)
+    model_usage_records: list[dict[str, Any]] = field(default_factory=list)
     plan_updates: list[dict[str, Any]] = field(default_factory=list)
     failed_actions: list[dict[str, Any]] = field(default_factory=list)
     denied_actions: list[dict[str, Any]] = field(default_factory=list)
@@ -72,6 +73,7 @@ class CodingAgent:
         verification_results: list[dict[str, str | bool]] = []
         command_records: list[dict[str, str | bool]] = []
         context_records: list[dict[str, Any]] = []
+        model_usage_records: list[dict[str, Any]] = []
         plan_updates: list[dict[str, Any]] = []
         mutation_records: list[dict[str, Any]] = []
         failed_actions: list[dict[str, Any]] = []
@@ -83,14 +85,45 @@ class CodingAgent:
 
         for step in range(1, self.max_steps + 1):
             self._report_thinking(step)
-            response = self._complete_model(messages, step)
+            try:
+                response = self._complete_model(run_id, messages, step, model_usage_records)
+            except Exception as exc:
+                payload = self._failure_payload(
+                    step=step,
+                    kind="model_failure",
+                    output=f"{type(exc).__name__}: {exc}",
+                    consecutive_failures=consecutive_failures + 1,
+                )
+                self.storage.add_step(run_id, "tool", payload)
+                failed_actions.append(payload)
+                self._report_recovery("model failed; stopping run")
+                return self._finalize_run(
+                    AgentRunResult(
+                        message=f"Stopped after a model failure: {payload['output']}",
+                        run_id=run_id,
+                        task=task,
+                        command_records=command_records,
+                        verification_results=verification_results,
+                        context_records=context_records,
+                        model_usage_records=model_usage_records,
+                        plan_updates=plan_updates,
+                        failed_actions=failed_actions,
+                        denied_actions=denied_actions,
+                        blocked=True,
+                    )
+                )
             action, parse_error = self._parse_action(response)
             if parse_error:
                 if not workspace_task and self._can_use_raw_final(response):
                     self.storage.add_step(run_id, "assistant", {"raw": response})
                     self._report_done()
                     return self._finalize_run(
-                        AgentRunResult(message=response.strip(), run_id=run_id, task=task)
+                        AgentRunResult(
+                            message=response.strip(),
+                            run_id=run_id,
+                            task=task,
+                            model_usage_records=model_usage_records,
+                        )
                     )
                 consecutive_failures += 1
                 payload = self._failure_payload(
@@ -109,6 +142,7 @@ class CodingAgent:
                             message=self._failure_summary(consecutive_failures, parse_error),
                             run_id=run_id,
                             task=task,
+                            model_usage_records=model_usage_records,
                             failed_actions=failed_actions,
                             blocked=True,
                         )
@@ -143,6 +177,7 @@ class CodingAgent:
                             message=self._failure_summary(consecutive_failures, payload["output"]),
                             run_id=run_id,
                             task=task,
+                            model_usage_records=model_usage_records,
                             failed_actions=failed_actions,
                             blocked=True,
                         )
@@ -198,6 +233,7 @@ class CodingAgent:
                                 command_records=command_records,
                                 verification_results=verification_results,
                                 context_records=context_records,
+                                model_usage_records=model_usage_records,
                                 plan_updates=plan_updates,
                                 failed_actions=failed_actions,
                                 denied_actions=denied_actions,
@@ -236,6 +272,7 @@ class CodingAgent:
                         command_records=command_records,
                         verification_results=verification_results,
                         context_records=context_records,
+                        model_usage_records=model_usage_records,
                         plan_updates=plan_updates,
                         failed_actions=failed_actions,
                         denied_actions=denied_actions,
@@ -328,6 +365,7 @@ class CodingAgent:
                         command_records=command_records,
                         verification_results=verification_results,
                         context_records=context_records,
+                        model_usage_records=model_usage_records,
                         plan_updates=plan_updates,
                         failed_actions=failed_actions,
                         denied_actions=denied_actions,
@@ -349,6 +387,7 @@ class CodingAgent:
                 command_records=command_records,
                 verification_results=verification_results,
                 context_records=context_records,
+                model_usage_records=model_usage_records,
                 plan_updates=plan_updates,
                 failed_actions=failed_actions,
                 denied_actions=denied_actions,
@@ -386,18 +425,40 @@ class CodingAgent:
                 return data
         raise ValueError("No JSON object found in model response.")
 
-    def _complete_model(self, messages: list[ChatMessage], step: int) -> str:
+    def _complete_model(
+        self,
+        run_id: int,
+        messages: list[ChatMessage],
+        step: int,
+        model_usage_records: list[dict[str, Any]],
+    ) -> str:
         stream_complete = getattr(self.model_client, "stream_complete", None)
-        if not self.stream_model or stream_complete is None:
-            return self.model_client.complete(messages)
-
-        if self.reporter:
-            self.reporter.model_stream_start(step)
+        stream_started = False
         try:
+            if not self.stream_model or stream_complete is None:
+                return self.model_client.complete(messages)
+
+            if self.reporter:
+                self.reporter.model_stream_start(step)
+                stream_started = True
             return stream_complete(messages, self._report_model_stream_chunk)
         finally:
-            if self.reporter:
+            self._drain_model_usage(run_id, model_usage_records)
+            if self.reporter and stream_started:
                 self.reporter.model_stream_end()
+
+    def _drain_model_usage(
+        self,
+        run_id: int,
+        model_usage_records: list[dict[str, Any]],
+    ) -> None:
+        drain = getattr(self.model_client, "drain_usage_records", None)
+        if drain is None:
+            return
+        for record in drain():
+            payload = record.as_dict()
+            model_usage_records.append(payload)
+            self.storage.add_model_usage(run_id, payload)
 
     def _report_model_stream_chunk(self, chunk: str) -> None:
         if self.reporter:

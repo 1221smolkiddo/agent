@@ -78,6 +78,7 @@ def test_result_payload_contains_frontend_fields() -> None:
         task="inspect",
         changed_paths=["README.md"],
         context_records=[{"action": "repo_map", "ok": True}],
+        model_usage_records=[{"model": "primary", "ok": True, "total_tokens": 12}],
     )
 
     payload = result_payload(result)
@@ -86,6 +87,7 @@ def test_result_payload_contains_frontend_fields() -> None:
     assert payload["message"] == "done"
     assert payload["changed_paths"] == ["README.md"]
     assert payload["context_records"] == [{"action": "repo_map", "ok": True}]
+    assert payload["model_usage_records"] == [{"model": "primary", "ok": True, "total_tokens": 12}]
     assert payload["failed_actions"] == []
 
 

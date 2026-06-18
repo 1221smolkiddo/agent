@@ -27,6 +27,51 @@ class AgentStorage:
                 (run_id, role, json.dumps(payload)),
             )
 
+    def add_model_usage(self, run_id: int, payload: dict[str, Any]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                insert into model_usage (
+                    run_id, provider, model, ok, prompt_tokens, completion_tokens,
+                    total_tokens, estimated_cost_usd, fallback_from, error, payload
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    payload.get("provider"),
+                    payload.get("model"),
+                    1 if payload.get("ok") else 0,
+                    payload.get("prompt_tokens"),
+                    payload.get("completion_tokens"),
+                    payload.get("total_tokens"),
+                    payload.get("estimated_cost_usd"),
+                    payload.get("fallback_from"),
+                    payload.get("error"),
+                    json.dumps(payload),
+                ),
+            )
+
+    def model_usage(self, run_id: int) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                select id, created_at, payload
+                from model_usage
+                where run_id = ?
+                order by id
+                """,
+                (run_id,),
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "created_at": row["created_at"],
+                "payload": json.loads(row["payload"]),
+            }
+            for row in rows
+        ]
+
     def save_work_report(
         self,
         run_id: int,
@@ -149,5 +194,36 @@ class AgentStorage:
                     body text not null,
                     payload text not null
                 );
+
+                create table if not exists model_usage (
+                    id integer primary key autoincrement,
+                    run_id integer not null references runs(id),
+                    created_at text not null default current_timestamp,
+                    provider text,
+                    model text not null,
+                    ok integer not null,
+                    prompt_tokens integer,
+                    completion_tokens integer,
+                    total_tokens integer,
+                    estimated_cost_usd real,
+                    fallback_from text,
+                    error text,
+                    payload text not null
+                );
                 """
             )
+            self._ensure_column(conn, "model_usage", "estimated_cost_usd", "real")
+
+    @staticmethod
+    def _ensure_column(
+        conn: sqlite3.Connection,
+        table: str,
+        column: str,
+        column_type: str,
+    ) -> None:
+        columns = {
+            row["name"]
+            for row in conn.execute(f"pragma table_info({table})").fetchall()
+        }
+        if column not in columns:
+            conn.execute(f"alter table {table} add column {column} {column_type}")

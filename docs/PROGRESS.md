@@ -6,9 +6,9 @@ This document tracks how far the coding agent has come and what collaborators ca
 
 **Stage:** Basic single-model CLI agent with Agent47 engineering protocol
 
-**Approximate progress toward an industry-standard local AI coding agent:** 46%
+**Approximate progress toward an industry-standard local AI coding agent:** 49%
 
-The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, durable plan checkpoints with persisted structured work reports, non-workspace intent routing, general web search with provider fallback, structured patch application, approved git-diff awareness, lightweight repo mapping and task-aware relevance ranking, deterministic local evals for baseline safety regressions, a versioned newline-delimited JSON protocol for future frontends, verification command detection/suggestion/automatic execution/outcome summaries, mutation-attempt tracking for truthful final answers, clearer interactive terminal panels with short transcript context and structured session state, run history detail views, resumable runs, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
+The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, durable plan checkpoints with persisted structured work reports, non-workspace intent routing, general web search with provider fallback, structured patch application, approved git-diff awareness, lightweight repo mapping and task-aware relevance ranking, deterministic local evals for baseline safety regressions, a versioned newline-delimited JSON protocol for future frontends, model fallback with usage/cost tracking, verification command detection/suggestion/automatic execution/outcome summaries, mutation-attempt tracking for truthful final answers, clearer interactive terminal panels with short transcript context and structured session state, run history detail views, resumable runs, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
 
 This file should be updated whenever a meaningful Agent47 capability is added. Keep the enabled commands/actions current, move completed items out of "What Is Left" when they land, and update the percentage only when the agent gains real product capability rather than documentation alone.
 
@@ -95,6 +95,9 @@ There are currently **17 model-requestable actions**:
 | Model API: OpenRouter via OpenAI-compatible chat completions | Enabled |
 | Model profiles: default/planner/coder/reviewer/fast | Enabled |
 | Provider config boundary for OpenAI-compatible clients | Enabled |
+| Model fallback: `AGENT_FALLBACK_MODELS` | Enabled |
+| Model token usage tracking | Enabled |
+| Optional model cost estimation | Enabled |
 | Model output cap: configurable `AGENT_MAX_TOKENS` | Enabled |
 | Config: python-dotenv + pydantic-settings | Enabled |
 | File ops: pathlib | Enabled |
@@ -155,8 +158,8 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 | 4 | Safer shell policy | Separates read-only, test/build, install/network, and destructive commands with stronger approvals | Baseline done |
 | 5 | Durable sessions | Enables pause/resume, plan state, checkpoints, and long task recovery | Partial, with resumable runs, visible durable plan checkpoints, and persisted structured work reports |
 | 6 | Streaming UX | Makes CLI and interactive mode feel alive during model reasoning and tool execution | Baseline done |
-| 7 | Multi-model/provider layer | Supports planner/coder/reviewer profiles, fallbacks, and cost-aware routing | Partial, with baseline profiles and provider config |
-| 8 | Observability | Captures traces, timings, token use, failures, and debug bundles for reliability work | Partial |
+| 7 | Multi-model/provider layer | Supports planner/coder/reviewer profiles, fallbacks, and cost-aware routing | Baseline done for profiles, fallback, and usage/cost tracking |
+| 8 | Observability | Captures traces, timings, token use, failures, and debug bundles for reliability work | Partial, with model usage and work reports |
 | 9 | Collaboration workflow | Adds review mode, branch/commit/PR helpers, issue context, changelogs, and release notes | Partial |
 | 10 | Editor integration | Brings Agent47 into VS Code with file context, diffs, approvals, and terminal output | Protocol baseline done |
 | 11 | Evaluation harness | Measures solve rate, edit correctness, verification rate, and regressions on fixture repos | Baseline deterministic safety evals done |
@@ -164,11 +167,11 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 
 ## Next Recommended Build Order
 
-1. Add model fallback and usage/cost tracking.
-2. Add Mac/Linux install hardening.
-3. Expand evals into fixture-based coding tasks.
-4. Add richer planner fields for blockers, checks, and file ownership.
-5. Add richer JSON approval response handling for editor frontends.
+1. Add Mac/Linux install hardening.
+2. Expand evals into fixture-based coding tasks.
+3. Add richer planner fields for blockers, checks, and file ownership.
+4. Add richer JSON approval response handling for editor frontends.
+5. Add structured patch preview/apply metadata for multi-file changes.
 
 ## Current Safety Notes
 
@@ -191,6 +194,8 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 - Interactive mode starts with a centered `A G E N T 4 7` banner and uses optional terminal colors for panels, prompts, and status labels.
 - Streaming-capable model clients now feed compact `STREAMING` progress markers in CLI and `agent47`, with `/stream [off]`, `--stream/--no-stream`, and `AGENT_STREAM` controls.
 - Model profiles route runs through named `default`, `planner`, `coder`, `reviewer`, or `fast` settings, with per-profile model overrides and explicit `--model` precedence.
+- `AGENT_FALLBACK_MODELS` tries fallback models in order after provider failures, and all-model failures become blocked run results instead of process crashes.
+- Model attempts, token usage, fallback transitions, and optional cost estimates are stored in SQLite and summarized in work reports and JSON results.
 - `code-agent history show <run-id>` and `/history-show <run-id>` expose saved step details for auditability.
 - `code-agent resume <run-id>` and `/resume <run-id>` continue from compact saved run context while preserving a new run record.
 - `update_plan` stores durable plan steps in run history and resume context, with validation that only one step is `in_progress`.

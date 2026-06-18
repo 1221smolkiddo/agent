@@ -11,6 +11,9 @@ This document summarizes the current state of Agent47 for collaborators.
 - Default model set to `qwen/qwen3-coder`.
 - Model profiles for `default`, `planner`, `coder`, `reviewer`, and `fast` runs.
 - Optional per-profile model overrides with explicit `--model` precedence.
+- Configurable model fallback list with `AGENT_FALLBACK_MODELS`.
+- Per-run model attempt and token usage tracking in SQLite.
+- Optional configurable model cost estimation from token usage.
 - Provider configuration boundary for OpenAI-compatible clients.
 - Non-workspace question routing so general questions can be answered without inspecting project files.
 - General web search for current external information, with provider fallback.
@@ -57,7 +60,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - Durable `update_plan` checkpoints with `pending`, `in_progress`, `completed`, and `blocked` step statuses.
 - Plan updates are saved in run history and included in resume context.
 - CLI and `agent47` render structured work reports before the final response for non-trivial runs.
-- Work reports include current task, current step, files being modified, progress, context analysis, commands executed, validation status, modified files, change summary, changed-line diff review, and final outcome.
+- Work reports include current task, current step, files being modified, progress, context analysis, model usage, commands executed, validation status, modified files, change summary, changed-line diff review, and final outcome.
 - Work reports are stored in SQLite, surfaced in history details, and included in resume context.
 - Automatic recovery loop when a tool fails.
 - More tolerant action parsing for valid JSON actions wrapped in prose or code fences.
@@ -151,6 +154,7 @@ Inside `agent47`:
 - Lightweight repo index and context ranking.
 - Local deterministic eval harness.
 - Versioned NDJSON protocol for frontend integrations.
+- Model fallback and usage/cost tracking.
 - Non-workspace routing guard.
 - General web-search provider fallback.
 - Transcript-aware interactive summaries.
@@ -169,5 +173,5 @@ Inside `agent47`:
 - Deeper repo intelligence with symbol/dependency graphs on top of the baseline repo index.
 - Interactive JSON approval response handling for editor frontends.
 - Richer planner fields for files touched, blockers, checks, and ownership.
-- Additional providers beyond OpenAI-compatible APIs, model fallback, and token/cost tracking.
+- Additional concrete providers beyond OpenAI-compatible APIs.
 - VS Code extension frontend.

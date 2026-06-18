@@ -6,7 +6,7 @@ from collections.abc import Callable
 from .agent import CodingAgent
 from .config import Settings
 from .model_profiles import resolve_model_profile
-from .models import ModelProviderConfig, create_openai_compatible_client
+from .models import ModelProviderConfig, create_fallback_client
 from .storage import AgentStorage
 from .status import StatusReporter
 from .tools import ToolRegistry
@@ -38,8 +38,10 @@ def create_agent(
         api_key=settings.model_api_key,
         base_url=settings.model_base_url,
         default_headers=settings.model_headers,
+        input_cost_per_million=settings.agent_input_cost_per_million,
+        output_cost_per_million=settings.agent_output_cost_per_million,
     )
-    client = create_openai_compatible_client(provider, selected_profile)
+    client = create_fallback_client(provider, selected_profile, settings.fallback_model_list)
     storage = AgentStorage(settings.agent_db_path)
     return CodingAgent(
         cwd=workspace,

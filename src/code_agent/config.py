@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     agent_coder_model: str | None = None
     agent_reviewer_model: str | None = None
     agent_fast_model: str | None = None
+    agent_fallback_models: str = ""
+    agent_input_cost_per_million: float | None = None
+    agent_output_cost_per_million: float | None = None
     agent_max_tokens: int = 4096
     agent_max_failures: int = 3
     agent_db_path: Path = Path(".code-agent/agent.db")
@@ -52,3 +55,7 @@ class Settings(BaseSettings):
         if self.openrouter_app_name:
             headers["X-Title"] = self.openrouter_app_name
         return headers
+
+    @property
+    def fallback_model_list(self) -> list[str]:
+        return [item.strip() for item in self.agent_fallback_models.split(",") if item.strip()]

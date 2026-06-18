@@ -127,6 +127,14 @@ def test_format_work_report_body_uses_requested_sections_and_changed_diff_lines(
             {"action": "repo_map", "ok": True, "status": "ok"},
             {"action": "rank_context", "task": "update report UI", "ok": True, "status": "ok"},
         ],
+        model_usage_records=[
+            {
+                "model": "primary-model",
+                "ok": True,
+                "total_tokens": 42,
+                "estimated_cost_usd": 0.0012,
+            }
+        ],
     )
 
     body = format_work_report_body(result)
@@ -135,6 +143,7 @@ def test_format_work_report_body_uses_requested_sections_and_changed_diff_lines(
     assert "Current Step:\n  Update report UI" in body
     assert "Files Being Modified:\n  docs/PROGRESS.md" in body
     assert "Context Analysis:\n  - repo_map: ok\n  - rank_context: ok for `update report UI`" in body
+    assert "Model Usage:\n  - primary-model: ok, tokens=42, cost=0.0012" in body
     assert "Commands Executed:\n  - `uv run pytest`: passed" in body
     assert "Validation Status:\n  - test `uv run pytest`: passed" in body
     assert "Change Summary:\n  - edit_file docs/PROGRESS.md: ok" in body

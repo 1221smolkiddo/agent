@@ -14,6 +14,7 @@ def should_show_work_report(result: AgentRunResult) -> bool:
         or result.command_records
         or result.verification_results
         or result.context_records
+        or result.model_usage_records
         or result.failed_actions
         or result.denied_actions
         or result.blocked
@@ -28,6 +29,7 @@ def build_work_report_payload(result: AgentRunResult) -> dict[str, Any]:
         "files_being_modified": result.changed_paths,
         "progress": _progress_summary(result),
         "context_analysis": _context_items(result),
+        "model_usage": _model_usage_items(result),
         "commands_executed": _command_items(result),
         "validation_status": _validation_items(result),
         "modified_files": result.changed_paths,
@@ -50,6 +52,7 @@ def format_work_report_body(result: AgentRunResult) -> str:
         ("Files Being Modified", _list_or_none(result.changed_paths)),
         ("Progress", _progress_summary(result)),
         ("Context Analysis", _context_summary(result)),
+        ("Model Usage", _model_usage_summary(result)),
         ("Commands Executed", _commands_summary(result)),
         ("Validation Status", _validation_summary(result)),
         ("Modified Files", _list_or_none(result.changed_paths)),
@@ -132,6 +135,38 @@ def _command_items(result: AgentRunResult) -> list[dict[str, str]]:
         status = str(item.get("status", "passed" if item.get("ok") else "failed"))
         commands.append({"command": command, "status": status})
     return commands
+
+
+def _model_usage_summary(result: AgentRunResult) -> str:
+    items = _model_usage_items(result)
+    return "\n".join(
+        f"- {item['model']}: {item['status']}, tokens={item['total_tokens']}, "
+        f"cost={item['estimated_cost_usd']}{item['fallback']}"
+        for item in items
+    ) or "<none>"
+
+
+def _model_usage_items(result: AgentRunResult) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    for record in result.model_usage_records:
+        total_tokens = record.get("total_tokens")
+        estimated_cost = record.get("estimated_cost_usd")
+        fallback_from = str(record.get("fallback_from") or "")
+        fallback = f", fallback_from={fallback_from}" if fallback_from else ""
+        error = str(record.get("error") or "")
+        status = "ok" if record.get("ok") is True else f"failed: {_single_line(error, max_chars=120)}"
+        items.append(
+            {
+                "model": str(record.get("model", "<unknown>")),
+                "status": status,
+                "total_tokens": str(total_tokens if total_tokens is not None else "<unknown>"),
+                "estimated_cost_usd": str(
+                    estimated_cost if estimated_cost is not None else "<not configured>"
+                ),
+                "fallback": fallback,
+            }
+        )
+    return items
 
 
 def _validation_summary(result: AgentRunResult) -> str:

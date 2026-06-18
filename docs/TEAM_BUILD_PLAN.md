@@ -101,6 +101,7 @@ These are already built and should be maintained while new work continues.
 - [x] Lightweight repo map and task-aware relevance ranking.
 - [x] Local deterministic eval harness with baseline safety regressions.
 - [x] Baseline newline-delimited JSON protocol for future frontends.
+- [x] Model fallback and usage/cost tracking baseline.
 
 ## Team Task Board
 
@@ -162,8 +163,8 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 
 - [~] Issue 29: Provider Abstraction. Owner: Agent47
 - [x] Issue 30: Model Profiles. Owner: Agent47
-- [ ] Issue 31: Cost And Token Tracking. Owner:
-- [ ] Issue 32: Model Fallback. Owner:
+- [x] Issue 31: Cost And Token Tracking. Owner: Agent47
+- [x] Issue 32: Model Fallback. Owner: Agent47
 
 ### Phase 10: Storage And History
 
@@ -884,6 +885,8 @@ Acceptance criteria:
 
 - User can see model usage per run.
 
+Status: **Done for baseline**. Agent47 records per-run model attempts in SQLite, includes model usage in structured work reports and JSON results, tracks prompt/completion/total tokens when the provider returns usage, and estimates cost when `AGENT_INPUT_COST_PER_MILLION` and `AGENT_OUTPUT_COST_PER_MILLION` are configured.
+
 #### 32. Model Fallback
 
 Owner suggestion: Agent Core Owner
@@ -899,6 +902,8 @@ Tasks:
 Acceptance criteria:
 
 - Recover from rate limits or model unavailable errors.
+
+Status: **Done for baseline**. Agent47 supports comma-separated `AGENT_FALLBACK_MODELS`, tries configured models in order after provider failures, records failed and successful attempts, and converts all-model failures into auditable blocked run results instead of crashing the process.
 
 ## Phase 10: Storage And History
 

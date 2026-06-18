@@ -121,10 +121,12 @@ agent47: /exit
 - `AGENT_MODEL` is optional. The CLI also accepts `--model`.
 - `AGENT_PROFILE` is optional and defaults to `default`. Supported profiles are `default`, `planner`, `coder`, `reviewer`, and `fast`.
 - `AGENT_PLANNER_MODEL`, `AGENT_CODER_MODEL`, `AGENT_REVIEWER_MODEL`, and `AGENT_FAST_MODEL` are optional per-profile model overrides.
+- `AGENT_FALLBACK_MODELS` is optional. Use a comma-separated list of models to try if the primary model/provider call fails.
 - `OPENROUTER_BASE_URL` is optional and defaults to `https://openrouter.ai/api/v1`.
 - `OPENROUTER_SITE_URL` and `OPENROUTER_APP_NAME` are optional OpenRouter metadata headers.
 - `AGENT_MAX_TOKENS` is optional and defaults to `4096`.
 - `AGENT_MAX_FAILURES` is optional and defaults to `3`.
+- `AGENT_INPUT_COST_PER_MILLION` and `AGENT_OUTPUT_COST_PER_MILLION` are optional. When both are set, Agent47 estimates per-run model cost from provider token usage.
 - `AGENT_DB_PATH` is optional and defaults to `.code-agent/agent.db`.
 - `AGENT_STREAM` is optional and defaults to `true`. It enables compact model streaming progress without printing raw JSON action tokens.
 - `OPENAI_API_KEY` and `OPENAI_BASE_URL` are still accepted as a temporary fallback.
@@ -185,7 +187,7 @@ The CLI prints status lines while the agent works:
 - Invalid model action responses are retried automatically, including common cases where a valid JSON action is wrapped in prose or a code fence.
 - `DONE` when the agent reaches a final answer.
 
-After non-trivial runs, the CLI and interactive shell render a structured work report before the final response. It shows current task, current step, files being modified, progress, context analysis, commands executed, validation status, modified files, change summary, changed-line diff review, and final outcome.
+After non-trivial runs, the CLI and interactive shell render a structured work report before the final response. It shows current task, current step, files being modified, progress, context analysis, model usage, commands executed, validation status, modified files, change summary, changed-line diff review, and final outcome.
 
 ## Stopping The Agent
 
