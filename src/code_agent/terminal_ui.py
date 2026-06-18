@@ -4,8 +4,12 @@ import os
 import sys
 import textwrap
 from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 import typer
+
+if TYPE_CHECKING:
+    from .agent import AgentRunResult
 
 
 PANEL_WIDTH = 78
@@ -21,6 +25,7 @@ PANEL_COLORS = {
     "Status": typer.colors.CYAN,
     "History": typer.colors.MAGENTA,
     "Plan": typer.colors.BLUE,
+    "Work Report": typer.colors.BLUE,
     "Resume": typer.colors.MAGENTA,
     "Mode": typer.colors.YELLOW,
     "Workspace": typer.colors.CYAN,
@@ -100,6 +105,50 @@ def print_plan_panel(plan_updates: list[dict[str, object]], *, width: int = PANE
     typer.echo(colorize_panel(format_plan_panel(plan_updates, width=width), "Plan"))
 
 
+def print_work_report_panel(result: AgentRunResult, *, width: int = PANEL_WIDTH) -> None:
+    if not should_show_work_report(result):
+        return
+    typer.echo(colorize_panel(format_work_report_panel(result, width=width), "Work Report"))
+
+
+def should_show_work_report(result: AgentRunResult) -> bool:
+    return bool(
+        result.plan_updates
+        or result.changed_paths
+        or result.mutation_records
+        or result.command_records
+        or result.verification_results
+        or result.failed_actions
+        or result.denied_actions
+        or result.blocked
+    )
+
+
+def format_work_report_panel(result: AgentRunResult, *, width: int = PANEL_WIDTH) -> str:
+    return format_panel("Work Report", format_work_report_body(result), width=width)
+
+
+def format_work_report_body(result: AgentRunResult) -> str:
+    sections = [
+        ("Current Task", _single_line(result.task) or "<not recorded>"),
+        ("Current Step", _current_step(result.plan_updates)),
+        ("Files Being Modified", _list_or_none(result.changed_paths)),
+        ("Progress", _progress_summary(result)),
+        ("Commands Executed", _commands_summary(result)),
+        ("Validation Status", _validation_summary(result)),
+        ("Modified Files", _list_or_none(result.changed_paths)),
+        ("Change Summary", _change_summary(result)),
+        ("Diff Review", _diff_review(result)),
+        ("Final Outcome", _single_line(result.message, max_chars=900)),
+    ]
+    lines: list[str] = []
+    for title, body in sections:
+        lines.append(f"{title}:")
+        lines.extend(f"  {line}" for line in body.splitlines())
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
 def format_plan_body(plan_updates: list[dict[str, object]]) -> str:
     if not plan_updates:
         return ""
@@ -131,6 +180,108 @@ def _plan_status_marker(status: str) -> str:
         "completed": "[x]",
         "blocked": "[!]",
     }.get(status, "[ ]")
+
+
+def _current_step(plan_updates: list[dict[str, object]]) -> str:
+    if not plan_updates:
+        return "<none>"
+    raw_steps = plan_updates[-1].get("steps", [])
+    if not isinstance(raw_steps, list):
+        return "<none>"
+    for item in raw_steps:
+        if isinstance(item, dict) and item.get("status") == "in_progress":
+            return str(item.get("step", "<unnamed step>"))
+    for item in reversed(raw_steps):
+        if isinstance(item, dict) and item.get("status") in {"blocked", "completed"}:
+            return str(item.get("step", "<unnamed step>"))
+    return "<none>"
+
+
+def _progress_summary(result: AgentRunResult) -> str:
+    if not result.plan_updates:
+        return "No durable plan was recorded."
+    raw_steps = result.plan_updates[-1].get("steps", [])
+    if not isinstance(raw_steps, list) or not raw_steps:
+        return "Plan updated."
+    counts = {"completed": 0, "in_progress": 0, "blocked": 0, "pending": 0}
+    for item in raw_steps:
+        if isinstance(item, dict):
+            status = str(item.get("status", "pending"))
+            if status in counts:
+                counts[status] += 1
+    return (
+        f"{counts['completed']} completed, {counts['in_progress']} current, "
+        f"{counts['pending']} pending, {counts['blocked']} blocked."
+    )
+
+
+def _commands_summary(result: AgentRunResult) -> str:
+    commands: list[str] = []
+    seen: set[str] = set()
+    for item in [*result.command_records, *result.verification_results]:
+        command = str(item.get("command", "")).strip()
+        if not command or command in seen:
+            continue
+        seen.add(command)
+        status = item.get("status", "passed" if item.get("ok") else "failed")
+        commands.append(f"- `{command}`: {status}")
+    return "\n".join(commands) if commands else "<none>"
+
+
+def _validation_summary(result: AgentRunResult) -> str:
+    if not result.verification_results:
+        return "Not run."
+    lines = []
+    for item in result.verification_results:
+        purpose = item.get("purpose", "check")
+        command = item.get("command", "<unknown>")
+        status = item.get("status", "passed" if item.get("ok") else "failed")
+        lines.append(f"- {purpose} `{command}`: {status}")
+    return "\n".join(lines)
+
+
+def _change_summary(result: AgentRunResult) -> str:
+    if not result.mutation_records:
+        return "<none>"
+    lines = []
+    for record in result.mutation_records:
+        status = "ok" if record.get("ok") is True else "failed"
+        lines.append(f"- {record.get('action', 'change')} {record.get('path', '<unknown>')}: {status}")
+    return "\n".join(lines)
+
+
+def _diff_review(result: AgentRunResult, max_lines: int = 80) -> str:
+    lines: list[str] = []
+    for record in result.mutation_records:
+        output = str(record.get("output", ""))
+        for line in output.splitlines():
+            if _is_diff_review_line(line):
+                lines.append(line)
+            if len(lines) >= max_lines:
+                lines.append(f"<diff review truncated after {max_lines} changed lines>")
+                return "\n".join(lines)
+    return "\n".join(lines) if lines else "<none>"
+
+
+def _is_diff_review_line(line: str) -> bool:
+    return (
+        line.startswith("@@")
+        or line.startswith("--- ")
+        or line.startswith("+++ ")
+        or (line.startswith("+") and not line.startswith("+++"))
+        or (line.startswith("-") and not line.startswith("---"))
+    )
+
+
+def _list_or_none(items: list[str]) -> str:
+    return ", ".join(items) if items else "<none>"
+
+
+def _single_line(value: str, max_chars: int = 500) -> str:
+    rendered = " ".join(value.split())
+    if len(rendered) <= max_chars:
+        return rendered
+    return rendered[:max_chars].rstrip() + " <truncated>"
 
 
 def print_status_line(label: str, detail: str) -> None:

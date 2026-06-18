@@ -43,7 +43,8 @@ This document summarizes the current state of Agent47 for collaborators.
 - Resumable runs through `code-agent resume <run-id>` and `/resume <run-id>`.
 - Durable `update_plan` checkpoints with `pending`, `in_progress`, `completed`, and `blocked` step statuses.
 - Plan updates are saved in run history and included in resume context.
-- CLI and `agent47` render the latest plan snapshot before the final response when plan updates exist.
+- CLI and `agent47` render structured work reports before the final response for non-trivial runs.
+- Work reports include current task, current step, files being modified, progress, commands executed, validation status, modified files, change summary, changed-line diff review, and final outcome.
 - Automatic recovery loop when a tool fails.
 - More tolerant action parsing for valid JSON actions wrapped in prose or code fences.
 - Workspace tools are blocked for prompts that do not appear to be about the local project, files, code changes, tests, or commands.
@@ -146,6 +147,6 @@ Inside `agent47`:
 - Network policy controls.
 - Streaming model output.
 - Better repo context selection with a lightweight repo index, symbol/dependency graph, and context ranking.
-- Richer planner fields for files touched, blockers, checks, and final work reports.
+- Richer planner fields for files touched, blockers, checks, and ownership.
 - Multi-provider and multi-model support.
 - VS Code extension frontend.

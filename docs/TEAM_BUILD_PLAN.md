@@ -97,6 +97,7 @@ These are already built and should be maintained while new work continues.
 - [x] Baseline public-web network policy for web search.
 - [x] Durable `update_plan` action with persisted step status checkpoints.
 - [x] Visible plan snapshots in CLI and `agent47`.
+- [x] Structured work reports with changed-line diff review.
 
 ## Team Task Board
 
@@ -106,7 +107,7 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 
 - [~] Issue 1: Mutation Tracking. Owner: Agent47
 - [x] Issue 2: Final Answer Verification Gate. Owner: Agent47
-- [ ] Issue 3: Final Work Report. Owner:
+- [~] Issue 3: Final Work Report. Owner: Agent47
 
 ### Phase 2: Patch-Based Editing
 
@@ -276,6 +277,8 @@ Acceptance criteria:
 - Final report is shown for every non-trivial run.
 - Report is stored in SQLite.
 - User can understand exactly what happened.
+
+Status: **Baseline UI done**. CLI and `agent47` now show a structured work report for non-trivial runs with current task, current step, files being modified, progress, commands executed, validation status, modified files, change summary, changed-line diff review, and final outcome. Rich persisted final-report records are still needed to fully close this issue.
 
 ## Phase 2: Patch-Based Editing
 
@@ -690,7 +693,7 @@ Acceptance criteria:
 - Agent warns before editing dirty files.
 - Agent final report includes git status summary.
 
-Status: **Baseline done**. Agent47 now exposes an approved `inspect_git_diff` action that reports git status, staged and unstaged changed paths, and optional bounded diff hunks so the model can check dirty work before editing. Final-report integration is still part of the broader structured work report issue.
+Status: **Baseline done**. Agent47 now exposes an approved `inspect_git_diff` action that reports git status, staged and unstaged changed paths, and optional bounded diff hunks so the model can check dirty work before editing. Runtime work reports include changed-line diff review for mutations.
 
 ## Phase 7: Planner And Task State
 
@@ -906,7 +909,7 @@ Acceptance criteria:
 
 - Shows messages, tools, mutations, final report.
 
-Status: **Baseline done**. `code-agent history show <run-id>` and `/history-show <run-id>` show saved run metadata and summarized step payloads. Rich final-report rendering is still part of the structured final work report issue.
+Status: **Baseline done**. `code-agent history show <run-id>` and `/history-show <run-id>` show saved run metadata and summarized step payloads. Live CLI and `agent47` runs now include structured work reports; richer history report rendering can be added later.
 
 #### 34. History Search
 

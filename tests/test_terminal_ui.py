@@ -13,6 +13,8 @@ from code_agent.terminal_ui import (
     format_plan_panel,
     format_prompt_footer,
     format_prompt_header,
+    format_work_report_body,
+    should_show_work_report,
 )
 
 
@@ -86,6 +88,60 @@ def test_format_plan_panel_labels_plan() -> None:
     assert "| [>] 1. Render visible progress       |" in panel
 
 
+def test_format_work_report_body_uses_requested_sections_and_changed_diff_lines() -> None:
+    result = AgentRunResult(
+        message="Updated docs and verified tests.",
+        run_id=7,
+        task="update the docs",
+        changed_paths=["docs/PROGRESS.md"],
+        plan_updates=[
+            {
+                "steps": [
+                    {"step": "Inspect docs", "status": "completed"},
+                    {"step": "Update report UI", "status": "completed"},
+                ]
+            }
+        ],
+        mutation_records=[
+            {
+                "action": "edit_file",
+                "path": "docs/PROGRESS.md",
+                "ok": True,
+                "output": (
+                    "--- a/docs/PROGRESS.md\n"
+                    "+++ b/docs/PROGRESS.md\n"
+                    "@@ -1,4 +1,4 @@\n"
+                    " unchanged context\n"
+                    "-old line\n"
+                    "+new line"
+                ),
+            }
+        ],
+        command_records=[{"command": "uv run pytest", "ok": True, "status": "passed"}],
+        verification_results=[
+            {"purpose": "test", "command": "uv run pytest", "ok": True, "status": "passed"}
+        ],
+    )
+
+    body = format_work_report_body(result)
+
+    assert "Current Task:\n  update the docs" in body
+    assert "Current Step:\n  Update report UI" in body
+    assert "Files Being Modified:\n  docs/PROGRESS.md" in body
+    assert "Commands Executed:\n  - `uv run pytest`: passed" in body
+    assert "Validation Status:\n  - test `uv run pytest`: passed" in body
+    assert "Change Summary:\n  - edit_file docs/PROGRESS.md: ok" in body
+    assert "Diff Review:" in body
+    assert "  -old line" in body
+    assert "  +new line" in body
+    assert "unchanged context" not in body
+    assert "Final Outcome:\n  Updated docs and verified tests." in body
+
+
+def test_should_show_work_report_stays_quiet_for_simple_chat() -> None:
+    assert not should_show_work_report(AgentRunResult(message="hello", run_id=1))
+
+
 def test_format_prompt_border_parts() -> None:
     assert format_prompt_header("You", width=24) == "+ YOU -----------------+"
     assert format_prompt_footer(width=24) == "+----------------------+"
@@ -131,13 +187,15 @@ def test_interactive_turn_does_not_print_user_panel(monkeypatch) -> None:
     assert transcript == [("make a file", "done")]
 
 
-def test_interactive_turn_prints_plan_before_agent_message(monkeypatch) -> None:
+def test_interactive_turn_prints_work_report_before_agent_message(monkeypatch) -> None:
     printed: list[tuple[str, str]] = []
     monkeypatch.setattr(interactive, "print_panel", lambda title, body: printed.append((title, body)))
     monkeypatch.setattr(
         interactive,
-        "print_plan_panel",
-        lambda updates: printed.append(("Plan", format_plan_body(updates))) if updates else None,
+        "print_work_report_panel",
+        lambda result: printed.append(("Work Report", format_work_report_body(result)))
+        if should_show_work_report(result)
+        else None,
     )
 
     class Agent:
@@ -145,6 +203,16 @@ def test_interactive_turn_prints_plan_before_agent_message(monkeypatch) -> None:
             return AgentRunResult(
                 message="done",
                 run_id=1,
+                task="make progress visible",
+                changed_paths=["README.md"],
+                mutation_records=[
+                    {
+                        "action": "edit_file",
+                        "path": "README.md",
+                        "ok": True,
+                        "output": "--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-old\n+new",
+                    }
+                ],
                 plan_updates=[
                     {
                         "steps": [
@@ -157,8 +225,9 @@ def test_interactive_turn_prints_plan_before_agent_message(monkeypatch) -> None:
 
     transcript = run_interactive_turn("make progress visible", Agent(), [], SessionState())
 
-    assert printed == [
-        ("Plan", "[x] 1. Inspect docs\n[>] 2. Render plan"),
-        ("Agent47", "done"),
-    ]
+    assert printed[0][0] == "Work Report"
+    assert "Current Task:\n  make progress visible" in printed[0][1]
+    assert "Diff Review:" in printed[0][1]
+    assert "  +new" in printed[0][1]
+    assert printed[1] == ("Agent47", "done")
     assert transcript == [("make progress visible", "done")]

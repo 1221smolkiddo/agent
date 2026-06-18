@@ -77,7 +77,7 @@ Interactive mode:
 agent47
 ```
 
-Interactive mode separates prompts, responses, help, status, history, and plan snapshots into bordered terminal panels so user input and Agent47 output do not visually merge.
+Interactive mode separates prompts, responses, help, status, history, and structured work reports into bordered terminal panels so user input and Agent47 output do not visually merge.
 It starts with a centered `A G E N T 4 7` banner and uses a restrained terminal color theme when color output is supported. Set `NO_COLOR=1` to disable color, or `AGENT47_COLOR=always` to force it.
 It carries both a short in-memory transcript and structured session state into follow-up turns so Agent47 can continue recent work without relying on magic phrases.
 Interactive mode starts write-enabled so file creation and edits can actually happen after approval. Use `/dry-run` when you want inspect-only behavior.
@@ -164,7 +164,7 @@ The CLI prints status lines while the agent works:
 - Invalid model action responses are retried automatically, including common cases where a valid JSON action is wrapped in prose or a code fence.
 - `DONE` when the agent reaches a final answer.
 
-When Agent47 creates durable plan checkpoints, the CLI and interactive shell render the latest plan snapshot before the final response so completed, current, blocked, and pending steps are visible.
+After non-trivial runs, the CLI and interactive shell render a structured work report before the final response. It shows current task, current step, files being modified, progress, commands executed, validation status, modified files, change summary, changed-line diff review, and final outcome.
 
 ## Stopping The Agent
 

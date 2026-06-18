@@ -23,8 +23,10 @@ ACTION_ADAPTER = TypeAdapter(AgentAction)
 class AgentRunResult:
     message: str
     run_id: int
+    task: str = ""
     changed_paths: list[str] = field(default_factory=list)
     mutation_records: list[dict[str, Any]] = field(default_factory=list)
+    command_records: list[dict[str, str | bool]] = field(default_factory=list)
     verification_results: list[dict[str, str | bool]] = field(default_factory=list)
     plan_updates: list[dict[str, Any]] = field(default_factory=list)
     failed_actions: list[dict[str, Any]] = field(default_factory=list)
@@ -64,6 +66,7 @@ class CodingAgent:
         previous_failure_allows_final = False
         blocked_mutation_failure = False
         verification_results: list[dict[str, str | bool]] = []
+        command_records: list[dict[str, str | bool]] = []
         plan_updates: list[dict[str, Any]] = []
         mutation_records: list[dict[str, Any]] = []
         failed_actions: list[dict[str, Any]] = []
@@ -81,7 +84,7 @@ class CodingAgent:
                 if not workspace_task and self._can_use_raw_final(response):
                     self.storage.add_step(run_id, "assistant", {"raw": response})
                     self._report_done()
-                    return AgentRunResult(message=response.strip(), run_id=run_id)
+                    return AgentRunResult(message=response.strip(), run_id=run_id, task=task)
                 consecutive_failures += 1
                 payload = self._failure_payload(
                     step=step,
@@ -97,6 +100,7 @@ class CodingAgent:
                     return AgentRunResult(
                         message=self._failure_summary(consecutive_failures, parse_error),
                         run_id=run_id,
+                        task=task,
                         failed_actions=failed_actions,
                         blocked=True,
                     )
@@ -128,6 +132,7 @@ class CodingAgent:
                     return AgentRunResult(
                         message=self._failure_summary(consecutive_failures, payload["output"]),
                         run_id=run_id,
+                        task=task,
                         failed_actions=failed_actions,
                         blocked=True,
                     )
@@ -175,8 +180,10 @@ class CodingAgent:
                         return AgentRunResult(
                             message=self._failure_summary(consecutive_failures, payload["output"]),
                             run_id=run_id,
+                            task=task,
                             changed_paths=self._successful_mutation_paths(mutation_records),
                             mutation_records=mutation_records,
+                            command_records=command_records,
                             verification_results=verification_results,
                             plan_updates=plan_updates,
                             failed_actions=failed_actions,
@@ -208,8 +215,10 @@ class CodingAgent:
                 return AgentRunResult(
                     message=self._with_verification_summary(action.message, verification_results),
                     run_id=run_id,
+                    task=task,
                     changed_paths=self._successful_mutation_paths(mutation_records),
                     mutation_records=mutation_records,
+                    command_records=command_records,
                     verification_results=verification_results,
                     plan_updates=plan_updates,
                     failed_actions=failed_actions,
@@ -223,6 +232,9 @@ class CodingAgent:
             new_mutation_records = self._mutation_records_from_action(action, result)
             mutation_records.extend(new_mutation_records)
             verification_result = self._verification_result_from_action(action, result)
+            command_record = self._command_record_from_action(action, result)
+            if command_record:
+                command_records.append(command_record)
             if verification_result:
                 verification_results.append(verification_result)
             if result.ok:
@@ -289,8 +301,10 @@ class CodingAgent:
                 return AgentRunResult(
                     message=self._failure_summary(consecutive_failures, result.output),
                     run_id=run_id,
+                    task=task,
                     changed_paths=self._successful_mutation_paths(mutation_records),
                     mutation_records=mutation_records,
+                    command_records=command_records,
                     verification_results=verification_results,
                     plan_updates=plan_updates,
                     failed_actions=failed_actions,
@@ -305,8 +319,10 @@ class CodingAgent:
         return AgentRunResult(
             message=f"Stopped after {self.max_steps} steps. Increase --max-steps if the task needs more work.",
             run_id=run_id,
+            task=task,
             changed_paths=self._successful_mutation_paths(mutation_records),
             mutation_records=mutation_records,
+            command_records=command_records,
             verification_results=verification_results,
             plan_updates=plan_updates,
             failed_actions=failed_actions,
@@ -594,6 +610,20 @@ class CodingAgent:
         if any(token in normalized for token in [" build", "npm run build", "cargo build", "go build", "uv build"]):
             return "build"
         return None
+
+    @staticmethod
+    def _command_record_from_action(
+        action: AgentAction, result: ToolResult
+    ) -> dict[str, str | bool] | None:
+        if action.type != "run_shell":
+            return None
+        command = getattr(action, "command", "")
+        return {
+            "command": command,
+            "ok": result.ok,
+            "status": "passed" if result.ok else "failed",
+            "output": result.output,
+        }
 
     def _run_automatic_verification(
         self,
