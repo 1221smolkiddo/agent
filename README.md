@@ -28,6 +28,7 @@ Agent47 is being built toward the baseline expected from a serious AI coding age
 uv sync --extra dev
 cp .env.example .env
 uv run code-agent run "Inspect this project and suggest the next feature"
+uv run code-agent doctor
 ```
 
 Add your OpenRouter key to `.env` before running the agent:
@@ -55,6 +56,7 @@ uv run code-agent run "Create a README section describing this project"
 ## CLI Usage
 
 ```bash
+code-agent doctor
 code-agent run "Fix the failing pytest"
 code-agent run --cwd ../some-project --model qwen/qwen3-coder "Add tests for the parser"
 code-agent run --profile coder "Implement the next roadmap item"
@@ -132,6 +134,12 @@ agent47: /exit
 - `OPENAI_API_KEY` and `OPENAI_BASE_URL` are still accepted as a temporary fallback.
 
 `--model` always wins over profile-specific model environment variables for that run. Profiles still control temperature and token defaults.
+
+For platform-specific setup, see [docs/INSTALL.md](docs/INSTALL.md). To check a local installation without making network calls, run:
+
+```bash
+code-agent doctor
+```
 
 ## Permissions
 
@@ -231,6 +239,7 @@ src/
     interactive.py      Copilot-style terminal session
     factory.py          Shared agent construction
     config.py           dotenv + pydantic-settings
+    doctor.py           Local install and platform diagnostics
     models.py           OpenAI-compatible model client for OpenRouter
     prompts.py          System prompt
     protocol.py         Versioned JSON event protocol for future frontends

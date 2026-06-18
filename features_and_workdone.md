@@ -34,6 +34,8 @@ This document summarizes the current state of Agent47 for collaborators.
 - Versioned newline-delimited JSON protocol through `code-agent run-json` for future VS Code and non-terminal frontends.
 - JSON protocol events cover run start/finish, status, action starts, approval requests, recovery, failures, work reports, and final results.
 - JSON protocol approval handling fails closed by default, with explicit `--approve-all` only for trusted automation.
+- Install diagnostics through `code-agent doctor`.
+- Cross-platform install guide for Windows, macOS, Linux, uv, pip editable installs, and pipx.
 - File operations with `pathlib`.
 - Bounded diff previews for write, edit, delete, and structured patch operations.
 - Structured `apply_patch` action backed by `git apply`.
@@ -81,6 +83,7 @@ This document summarizes the current state of Agent47 for collaborators.
 
 ```powershell
 agent47
+code-agent doctor
 code-agent run --dry-run "Inspect this project"
 code-agent run --sandbox "Try a risky change in a copied workspace"
 code-agent run-json --dry-run "Inspect this project and emit JSON events"
@@ -154,6 +157,7 @@ Inside `agent47`:
 - Lightweight repo index and context ranking.
 - Local deterministic eval harness.
 - Versioned NDJSON protocol for frontend integrations.
+- Install doctor and cross-platform install guide.
 - Model fallback and usage/cost tracking.
 - Non-workspace routing guard.
 - General web-search provider fallback.
@@ -174,4 +178,5 @@ Inside `agent47`:
 - Interactive JSON approval response handling for editor frontends.
 - Richer planner fields for files touched, blockers, checks, and ownership.
 - Additional concrete providers beyond OpenAI-compatible APIs.
+- Package metadata, license, changelog, and release checklist.
 - VS Code extension frontend.

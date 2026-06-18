@@ -6,6 +6,7 @@ from typing import Optional
 import typer
 
 from .config import Settings
+from .doctor import run_doctor
 from .evals import run_builtin_evals
 from .factory import create_agent
 from .model_profiles import validate_profile_name
@@ -99,6 +100,19 @@ def evals_command() -> None:
     result = run_builtin_evals()
     typer.echo(result.format())
     if not result.ok:
+        raise typer.Exit(code=1)
+
+
+@app.command("doctor")
+def doctor_command(
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory to check."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+    strict: bool = typer.Option(False, "--strict", help="Exit nonzero on warnings as well as failures."),
+) -> None:
+    """Check local install, platform, tools, and configuration."""
+    report = run_doctor(cwd=cwd)
+    typer.echo(report.to_json() if json_output else report.format_text())
+    if not report.ok or (strict and report.has_warnings):
         raise typer.Exit(code=1)
 
 

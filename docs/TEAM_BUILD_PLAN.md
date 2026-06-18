@@ -102,6 +102,7 @@ These are already built and should be maintained while new work continues.
 - [x] Local deterministic eval harness with baseline safety regressions.
 - [x] Baseline newline-delimited JSON protocol for future frontends.
 - [x] Model fallback and usage/cost tracking baseline.
+- [x] Install doctor and cross-platform install guide.
 
 ## Team Task Board
 
@@ -175,7 +176,7 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 ### Phase 11: Public Packaging
 
 - [ ] Issue 36: Package Metadata. Owner:
-- [ ] Issue 37: Install Guide. Owner:
+- [x] Issue 37: Install Guide. Owner: Agent47
 - [ ] Issue 38: Versioning And Releases. Owner:
 - [ ] Issue 39: PyPI Or GitHub Release. Owner:
 
@@ -987,6 +988,8 @@ Write install docs for:
 Acceptance criteria:
 
 - New user can install without help.
+
+Status: **Done for baseline**. Added `docs/INSTALL.md` with Windows, macOS, Linux, uv, pip editable, and pipx install paths, plus `code-agent doctor` for local install diagnostics and release smoke checks.
 
 #### 38. Versioning And Releases
 
