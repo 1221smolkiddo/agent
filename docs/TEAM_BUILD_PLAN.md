@@ -100,6 +100,7 @@ These are already built and should be maintained while new work continues.
 - [x] Structured work reports with changed-line diff review.
 - [x] Lightweight repo map and task-aware relevance ranking.
 - [x] Local deterministic eval harness with baseline safety regressions.
+- [x] Baseline newline-delimited JSON protocol for future frontends.
 
 ## Team Task Board
 
@@ -198,7 +199,7 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 
 ### Phase 15: VS Code Later
 
-- [ ] Issue 50: VS Code Architecture Decision. Owner:
+- [x] Issue 50: VS Code Architecture Decision. Owner: Agent47
 - [ ] Issue 51: Extension Scaffold. Owner:
 - [ ] Issue 52: Diff Approval UI. Owner:
 
@@ -1222,6 +1223,8 @@ Options:
 Acceptance criteria:
 
 - Team chooses one approach and documents tradeoffs.
+
+Status: **Done for baseline**. Agent47 now exposes `code-agent run-json`, a subprocess-friendly newline-delimited JSON event protocol for status, action starts, approval requests, recovery, failures, work reports, and final results. VS Code can build on this transport before a fuller JSON-RPC layer is needed.
 
 #### 51. Extension Scaffold
 

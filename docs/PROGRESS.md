@@ -6,19 +6,20 @@ This document tracks how far the coding agent has come and what collaborators ca
 
 **Stage:** Basic single-model CLI agent with Agent47 engineering protocol
 
-**Approximate progress toward an industry-standard local AI coding agent:** 43%
+**Approximate progress toward an industry-standard local AI coding agent:** 46%
 
-The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, durable plan checkpoints with persisted structured work reports, non-workspace intent routing, general web search with provider fallback, structured patch application, approved git-diff awareness, lightweight repo mapping and task-aware relevance ranking, deterministic local evals for baseline safety regressions, verification command detection/suggestion/automatic execution/outcome summaries, mutation-attempt tracking for truthful final answers, clearer interactive terminal panels with short transcript context and structured session state, run history detail views, resumable runs, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
+The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, durable plan checkpoints with persisted structured work reports, non-workspace intent routing, general web search with provider fallback, structured patch application, approved git-diff awareness, lightweight repo mapping and task-aware relevance ranking, deterministic local evals for baseline safety regressions, a versioned newline-delimited JSON protocol for future frontends, verification command detection/suggestion/automatic execution/outcome summaries, mutation-attempt tracking for truthful final answers, clearer interactive terminal panels with short transcript context and structured session state, run history detail views, resumable runs, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
 
 This file should be updated whenever a meaningful Agent47 capability is added. Keep the enabled commands/actions current, move completed items out of "What Is Left" when they land, and update the percentage only when the agent gains real product capability rather than documentation alone.
 
 ## Enabled CLI Commands
 
-There are currently **6 user-facing CLI command entries**:
+There are currently **7 user-facing CLI command entries**:
 
 | Command | Purpose |
 | --- | --- |
 | `code-agent run "task"` | Run the agent on a coding task. |
+| `code-agent run-json "task"` | Run the agent and emit versioned NDJSON protocol events for frontends. |
 | `code-agent history` | Show recent saved agent runs from SQLite. |
 | `code-agent history show <run-id>` | Show saved steps for one agent run. |
 | `code-agent resume <run-id>` | Resume a saved run with compact prior context. |
@@ -29,6 +30,7 @@ Common examples:
 
 ```powershell
 uv run code-agent run "Inspect this project and suggest next steps"
+uv run code-agent run-json --dry-run "Inspect this project and emit JSON events"
 uv run code-agent run --dry-run "Find risky areas in the codebase"
 uv run code-agent run --sandbox "Try a risky change in an isolated copy"
 uv run code-agent run --max-failures 5 "Recover from failed tool attempts"
@@ -134,6 +136,7 @@ There are currently **17 model-requestable actions**:
 | Storage: SQLite | Enabled |
 | Testing: pytest | Enabled |
 | Local deterministic evals | Enabled |
+| Frontend JSON protocol: NDJSON subprocess transport | Enabled |
 | Default model: Qwen via OpenRouter | Enabled |
 | Packaging: uv | Enabled |
 | Collaboration: GitHub docs/templates/CI | Enabled |
@@ -155,17 +158,17 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 | 7 | Multi-model/provider layer | Supports planner/coder/reviewer profiles, fallbacks, and cost-aware routing | Partial, with baseline profiles and provider config |
 | 8 | Observability | Captures traces, timings, token use, failures, and debug bundles for reliability work | Partial |
 | 9 | Collaboration workflow | Adds review mode, branch/commit/PR helpers, issue context, changelogs, and release notes | Partial |
-| 10 | Editor integration | Brings Agent47 into VS Code with file context, diffs, approvals, and terminal output | Not started |
+| 10 | Editor integration | Brings Agent47 into VS Code with file context, diffs, approvals, and terminal output | Protocol baseline done |
 | 11 | Evaluation harness | Measures solve rate, edit correctness, verification rate, and regressions on fixture repos | Baseline deterministic safety evals done |
 | 12 | Packaging hardening | Adds release profiles, install docs, upgrade notes, and platform-specific validation | Partial |
 
 ## Next Recommended Build Order
 
-1. Add a JSON protocol for future VS Code integration.
-2. Add model fallback and usage/cost tracking.
-3. Add Mac/Linux install hardening.
-4. Expand evals into fixture-based coding tasks.
-5. Add richer planner fields for blockers, checks, and file ownership.
+1. Add model fallback and usage/cost tracking.
+2. Add Mac/Linux install hardening.
+3. Expand evals into fixture-based coding tasks.
+4. Add richer planner fields for blockers, checks, and file ownership.
+5. Add richer JSON approval response handling for editor frontends.
 
 ## Current Safety Notes
 
@@ -202,6 +205,7 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 - `repo_map` and `rank_context` give Agent47 a lightweight repository index and task-aware file ranking before broad reads.
 - Repo-map and ranking actions are stored in run history and summarized in structured work reports as context analysis.
 - `code-agent evals` runs offline deterministic checks for greeting routing, blocked-write honesty, denied-read non-leakage, and sandbox isolation.
+- `code-agent run-json` emits versioned NDJSON events and fails closed on approvals unless `--approve-all` is explicitly supplied for trusted automation.
 - Failed automatic verification is fed back to the model for recovery instead of allowing a premature final answer.
 - Failed tool calls and invalid model action responses are automatically fed back to the model for recovery until the failure budget is exhausted.
 - Multi-file change set metadata and richer patch conflict recovery are not implemented yet.

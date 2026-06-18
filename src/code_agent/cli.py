@@ -10,6 +10,14 @@ from .evals import run_builtin_evals
 from .factory import create_agent
 from .model_profiles import validate_profile_name
 from .permissions import confirm_permission
+from .protocol import (
+    JsonEventEmitter,
+    JsonProtocolReporter,
+    emit_run_failed,
+    emit_run_finished,
+    emit_run_started,
+    json_approval_callback,
+)
 from .resume import build_resume_task, format_run_detail
 from .sandbox import create_sandbox_workspace
 from .storage import AgentStorage
@@ -91,6 +99,77 @@ def evals_command() -> None:
     result = run_builtin_evals()
     typer.echo(result.format())
     if not result.ok:
+        raise typer.Exit(code=1)
+
+
+@app.command("run-json")
+def run_json(
+    task: str = typer.Argument(..., help="The coding task for the agent."),
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    model: Optional[str] = typer.Option(None, "--model", help="Model override."),
+    profile: Optional[str] = typer.Option(
+        None,
+        "--profile",
+        callback=validate_profile_option,
+        help="Model profile: default, planner, coder, reviewer, or fast.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Inspect only; skip writes and shell."),
+    sandbox: bool = typer.Option(False, "--sandbox", help="Run inside an isolated workspace copy."),
+    stream: bool = typer.Option(True, "--stream/--no-stream", help="Emit model stream lifecycle events."),
+    max_steps: int = typer.Option(12, "--max-steps", min=1, help="Maximum agent loop steps."),
+    max_failures: Optional[int] = typer.Option(
+        None,
+        "--max-failures",
+        min=1,
+        help="Consecutive failures before the agent stops retrying.",
+    ),
+    approve_all: bool = typer.Option(
+        False,
+        "--approve-all",
+        help="Approve every tool request. Intended only for trusted automation.",
+    ),
+) -> None:
+    """Run the agent and emit newline-delimited JSON protocol events."""
+    emitter = JsonEventEmitter()
+    settings = Settings()
+    workspace = cwd.resolve()
+    try:
+        if sandbox:
+            sandbox_workspace = create_sandbox_workspace(workspace)
+            workspace = sandbox_workspace.path
+            emitter.emit("sandbox_created", path=str(workspace), source=str(cwd.resolve()))
+
+        emit_run_started(
+            emitter,
+            task=task,
+            cwd=str(workspace),
+            dry_run=dry_run,
+            sandbox=sandbox,
+            model=model,
+            profile=profile,
+            max_steps=max_steps,
+        )
+        agent = create_agent(
+            settings=settings,
+            cwd=workspace,
+            model=model,
+            dry_run=dry_run,
+            max_steps=max_steps,
+            max_failures=max_failures,
+            approval_callback=json_approval_callback(emitter, approve_all=approve_all),
+            reporter=JsonProtocolReporter(emitter),
+            stream_model=stream,
+            profile=profile,
+        )
+        result = agent.run_detailed(task)
+    except KeyboardInterrupt:
+        emit_run_failed(emitter, "Stopped by user.", code="keyboard_interrupt")
+        raise typer.Exit(code=130)
+    except Exception as exc:
+        emit_run_failed(emitter, str(exc), code=type(exc).__name__)
+        raise typer.Exit(code=1)
+    emit_run_finished(emitter, result)
+    if result.blocked or result.failed_actions:
         raise typer.Exit(code=1)
 
 

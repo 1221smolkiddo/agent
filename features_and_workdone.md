@@ -28,6 +28,9 @@ This document summarizes the current state of Agent47 for collaborators.
 - Repo-map and ranking actions are saved in run history and summarized in structured work reports as context analysis.
 - Offline deterministic eval harness through `code-agent evals`.
 - Built-in safety regressions for greeting routing, blocked-write honesty, denied-read non-leakage, and sandbox write isolation.
+- Versioned newline-delimited JSON protocol through `code-agent run-json` for future VS Code and non-terminal frontends.
+- JSON protocol events cover run start/finish, status, action starts, approval requests, recovery, failures, work reports, and final results.
+- JSON protocol approval handling fails closed by default, with explicit `--approve-all` only for trusted automation.
 - File operations with `pathlib`.
 - Bounded diff previews for write, edit, delete, and structured patch operations.
 - Structured `apply_patch` action backed by `git apply`.
@@ -77,6 +80,7 @@ This document summarizes the current state of Agent47 for collaborators.
 agent47
 code-agent run --dry-run "Inspect this project"
 code-agent run --sandbox "Try a risky change in a copied workspace"
+code-agent run-json --dry-run "Inspect this project and emit JSON events"
 code-agent history
 code-agent evals
 ```
@@ -146,6 +150,7 @@ Inside `agent47`:
 - Project search fallback when `ripgrep` is unavailable.
 - Lightweight repo index and context ranking.
 - Local deterministic eval harness.
+- Versioned NDJSON protocol for frontend integrations.
 - Non-workspace routing guard.
 - General web-search provider fallback.
 - Transcript-aware interactive summaries.
@@ -162,6 +167,7 @@ Inside `agent47`:
 - Rich token-level streaming views for future non-JSON frontends.
 - Fixture-based coding evals beyond the baseline deterministic safety regressions.
 - Deeper repo intelligence with symbol/dependency graphs on top of the baseline repo index.
+- Interactive JSON approval response handling for editor frontends.
 - Richer planner fields for files touched, blockers, checks, and ownership.
 - Additional providers beyond OpenAI-compatible APIs, model fallback, and token/cost tracking.
 - VS Code extension frontend.

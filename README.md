@@ -63,6 +63,7 @@ code-agent run --dry-run "Refactor the CLI argument parser"
 code-agent run --sandbox "Try a risky refactor in an isolated copy"
 code-agent run --no-stream "Run without compact model streaming progress"
 code-agent run --max-failures 5 "Fix the issue and recover from failed attempts"
+code-agent run-json --dry-run "Inspect this project and emit JSON protocol events"
 code-agent history
 code-agent history show 12
 code-agent resume 12 "Continue from the failed verification"
@@ -73,6 +74,14 @@ With `uv`:
 ```bash
 uv run code-agent run "Fix the failing pytest"
 ```
+
+Frontend protocol:
+
+```bash
+uv run code-agent run-json --dry-run "Inspect this project"
+```
+
+`run-json` emits versioned newline-delimited JSON events for frontend integrations. It includes run lifecycle events, status updates, action starts, approval requests, recovery events, failures, work reports, and final results. Approval requests are denied by default in JSON mode so a frontend can safely observe required permissions; use `--approve-all` only in trusted automation.
 
 Interactive mode:
 
@@ -176,7 +185,7 @@ The CLI prints status lines while the agent works:
 - Invalid model action responses are retried automatically, including common cases where a valid JSON action is wrapped in prose or a code fence.
 - `DONE` when the agent reaches a final answer.
 
-After non-trivial runs, the CLI and interactive shell render a structured work report before the final response. It shows current task, current step, files being modified, progress, commands executed, validation status, modified files, change summary, changed-line diff review, and final outcome.
+After non-trivial runs, the CLI and interactive shell render a structured work report before the final response. It shows current task, current step, files being modified, progress, context analysis, commands executed, validation status, modified files, change summary, changed-line diff review, and final outcome.
 
 ## Stopping The Agent
 
@@ -222,6 +231,7 @@ src/
     config.py           dotenv + pydantic-settings
     models.py           OpenAI-compatible model client for OpenRouter
     prompts.py          System prompt
+    protocol.py         Versioned JSON event protocol for future frontends
     resume.py           Run detail formatting and resume context
     sandbox.py          Local workspace sandbox copies
     session.py          Interactive session state
