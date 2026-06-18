@@ -23,6 +23,9 @@ This document summarizes the current state of Agent47 for collaborators.
 - Local workspace sandbox mode through `--sandbox` or `/sandbox`.
 - Workspace path guardrails to block access outside the selected workspace.
 - Git-diff awareness through an approved `inspect_git_diff` action that reports dirty paths and can include bounded diff hunks when needed.
+- Lightweight repo mapping through an approved `repo_map` action that reports important project files, file counts, and top-level layout while skipping ignored local state.
+- Task-aware context ranking through an approved `rank_context` action that scores likely relevant files before broad reads.
+- Repo-map and ranking actions are saved in run history and summarized in structured work reports as context analysis.
 - File operations with `pathlib`.
 - Bounded diff previews for write, edit, delete, and structured patch operations.
 - Structured `apply_patch` action backed by `git apply`.
@@ -49,7 +52,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - Durable `update_plan` checkpoints with `pending`, `in_progress`, `completed`, and `blocked` step statuses.
 - Plan updates are saved in run history and included in resume context.
 - CLI and `agent47` render structured work reports before the final response for non-trivial runs.
-- Work reports include current task, current step, files being modified, progress, commands executed, validation status, modified files, change summary, changed-line diff review, and final outcome.
+- Work reports include current task, current step, files being modified, progress, context analysis, commands executed, validation status, modified files, change summary, changed-line diff review, and final outcome.
 - Work reports are stored in SQLite, surfaced in history details, and included in resume context.
 - Automatic recovery loop when a tool fails.
 - More tolerant action parsing for valid JSON actions wrapped in prose or code fences.
@@ -138,6 +141,7 @@ Inside `agent47`:
 - Verification outcome summaries.
 - Clean terminal panel formatting.
 - Project search fallback when `ripgrep` is unavailable.
+- Lightweight repo index and context ranking.
 - Non-workspace routing guard.
 - General web-search provider fallback.
 - Transcript-aware interactive summaries.
@@ -152,7 +156,7 @@ Inside `agent47`:
 - Stronger sandboxing for shell process isolation.
 - Network policy controls.
 - Rich token-level streaming views for future non-JSON frontends.
-- Better repo context selection with a lightweight repo index, symbol/dependency graph, and context ranking.
+- Deeper repo intelligence with symbol/dependency graphs on top of the baseline repo index.
 - Richer planner fields for files touched, blockers, checks, and ownership.
 - Additional providers beyond OpenAI-compatible APIs, model fallback, and token/cost tracking.
 - VS Code extension frontend.

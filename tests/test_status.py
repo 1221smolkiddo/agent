@@ -3,6 +3,8 @@ from code_agent.schema import (
     DeleteFileAction,
     DetectVerificationAction,
     EditFileAction,
+    RankContextAction,
+    RepoMapAction,
     RunShellAction,
     SearchAction,
     SuggestVerificationAction,
@@ -68,6 +70,16 @@ def test_format_action_status_for_update_plan() -> None:
     )
 
     assert status == "PLANNING updating task plan"
+
+
+def test_format_action_status_for_repo_map() -> None:
+    assert format_action_status(RepoMapAction(type="repo_map")) == "ANALYZING repository map"
+
+
+def test_format_action_status_for_rank_context() -> None:
+    status = format_action_status(RankContextAction(type="rank_context", task="fix cli"))
+
+    assert status == "ANALYZING relevant context"
 
 
 def test_format_shell_status_for_install() -> None:

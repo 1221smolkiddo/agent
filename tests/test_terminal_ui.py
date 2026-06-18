@@ -123,6 +123,10 @@ def test_format_work_report_body_uses_requested_sections_and_changed_diff_lines(
         verification_results=[
             {"purpose": "test", "command": "uv run pytest", "ok": True, "status": "passed"}
         ],
+        context_records=[
+            {"action": "repo_map", "ok": True, "status": "ok"},
+            {"action": "rank_context", "task": "update report UI", "ok": True, "status": "ok"},
+        ],
     )
 
     body = format_work_report_body(result)
@@ -130,6 +134,7 @@ def test_format_work_report_body_uses_requested_sections_and_changed_diff_lines(
     assert "Current Task:\n  update the docs" in body
     assert "Current Step:\n  Update report UI" in body
     assert "Files Being Modified:\n  docs/PROGRESS.md" in body
+    assert "Context Analysis:\n  - repo_map: ok\n  - rank_context: ok for `update report UI`" in body
     assert "Commands Executed:\n  - `uv run pytest`: passed" in body
     assert "Validation Status:\n  - test `uv run pytest`: passed" in body
     assert "Change Summary:\n  - edit_file docs/PROGRESS.md: ok" in body

@@ -5,7 +5,9 @@ from code_agent.permissions import format_permission_detail
 from code_agent.schema import (
     DeleteFileAction,
     ListFilesAction,
+    RankContextAction,
     ReadFileAction,
+    RepoMapAction,
     SearchAction,
     WebSearchAction,
     WriteFileAction,
@@ -39,6 +41,24 @@ def test_project_search_requires_permission(tmp_path: Path) -> None:
 
     assert not result.ok
     assert result.output == "Permission denied for search."
+
+
+def test_repo_map_requires_permission(tmp_path: Path) -> None:
+    tools = ToolRegistry(workspace=tmp_path, dry_run=True, approval_callback=lambda _a, _d: False)
+
+    result = tools.run(RepoMapAction(type="repo_map"))
+
+    assert not result.ok
+    assert result.output == "Permission denied for repo_map."
+
+
+def test_rank_context_requires_permission(tmp_path: Path) -> None:
+    tools = ToolRegistry(workspace=tmp_path, dry_run=True, approval_callback=lambda _a, _d: False)
+
+    result = tools.run(RankContextAction(type="rank_context", task="fix cli"))
+
+    assert not result.ok
+    assert result.output == "Permission denied for rank_context."
 
 
 def test_delete_file_requires_permission(tmp_path: Path) -> None:
@@ -146,6 +166,21 @@ def test_project_search_fallback_ignores_local_secret_files(
 
     assert result.ok
     assert result.output == "README.md:1:agent47"
+
+
+def test_repo_map_and_rank_context_succeed_with_permission(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "cli.py").write_text("def main(): pass", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# Project", encoding="utf-8")
+    tools = ToolRegistry(workspace=tmp_path, dry_run=True, approval_callback=lambda _a, _d: True)
+
+    repo_map = tools.run(RepoMapAction(type="repo_map", max_files=20))
+    ranked = tools.run(RankContextAction(type="rank_context", task="fix cli", max_results=5))
+
+    assert repo_map.ok
+    assert "Repository map:" in repo_map.output
+    assert ranked.ok
+    assert "src/cli.py" in ranked.output
 
 
 def test_bing_parser_extracts_general_web_results() -> None:

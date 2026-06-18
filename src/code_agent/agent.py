@@ -29,6 +29,7 @@ class AgentRunResult:
     mutation_records: list[dict[str, Any]] = field(default_factory=list)
     command_records: list[dict[str, str | bool]] = field(default_factory=list)
     verification_results: list[dict[str, str | bool]] = field(default_factory=list)
+    context_records: list[dict[str, Any]] = field(default_factory=list)
     plan_updates: list[dict[str, Any]] = field(default_factory=list)
     failed_actions: list[dict[str, Any]] = field(default_factory=list)
     denied_actions: list[dict[str, Any]] = field(default_factory=list)
@@ -70,6 +71,7 @@ class CodingAgent:
         blocked_mutation_failure = False
         verification_results: list[dict[str, str | bool]] = []
         command_records: list[dict[str, str | bool]] = []
+        context_records: list[dict[str, Any]] = []
         plan_updates: list[dict[str, Any]] = []
         mutation_records: list[dict[str, Any]] = []
         failed_actions: list[dict[str, Any]] = []
@@ -195,6 +197,7 @@ class CodingAgent:
                                 mutation_records=mutation_records,
                                 command_records=command_records,
                                 verification_results=verification_results,
+                                context_records=context_records,
                                 plan_updates=plan_updates,
                                 failed_actions=failed_actions,
                                 denied_actions=denied_actions,
@@ -232,6 +235,7 @@ class CodingAgent:
                         mutation_records=mutation_records,
                         command_records=command_records,
                         verification_results=verification_results,
+                        context_records=context_records,
                         plan_updates=plan_updates,
                         failed_actions=failed_actions,
                         denied_actions=denied_actions,
@@ -246,8 +250,11 @@ class CodingAgent:
             mutation_records.extend(new_mutation_records)
             verification_result = self._verification_result_from_action(action, result)
             command_record = self._command_record_from_action(action, result)
+            context_record = self._context_record_from_action(action, result)
             if command_record:
                 command_records.append(command_record)
+            if context_record:
+                context_records.append(context_record)
             if verification_result:
                 verification_results.append(verification_result)
             if result.ok:
@@ -320,6 +327,7 @@ class CodingAgent:
                         mutation_records=mutation_records,
                         command_records=command_records,
                         verification_results=verification_results,
+                        context_records=context_records,
                         plan_updates=plan_updates,
                         failed_actions=failed_actions,
                         denied_actions=denied_actions,
@@ -340,6 +348,7 @@ class CodingAgent:
                 mutation_records=mutation_records,
                 command_records=command_records,
                 verification_results=verification_results,
+                context_records=context_records,
                 plan_updates=plan_updates,
                 failed_actions=failed_actions,
                 denied_actions=denied_actions,
@@ -552,6 +561,8 @@ class CodingAgent:
             "detect_verification",
             "suggest_verification",
             "inspect_git_diff",
+            "repo_map",
+            "rank_context",
         }
 
     @staticmethod
@@ -664,6 +675,21 @@ class CodingAgent:
             "status": "passed" if result.ok else "failed",
             "output": result.output,
         }
+
+    @staticmethod
+    def _context_record_from_action(action: AgentAction, result: ToolResult) -> dict[str, Any] | None:
+        if action.type not in {"repo_map", "rank_context"}:
+            return None
+        item: dict[str, Any] = {
+            "action": action.type,
+            "ok": result.ok,
+            "status": "ok" if result.ok else "failed",
+            "output": result.output,
+        }
+        task = getattr(action, "task", "")
+        if task:
+            item["task"] = task
+        return item
 
     def _run_automatic_verification(
         self,

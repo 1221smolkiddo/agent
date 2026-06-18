@@ -97,6 +97,17 @@ class InspectGitDiffAction(BaseModel):
     max_chars: int = Field(default=12000, ge=1000, le=50000)
 
 
+class RepoMapAction(BaseModel):
+    type: Literal["repo_map"]
+    max_files: int = Field(default=80, ge=10, le=300)
+
+
+class RankContextAction(BaseModel):
+    type: Literal["rank_context"]
+    task: str
+    max_results: int = Field(default=12, ge=3, le=50)
+
+
 AgentAction = Union[
     FinalAction,
     UpdatePlanAction,
@@ -113,6 +124,8 @@ AgentAction = Union[
     DetectVerificationAction,
     SuggestVerificationAction,
     InspectGitDiffAction,
+    RepoMapAction,
+    RankContextAction,
 ]
 
 

@@ -8,7 +8,9 @@ from .schema import (
     EditFileAction,
     InspectGitDiffAction,
     ListFilesAction,
+    RankContextAction,
     ReadFileAction,
+    RepoMapAction,
     RunShellAction,
     SearchAction,
     SuggestVerificationAction,
@@ -77,6 +79,10 @@ def format_action_status(action: AgentAction) -> str:
         return "CHECKING suggested verification"
     if isinstance(action, InspectGitDiffAction):
         return "READING git changes"
+    if isinstance(action, RepoMapAction):
+        return "ANALYZING repository map"
+    if isinstance(action, RankContextAction):
+        return "ANALYZING relevant context"
     if isinstance(action, UpdatePlanAction):
         return "PLANNING updating task plan"
     if isinstance(action, RunShellAction):

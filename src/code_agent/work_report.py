@@ -13,6 +13,7 @@ def should_show_work_report(result: AgentRunResult) -> bool:
         or result.mutation_records
         or result.command_records
         or result.verification_results
+        or result.context_records
         or result.failed_actions
         or result.denied_actions
         or result.blocked
@@ -26,6 +27,7 @@ def build_work_report_payload(result: AgentRunResult) -> dict[str, Any]:
         "current_step": _current_step(result.plan_updates),
         "files_being_modified": result.changed_paths,
         "progress": _progress_summary(result),
+        "context_analysis": _context_items(result),
         "commands_executed": _command_items(result),
         "validation_status": _validation_items(result),
         "modified_files": result.changed_paths,
@@ -47,6 +49,7 @@ def format_work_report_body(result: AgentRunResult) -> str:
         ("Current Step", _current_step(result.plan_updates)),
         ("Files Being Modified", _list_or_none(result.changed_paths)),
         ("Progress", _progress_summary(result)),
+        ("Context Analysis", _context_summary(result)),
         ("Commands Executed", _commands_summary(result)),
         ("Validation Status", _validation_summary(result)),
         ("Modified Files", _list_or_none(result.changed_paths)),
@@ -98,6 +101,24 @@ def _progress_summary(result: AgentRunResult) -> str:
 def _commands_summary(result: AgentRunResult) -> str:
     commands = _command_items(result)
     return "\n".join(f"- `{item['command']}`: {item['status']}" for item in commands) or "<none>"
+
+
+def _context_summary(result: AgentRunResult) -> str:
+    items = _context_items(result)
+    return "\n".join(
+        f"- {item['action']}: {item['status']}{item['detail']}" for item in items
+    ) or "<none>"
+
+
+def _context_items(result: AgentRunResult) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    for record in result.context_records:
+        action = str(record.get("action", "context"))
+        status = str(record.get("status", "ok" if record.get("ok") else "failed"))
+        task = _single_line(str(record.get("task", "")), max_chars=120)
+        detail = f" for `{task}`" if task else ""
+        items.append({"action": action, "status": status, "detail": detail})
+    return items
 
 
 def _command_items(result: AgentRunResult) -> list[dict[str, str]]:

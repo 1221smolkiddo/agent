@@ -6,9 +6,9 @@ This document tracks how far the coding agent has come and what collaborators ca
 
 **Stage:** Basic single-model CLI agent with Agent47 engineering protocol
 
-**Approximate progress toward an industry-standard local AI coding agent:** 37%
+**Approximate progress toward an industry-standard local AI coding agent:** 40%
 
-The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, durable plan checkpoints with persisted structured work reports, non-workspace intent routing, general web search with provider fallback, structured patch application, approved git-diff awareness, verification command detection/suggestion/automatic execution/outcome summaries, mutation-attempt tracking for truthful final answers, clearer interactive terminal panels with short transcript context and structured session state, run history detail views, resumable runs, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
+The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, durable plan checkpoints with persisted structured work reports, non-workspace intent routing, general web search with provider fallback, structured patch application, approved git-diff awareness, lightweight repo mapping and task-aware relevance ranking, verification command detection/suggestion/automatic execution/outcome summaries, mutation-attempt tracking for truthful final answers, clearer interactive terminal panels with short transcript context and structured session state, run history detail views, resumable runs, tests, GitHub collaboration setup, and a stronger Agent47 system prompt for planning, focused edits, verification, recovery, and honest reporting.
 
 This file should be updated whenever a meaningful Agent47 capability is added. Keep the enabled commands/actions current, move completed items out of "What Is Left" when they land, and update the percentage only when the agent gains real product capability rather than documentation alone.
 
@@ -60,7 +60,7 @@ Inside `agent47`, there are currently **16 slash commands**:
 
 ## Enabled Agent Actions
 
-There are currently **15 model-requestable actions**:
+There are currently **17 model-requestable actions**:
 
 | Action | Purpose |
 | --- | --- |
@@ -79,6 +79,8 @@ There are currently **15 model-requestable actions**:
 | `detect_verification` | Detect likely test, lint, typecheck, and build commands from project files. |
 | `suggest_verification` | Suggest focused verification commands from changed file paths. |
 | `inspect_git_diff` | Inspect git status, changed paths, and optional bounded diff hunks before editing. |
+| `repo_map` | Build a compact repository map with important files and layout signals. |
+| `rank_context` | Rank likely relevant files for the current task before broader reads. |
 
 ## Installed / Supported Stack
 
@@ -103,6 +105,8 @@ There are currently **15 model-requestable actions**:
 | Secret output redaction | Enabled |
 | Bounded approval previews and mutation diff outputs | Enabled |
 | Project search: ripgrep plus Python fallback | Enabled |
+| Lightweight repo map | Enabled |
+| Task-aware context ranking | Enabled |
 | Web search | Enabled with user approval |
 | Local workspace sandbox | Enabled |
 | Tool failure recovery loop | Enabled |
@@ -141,7 +145,7 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 | --- | --- | --- | --- |
 | 1 | Structured patch editing | Gives safe, reviewable multi-file code changes instead of brittle full-file rewrites | Partial |
 | 2 | Verification loop | Lets Agent47 detect, suggest, run, and summarize the right tests, lint, typecheck, and builds after edits | Baseline done |
-| 3 | Repo intelligence | Helps the agent choose relevant context using symbols, dependencies, git diff, and architecture summaries | Partial, with git awareness baseline |
+| 3 | Repo intelligence | Helps the agent choose relevant context using symbols, dependencies, git diff, and architecture summaries | Baseline done for repo map, ranking, and git awareness |
 | 4 | Safer shell policy | Separates read-only, test/build, install/network, and destructive commands with stronger approvals | Baseline done |
 | 5 | Durable sessions | Enables pause/resume, plan state, checkpoints, and long task recovery | Partial, with resumable runs, visible durable plan checkpoints, and persisted structured work reports |
 | 6 | Streaming UX | Makes CLI and interactive mode feel alive during model reasoning and tool execution | Baseline done |
@@ -154,10 +158,10 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 
 ## Next Recommended Build Order
 
-1. Add a lightweight repo index with relevance ranking.
-2. Add local eval harness and regression tasks.
-3. Add a JSON protocol for future VS Code integration.
-4. Add model fallback and usage/cost tracking.
+1. Add local eval harness and regression tasks.
+2. Add a JSON protocol for future VS Code integration.
+3. Add model fallback and usage/cost tracking.
+4. Add Mac/Linux install hardening.
 5. Add richer planner fields for blockers, checks, and file ownership.
 
 ## Current Safety Notes
@@ -192,6 +196,8 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 - `suggest_verification` ranks focused checks from changed paths, and successful file mutations now trigger automatic focused verification when commands are detected.
 - Verification-like shell commands are recorded and appended to final summaries as pass/fail outcomes.
 - `inspect_git_diff` shows dirty files and optional bounded diff hunks so Agent47 can avoid overwriting existing user changes.
+- `repo_map` and `rank_context` give Agent47 a lightweight repository index and task-aware file ranking before broad reads.
+- Repo-map and ranking actions are stored in run history and summarized in structured work reports as context analysis.
 - Failed automatic verification is fed back to the model for recovery instead of allowing a premature final answer.
 - Failed tool calls and invalid model action responses are automatically fed back to the model for recovery until the failure budget is exhausted.
 - Multi-file change set metadata and richer patch conflict recovery are not implemented yet.

@@ -27,6 +27,8 @@ Operating protocol:
 - Only use workspace tools when the user asks about this project, local files, repository state, code changes, tests, or commands.
 - For non-trivial workspace coding work, create and update a short durable plan with update_plan.
 - Keep plan steps concrete and mark only one step as in_progress at a time.
+- Use repo_map to understand unfamiliar repositories before broad exploration.
+- Use rank_context with the user's task to choose relevant files before reading several files.
 - Before editing, use inspect_git_diff to understand existing user changes and avoid overwriting them.
 - Inspect the relevant files before changing them.
 - Prefer search before broad file reads.
@@ -73,4 +75,6 @@ Action schema:
 {{ "type": "detect_verification" }}
 {{ "type": "suggest_verification", "changed_paths": ["relative/path.py"] }}
 {{ "type": "inspect_git_diff", "include_diff": false, "max_chars": 12000 }}
+{{ "type": "repo_map", "max_files": 80 }}
+{{ "type": "rank_context", "task": "user task or focused subtask", "max_results": 12 }}
 """.strip()

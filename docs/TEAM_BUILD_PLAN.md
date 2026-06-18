@@ -98,6 +98,7 @@ These are already built and should be maintained while new work continues.
 - [x] Durable `update_plan` action with persisted step status checkpoints.
 - [x] Visible plan snapshots in CLI and `agent47`.
 - [x] Structured work reports with changed-line diff review.
+- [x] Lightweight repo map and task-aware relevance ranking.
 
 ## Team Task Board
 
@@ -138,8 +139,8 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 
 ### Phase 6: Context Engine
 
-- [ ] Issue 19: Repo Map. Owner:
-- [ ] Issue 20: File Relevance Ranking. Owner:
+- [x] Issue 19: Repo Map. Owner: Agent47
+- [x] Issue 20: File Relevance Ranking. Owner: Agent47
 - [ ] Issue 21: Tree-Sitter Symbol Index. Owner:
 - [x] Issue 22: Git Awareness. Owner: Agent47
 
@@ -640,6 +641,8 @@ Acceptance criteria:
 
 - Agent can answer "what is this project?" without broad random reads.
 
+Status: **Done for baseline**. Agent47 now exposes an approved `repo_map` action that respects ignored local state, detects important project files, summarizes source/test/doc counts, and reports important files plus top-level layout.
+
 #### 20. File Relevance Ranking
 
 Owner suggestion: Agent Core Owner
@@ -657,6 +660,8 @@ Signals:
 Acceptance criteria:
 
 - Agent asks to read fewer, more relevant files.
+
+Status: **Done for baseline**. Agent47 now exposes an approved `rank_context` action that scores indexed files against the user task using path terms, file kind, tests, docs, source modules, and important project-file signals. Repo-map and ranking usage is recorded in run history and structured work reports.
 
 #### 21. Tree-Sitter Symbol Index
 

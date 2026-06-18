@@ -15,7 +15,11 @@ def test_system_prompt_names_agent47_engineering_protocol() -> None:
     assert "If web_search returns weak or no results" in prompt
     assert "create and update a short durable plan with update_plan" in prompt
     assert "only one step as in_progress" in prompt
+    assert "Use repo_map to understand unfamiliar repositories" in prompt
+    assert "Use rank_context with the user's task" in prompt
     assert '{ "type": "update_plan"' in prompt
+    assert '{ "type": "repo_map"' in prompt
+    assert '{ "type": "rank_context"' in prompt
     assert "Prefer apply_patch for code edits" in prompt
     assert "Use delete_file for file removal" in prompt
     assert "use a file mutation tool instead of giving the user a template" in prompt

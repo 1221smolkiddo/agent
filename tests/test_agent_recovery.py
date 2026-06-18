@@ -557,6 +557,38 @@ def test_agent_allows_workspace_tools_for_project_question(tmp_path: Path) -> No
     assert tools.calls == 1
 
 
+def test_agent_records_repo_context_actions_in_work_report(tmp_path: Path) -> None:
+    model = FakeModel(
+        [
+            '{"type":"repo_map","max_files":20}',
+            '{"type":"rank_context","task":"fix CLI tests","max_results":5}',
+            '{"type":"final","message":"mapped and ranked context"}',
+        ]
+    )
+    tools = RecoveringTools()
+    agent = make_agent(tmp_path, model, tools)
+
+    result = agent.run_detailed("inspect this project and rank context for fixing CLI tests")
+    report = agent.storage.get_work_report(result.run_id)
+
+    assert result.context_records == [
+        {"action": "repo_map", "ok": True, "status": "ok", "output": "recovered"},
+        {
+            "action": "rank_context",
+            "ok": True,
+            "status": "ok",
+            "output": "recovered",
+            "task": "fix CLI tests",
+        },
+    ]
+    assert report is not None
+    assert report["payload"]["sections"]["context_analysis"] == [
+        {"action": "repo_map", "status": "ok", "detail": ""},
+        {"action": "rank_context", "status": "ok", "detail": " for `fix CLI tests`"},
+    ]
+    assert "Context Analysis:" in report["body"]
+
+
 def test_agent_accepts_plain_text_answer_for_non_workspace_question(tmp_path: Path) -> None:
     model = FakeModel(["Here is the general answer."])
     tools = RecoveringTools()
