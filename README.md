@@ -57,6 +57,8 @@ uv run code-agent run "Create a README section describing this project"
 ```bash
 code-agent run "Fix the failing pytest"
 code-agent run --cwd ../some-project --model qwen/qwen3-coder "Add tests for the parser"
+code-agent run --profile coder "Implement the next roadmap item"
+code-agent run --profile reviewer "Review the latest changes for regressions"
 code-agent run --dry-run "Refactor the CLI argument parser"
 code-agent run --sandbox "Try a risky refactor in an isolated copy"
 code-agent run --no-stream "Run without compact model streaming progress"
@@ -94,6 +96,7 @@ agent47: /stream
 agent47: /stream off
 agent47: /sandbox
 agent47: /sandbox off
+agent47: /profile coder
 agent47: /max-failures 5
 agent47: /history-show 12
 agent47: /resume 12 continue from the failed verification
@@ -107,6 +110,8 @@ agent47: /exit
 
 - `OPENROUTER_API_KEY` is required.
 - `AGENT_MODEL` is optional. The CLI also accepts `--model`.
+- `AGENT_PROFILE` is optional and defaults to `default`. Supported profiles are `default`, `planner`, `coder`, `reviewer`, and `fast`.
+- `AGENT_PLANNER_MODEL`, `AGENT_CODER_MODEL`, `AGENT_REVIEWER_MODEL`, and `AGENT_FAST_MODEL` are optional per-profile model overrides.
 - `OPENROUTER_BASE_URL` is optional and defaults to `https://openrouter.ai/api/v1`.
 - `OPENROUTER_SITE_URL` and `OPENROUTER_APP_NAME` are optional OpenRouter metadata headers.
 - `AGENT_MAX_TOKENS` is optional and defaults to `4096`.
@@ -114,6 +119,8 @@ agent47: /exit
 - `AGENT_DB_PATH` is optional and defaults to `.code-agent/agent.db`.
 - `AGENT_STREAM` is optional and defaults to `true`. It enables compact model streaming progress without printing raw JSON action tokens.
 - `OPENAI_API_KEY` and `OPENAI_BASE_URL` are still accepted as a temporary fallback.
+
+`--model` always wins over profile-specific model environment variables for that run. Profiles still control temperature and token defaults.
 
 ## Permissions
 

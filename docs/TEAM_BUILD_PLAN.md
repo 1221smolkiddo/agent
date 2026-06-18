@@ -157,8 +157,8 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 
 ### Phase 9: Model Layer
 
-- [ ] Issue 29: Provider Abstraction. Owner:
-- [ ] Issue 30: Model Profiles. Owner:
+- [~] Issue 29: Provider Abstraction. Owner: Agent47
+- [x] Issue 30: Model Profiles. Owner: Agent47
 - [ ] Issue 31: Cost And Token Tracking. Owner:
 - [ ] Issue 32: Model Fallback. Owner:
 
@@ -838,6 +838,8 @@ Acceptance criteria:
 
 - Model provider can be swapped without changing agent loop.
 
+Status: **Baseline in progress**. Model construction now uses a provider config boundary for OpenAI-compatible clients. Additional concrete providers beyond OpenRouter/OpenAI-compatible APIs are still future work.
+
 #### 30. Model Profiles
 
 Owner suggestion: Agent Core Owner
@@ -855,6 +857,8 @@ Examples:
 Acceptance criteria:
 
 - User can run `agent47 --profile coder` or configure profile.
+
+Status: **Done for baseline**. CLI runs support `--profile`, interactive mode supports `/profile`, and settings support `AGENT_PROFILE` plus per-profile model overrides for `planner`, `coder`, `reviewer`, and `fast`.
 
 #### 31. Cost And Token Tracking
 

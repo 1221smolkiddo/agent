@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Protocol
 
 from openai import OpenAI
+
+from .model_profiles import ModelProfile
 
 
 ChatMessage = dict[str, str]
@@ -27,11 +29,19 @@ class StreamingModelClient(ModelClient, Protocol):
 
 
 @dataclass
+class ModelProviderConfig:
+    api_key: str
+    base_url: str
+    default_headers: dict[str, str] | None = None
+
+
+@dataclass
 class OpenAICompatibleChatClient:
     api_key: str
     base_url: str
     model: str
     max_tokens: int = 4096
+    temperature: float = 0.2
     default_headers: dict[str, str] | None = None
 
     def __post_init__(self) -> None:
@@ -45,7 +55,7 @@ class OpenAICompatibleChatClient:
         response = self._client.chat.completions.create(
             model=self.model,
             messages=messages,  # type: ignore[arg-type]
-            temperature=0.2,
+            temperature=self.temperature,
             max_tokens=self.max_tokens,
         )
         content = response.choices[0].message.content
@@ -62,7 +72,7 @@ class OpenAICompatibleChatClient:
         stream = self._client.chat.completions.create(
             model=self.model,
             messages=messages,  # type: ignore[arg-type]
-            temperature=0.2,
+            temperature=self.temperature,
             max_tokens=self.max_tokens,
             stream=True,
         )
@@ -76,6 +86,20 @@ class OpenAICompatibleChatClient:
         if not content:
             raise RuntimeError("Model returned an empty streamed response.")
         return content
+
+
+def create_openai_compatible_client(
+    provider: ModelProviderConfig,
+    profile: ModelProfile,
+) -> OpenAICompatibleChatClient:
+    return OpenAICompatibleChatClient(
+        api_key=provider.api_key,
+        base_url=provider.base_url,
+        model=profile.model,
+        max_tokens=profile.max_tokens,
+        temperature=profile.temperature,
+        default_headers=provider.default_headers,
+    )
 
 
 OpenAIChatClient = OpenAICompatibleChatClient

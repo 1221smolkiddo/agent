@@ -9,6 +9,9 @@ This document summarizes the current state of Agent47 for collaborators.
 - One-shot command mode with `code-agent run`.
 - OpenRouter-compatible model access.
 - Default model set to `qwen/qwen3-coder`.
+- Model profiles for `default`, `planner`, `coder`, `reviewer`, and `fast` runs.
+- Optional per-profile model overrides with explicit `--model` precedence.
+- Provider configuration boundary for OpenAI-compatible clients.
 - Non-workspace question routing so general questions can be answered without inspecting project files.
 - General web search for current external information, with provider fallback.
 - Local `.env` configuration with secrets excluded from git.
@@ -16,6 +19,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - Dry-run mode for inspect-only sessions.
 - Interactive mode starts write-enabled, and write mode is also available through `/write` or non-dry-run CLI usage.
 - Compact model streaming progress is available through `AGENT_STREAM`, `--stream/--no-stream`, and `/stream [off]`.
+- Model profile selection is available through `AGENT_PROFILE`, `--profile`, and `/profile`.
 - Local workspace sandbox mode through `--sandbox` or `/sandbox`.
 - Workspace path guardrails to block access outside the selected workspace.
 - Git-diff awareness through an approved `inspect_git_diff` action that reports dirty paths and can include bounded diff hunks when needed.
@@ -150,5 +154,5 @@ Inside `agent47`:
 - Rich token-level streaming views for future non-JSON frontends.
 - Better repo context selection with a lightweight repo index, symbol/dependency graph, and context ranking.
 - Richer planner fields for files touched, blockers, checks, and ownership.
-- Multi-provider and multi-model support.
+- Additional providers beyond OpenAI-compatible APIs, model fallback, and token/cost tracking.
 - VS Code extension frontend.

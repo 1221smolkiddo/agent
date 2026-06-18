@@ -7,6 +7,7 @@ import typer
 
 from .config import Settings
 from .factory import create_agent
+from .model_profiles import validate_profile_name
 from .permissions import confirm_permission
 from .resume import build_resume_task, format_run_detail
 from .sandbox import create_sandbox_workspace
@@ -23,11 +24,26 @@ history_app = typer.Typer(
 app.add_typer(history_app, name="history")
 
 
+def validate_profile_option(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    try:
+        return validate_profile_name(value)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
 @app.command()
 def run(
     task: str = typer.Argument(..., help="The coding task for the agent."),
     cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
     model: Optional[str] = typer.Option(None, "--model", help="Model override."),
+    profile: Optional[str] = typer.Option(
+        None,
+        "--profile",
+        callback=validate_profile_option,
+        help="Model profile: default, planner, coder, reviewer, or fast.",
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Inspect only; skip writes and shell."),
     sandbox: bool = typer.Option(False, "--sandbox", help="Run inside an isolated workspace copy."),
     stream: bool = typer.Option(True, "--stream/--no-stream", help="Show compact model streaming progress."),
@@ -57,6 +73,7 @@ def run(
         approval_callback=confirm_permission,
         reporter=StatusReporter(),
         stream_model=stream,
+        profile=profile,
     )
     try:
         result = agent.run_detailed(task)
@@ -73,6 +90,12 @@ def resume(
     instruction: str = typer.Argument("", help="Optional extra instruction for the resumed run."),
     cwd: Optional[Path] = typer.Option(None, "--cwd", help="Override workspace directory."),
     model: Optional[str] = typer.Option(None, "--model", help="Model override."),
+    profile: Optional[str] = typer.Option(
+        None,
+        "--profile",
+        callback=validate_profile_option,
+        help="Model profile: default, planner, coder, reviewer, or fast.",
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Inspect only; skip writes and shell."),
     sandbox: bool = typer.Option(False, "--sandbox", help="Run inside an isolated workspace copy."),
     stream: bool = typer.Option(True, "--stream/--no-stream", help="Show compact model streaming progress."),
@@ -114,6 +137,7 @@ def resume(
         approval_callback=confirm_permission,
         reporter=StatusReporter(),
         stream_model=stream,
+        profile=profile,
     )
     try:
         result = agent.run_detailed(task)

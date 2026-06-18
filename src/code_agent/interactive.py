@@ -8,6 +8,7 @@ from typer._click.exceptions import Abort
 
 from .config import Settings
 from .factory import create_agent
+from .model_profiles import validate_profile_name
 from .permissions import confirm_permission
 from .resume import build_resume_task, format_run_detail
 from .sandbox import create_sandbox_workspace
@@ -36,6 +37,7 @@ def main() -> None:
     base_cwd = Path.cwd().resolve()
     cwd = base_cwd
     model: str | None = None
+    profile: str | None = None
     dry_run = DEFAULT_DRY_RUN
     stream_model = settings.agent_stream
     sandbox_enabled = False
@@ -76,6 +78,7 @@ def main() -> None:
                 base_cwd,
                 cwd,
                 model,
+                profile,
                 dry_run,
                 stream_model,
                 sandbox_enabled,
@@ -89,6 +92,7 @@ def main() -> None:
             base_cwd = command_result.base_cwd
             cwd = command_result.cwd
             model = command_result.model
+            profile = command_result.profile
             dry_run = command_result.dry_run
             stream_model = command_result.stream_model
             sandbox_enabled = command_result.sandbox_enabled
@@ -100,6 +104,7 @@ def main() -> None:
             settings=settings,
             cwd=cwd,
             model=model,
+            profile=profile,
             dry_run=dry_run,
             max_steps=max_steps,
             max_failures=max_failures,
@@ -120,6 +125,7 @@ class CommandState:
         base_cwd: Path,
         cwd: Path,
         model: str | None,
+        profile: str | None,
         dry_run: bool,
         stream_model: bool,
         sandbox_enabled: bool,
@@ -130,6 +136,7 @@ class CommandState:
         self.base_cwd = base_cwd
         self.cwd = cwd
         self.model = model
+        self.profile = profile
         self.dry_run = dry_run
         self.stream_model = stream_model
         self.sandbox_enabled = sandbox_enabled
@@ -144,6 +151,7 @@ def handle_command(
     base_cwd: Path,
     cwd: Path,
     model: str | None,
+    profile: str | None,
     dry_run: bool,
     stream_model: bool,
     sandbox_enabled: bool,
@@ -160,6 +168,7 @@ def handle_command(
             base_cwd,
             cwd,
             model,
+            profile,
             dry_run,
             stream_model,
             sandbox_enabled,
@@ -198,6 +207,24 @@ def handle_command(
         if value:
             model = value
         print_panel("Model", model or settings.agent_model)
+    elif command == "/profile":
+        if value:
+            try:
+                profile = validate_profile_name(value)
+            except ValueError as exc:
+                print_panel("Profile", str(exc))
+                return CommandState(
+                    base_cwd,
+                    cwd,
+                    model,
+                    profile,
+                    dry_run,
+                    stream_model,
+                    sandbox_enabled,
+                    max_steps,
+                    max_failures,
+                )
+        print_panel("Profile", profile or settings.agent_profile)
     elif command == "/max-steps":
         if value:
             max_steps = int(value)
@@ -229,6 +256,7 @@ def handle_command(
                 ("Base workspace", base_cwd),
                 ("Workspace", cwd),
                 ("Model", model or settings.agent_model),
+                ("Profile", profile or settings.agent_profile),
                 ("Mode", "dry-run" if dry_run else "write-enabled"),
                 ("Streaming", "on" if stream_model else "off"),
                 ("Sandbox", "on" if sandbox_enabled else "off"),
@@ -244,6 +272,7 @@ def handle_command(
         base_cwd,
         cwd,
         model,
+        profile,
         dry_run,
         stream_model,
         sandbox_enabled,
@@ -265,6 +294,7 @@ Commands:
   /cwd <path>        Change workspace.
   /sandbox [off]     Create and use a sandbox copy, or turn it off.
   /model <name>      Change model for this session.
+  /profile <name>    Change model profile: default, planner, coder, reviewer, or fast.
   /max-steps <n>     Change max agent loop steps.
   /max-failures <n>  Change consecutive failure recovery budget.
   /history           Show recent saved agent runs.
@@ -317,6 +347,7 @@ def run_resume_command(
     settings: Settings,
     cwd: Path,
     model: str | None,
+    profile: str | None,
     dry_run: bool,
     stream_model: bool,
     max_steps: int,
@@ -349,6 +380,7 @@ def run_resume_command(
         settings=settings,
         cwd=cwd,
         model=model,
+        profile=profile,
         dry_run=dry_run,
         max_steps=max_steps,
         max_failures=max_failures,

@@ -5,7 +5,8 @@ from collections.abc import Callable
 
 from .agent import CodingAgent
 from .config import Settings
-from .models import OpenAICompatibleChatClient
+from .model_profiles import resolve_model_profile
+from .models import ModelProviderConfig, create_openai_compatible_client
 from .storage import AgentStorage
 from .status import StatusReporter
 from .tools import ToolRegistry
@@ -21,16 +22,24 @@ def create_agent(
     approval_callback: Callable[[str, str], bool] | None = None,
     reporter: StatusReporter | None = None,
     stream_model: bool | None = None,
+    profile: str | None = None,
 ) -> CodingAgent:
     workspace = cwd.resolve()
-    selected_model = model or settings.agent_model
-    client = OpenAICompatibleChatClient(
+    selected_profile = resolve_model_profile(
+        profile or settings.agent_profile,
+        default_model=model or settings.agent_model,
+        max_tokens=settings.agent_max_tokens,
+        planner_model=None if model else settings.agent_planner_model,
+        coder_model=None if model else settings.agent_coder_model,
+        reviewer_model=None if model else settings.agent_reviewer_model,
+        fast_model=None if model else settings.agent_fast_model,
+    )
+    provider = ModelProviderConfig(
         api_key=settings.model_api_key,
         base_url=settings.model_base_url,
-        model=selected_model,
-        max_tokens=settings.agent_max_tokens,
         default_headers=settings.model_headers,
     )
+    client = create_openai_compatible_client(provider, selected_profile)
     storage = AgentStorage(settings.agent_db_path)
     return CodingAgent(
         cwd=workspace,
