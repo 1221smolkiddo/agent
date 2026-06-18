@@ -131,7 +131,7 @@ All file access remains workspace-guarded. Sensitive local credential files such
 
 Project search uses `ripgrep` when available and falls back to a built-in Python search when `ripgrep` is missing from the agent process PATH. Search skips local state and secret files such as `.env`, `.git`, `.code-agent`, caches, and virtual environments.
 
-Shell commands are classified before approval. Destructive commands such as `git reset --hard`, recursive force deletes, and aggressive `git clean` forms are blocked by policy; install/network commands are labeled high risk; verification and read-only commands get lower-risk labels. Tool outputs are redacted for common secret patterns before they are returned to the model or stored.
+Shell commands are classified before approval. Destructive commands such as `git reset --hard`, recursive force deletes, and aggressive `git clean` forms are blocked by policy; install/network commands are labeled high risk; verification and read-only commands get lower-risk labels. Tool outputs are redacted for common secret patterns before they are returned to the model or stored. Large approval previews and mutation diffs are bounded so long generated files do not flood the terminal or model context.
 
 Web search approval prompts include the provider domains and query. Agent47 blocks localhost, private-network, link-local, reserved, and multicast web targets, and filters unsafe result URLs before returning search results.
 
@@ -161,6 +161,7 @@ The CLI prints status lines while the agent works:
 - `EDITING applying patch` for structured patch edits.
 - `INSTALLING`, `BUILDING`, `TESTING`, or `CHECKING` for recognized shell commands.
 - `RECOVERING` when a tool fails and the agent is trying another path.
+- Invalid model action responses are retried automatically, including common cases where a valid JSON action is wrapped in prose or a code fence.
 - `DONE` when the agent reaches a final answer.
 
 When Agent47 creates durable plan checkpoints, the CLI and interactive shell render the latest plan snapshot before the final response so completed, current, blocked, and pending steps are visible.

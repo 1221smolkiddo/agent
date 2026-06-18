@@ -1,7 +1,15 @@
 from pathlib import Path
 
 import code_agent.tools as tools_module
-from code_agent.schema import DeleteFileAction, ListFilesAction, ReadFileAction, SearchAction, WebSearchAction
+from code_agent.permissions import format_permission_detail
+from code_agent.schema import (
+    DeleteFileAction,
+    ListFilesAction,
+    ReadFileAction,
+    SearchAction,
+    WebSearchAction,
+    WriteFileAction,
+)
 from code_agent.tools import BingParser, ToolRegistry
 
 
@@ -63,6 +71,35 @@ def test_delete_file_with_permission_succeeds(tmp_path: Path) -> None:
     assert result.ok
     assert "Deleted notes.md." in result.output
     assert not (tmp_path / "notes.md").exists()
+
+
+def test_permission_detail_truncates_large_preview() -> None:
+    detail = "\n".join(f"line {index}" for index in range(200))
+
+    rendered = format_permission_detail(detail, max_chars=300, max_lines=20)
+
+    assert "line 0" in rendered
+    assert "line 19" in rendered
+    assert "line 20" not in rendered
+    assert "<preview truncated:" in rendered
+
+
+def test_write_file_returns_truncated_large_diff_to_model(tmp_path: Path) -> None:
+    captured_details: list[str] = []
+
+    def approve(_action: str, detail: str) -> bool:
+        captured_details.append(detail)
+        return True
+
+    tools = ToolRegistry(workspace=tmp_path, dry_run=False, approval_callback=approve)
+    content = "\n".join(f"long generated line {index}" for index in range(2000))
+
+    result = tools.run(WriteFileAction(type="write_file", path="long.md", content=content))
+
+    assert result.ok
+    assert len(result.output) < len(captured_details[0])
+    assert "<truncated" in result.output
+    assert (tmp_path / "long.md").read_text(encoding="utf-8") == content
 
 
 def test_delete_file_dry_run_does_not_remove_file(tmp_path: Path) -> None:

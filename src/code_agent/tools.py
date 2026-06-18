@@ -44,6 +44,8 @@ IGNORED_NAMES = {
     "node_modules",
 }
 
+MAX_MUTATION_OUTPUT_CHARS = 12000
+
 
 class ToolRegistry:
     def __init__(
@@ -135,7 +137,7 @@ class ToolRegistry:
             return ToolResult(ok=False, output="Permission denied for write_file.")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
-        return ToolResult(ok=True, output=diff)
+        return ToolResult(ok=True, output=self._truncate(diff, MAX_MUTATION_OUTPUT_CHARS))
 
     def _edit_file(self, requested_path: str, find: str, replace: str) -> ToolResult:
         if self.dry_run:
@@ -157,7 +159,7 @@ class ToolRegistry:
         if not self._approve("edit_file", diff):
             return ToolResult(ok=False, output="Permission denied for edit_file.")
         target.write_text(after, encoding="utf-8")
-        return ToolResult(ok=True, output=diff)
+        return ToolResult(ok=True, output=self._truncate(diff, MAX_MUTATION_OUTPUT_CHARS))
 
     def _apply_patch(self, patch: str) -> ToolResult:
         if self.dry_run:
@@ -210,7 +212,10 @@ class ToolRegistry:
         if not self._approve("delete_file", diff or f"Delete {requested_path}"):
             return ToolResult(ok=False, output="Permission denied for delete_file.")
         target.unlink()
-        return ToolResult(ok=True, output=f"Deleted {requested_path}.\n{diff}")
+        return ToolResult(
+            ok=True,
+            output=self._truncate(f"Deleted {requested_path}.\n{diff}", MAX_MUTATION_OUTPUT_CHARS),
+        )
 
     def _run_shell(self, command: str) -> ToolResult:
         if self.dry_run:

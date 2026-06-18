@@ -61,6 +61,22 @@ def test_agent_recovers_after_failed_tool_result(tmp_path: Path) -> None:
     assert "recovery_instruction" in model.messages_seen[1][-1]["content"]
 
 
+def test_agent_accepts_json_action_wrapped_in_prose_and_fence(tmp_path: Path) -> None:
+    model = FakeModel(
+        [
+            'Sure:\n```json\n{"type":"list_files","path":"."}\n```\nI will continue.',
+            '{"type":"final","message":"done"}',
+        ]
+    )
+    tools = RecoveringTools()
+    agent = make_agent(tmp_path, model, tools)
+
+    result = agent.run("inspect this project")
+
+    assert result == "done"
+    assert tools.calls == 1
+
+
 def test_agent_records_plan_updates_without_calling_tools(tmp_path: Path) -> None:
     model = FakeModel(
         [

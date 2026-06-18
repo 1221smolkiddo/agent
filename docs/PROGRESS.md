@@ -96,6 +96,7 @@ There are currently **15 model-requestable actions**:
 | Shell command risk policy | Enabled |
 | Web/network policy | Enabled |
 | Secret output redaction | Enabled |
+| Bounded approval previews and mutation diff outputs | Enabled |
 | Project search: ripgrep plus Python fallback | Enabled |
 | Web search | Enabled with user approval |
 | Local workspace sandbox | Enabled |
@@ -165,6 +166,7 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 - Shell commands are classified by risk before approval, and destructive commands such as `git reset --hard`, recursive force deletes, and aggressive `git clean` forms are blocked by policy.
 - Web search approval prompts include provider domains and query text, and localhost/private-network web targets are blocked or filtered.
 - Tool outputs are redacted for common secret key/value pairs, bearer tokens, and OpenAI-style secret keys before model/storage use.
+- Large approval previews and mutation diff outputs are truncated before terminal/model use to avoid flooding long generated files.
 - `--dry-run` skips writes and shell commands.
 - `agent47` interactive mode starts write-enabled, while `/dry-run` remains available for inspect-only sessions.
 - Human approval prompts are implemented for write/edit/apply-patch/shell/web-search actions.
@@ -182,7 +184,7 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 - Verification-like shell commands are recorded and appended to final summaries as pass/fail outcomes.
 - `inspect_git_diff` shows dirty files and optional bounded diff hunks so Agent47 can avoid overwriting existing user changes.
 - Failed automatic verification is fed back to the model for recovery instead of allowing a premature final answer.
-- Failed tool calls are automatically fed back to the model for recovery until the failure budget is exhausted.
+- Failed tool calls and invalid model action responses are automatically fed back to the model for recovery until the failure budget is exhausted.
 - Multi-file change set metadata and richer patch conflict recovery are not implemented yet.
 
 ## Last Updated

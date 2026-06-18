@@ -19,7 +19,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - Workspace path guardrails to block access outside the selected workspace.
 - Git-diff awareness through an approved `inspect_git_diff` action that reports dirty paths and can include bounded diff hunks when needed.
 - File operations with `pathlib`.
-- Diff previews for write, edit, delete, and structured patch operations.
+- Bounded diff previews for write, edit, delete, and structured patch operations.
 - Structured `apply_patch` action backed by `git apply`.
 - First-class `delete_file` action for approved file removal.
 - Verification command detection for Python, Node, Rust, and Go projects.
@@ -31,6 +31,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - Destructive shell commands are blocked before approval.
 - Sensitive credential files such as `.env`, `.npmrc`, `.pypirc`, and `.netrc` are refused by file mutation/read tools.
 - Tool outputs are redacted for common secret patterns before model/storage use.
+- Large mutation diffs are truncated before model/storage use so long files do not overwhelm recovery turns.
 - Web search approval prompts include provider domains and query text.
 - Localhost, private-network, link-local, reserved, and multicast web targets are blocked by network policy.
 - Unsafe web result URLs are filtered before results are returned to the model.
@@ -44,6 +45,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - Plan updates are saved in run history and included in resume context.
 - CLI and `agent47` render the latest plan snapshot before the final response when plan updates exist.
 - Automatic recovery loop when a tool fails.
+- More tolerant action parsing for valid JSON actions wrapped in prose or code fences.
 - Workspace tools are blocked for prompts that do not appear to be about the local project, files, code changes, tests, or commands.
 - Mutation tool results include changed paths and automatic verification results or a verification hint for the next model step.
 - Bordered terminal panels distinguish user prompts, Agent47 responses, help, status, and history.
@@ -117,6 +119,7 @@ Inside `agent47`:
 - Path safety.
 - Sandbox copying and exclusion behavior.
 - Tool permission behavior.
+- Permission preview truncation for large generated file diffs.
 - Shell command policy and secret redaction.
 - Network policy controls for web search.
 - Agent failure recovery.

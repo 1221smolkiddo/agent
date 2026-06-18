@@ -92,7 +92,7 @@ class CodingAgent:
                 self.storage.add_step(run_id, "assistant", {"raw": response})
                 self.storage.add_step(run_id, "tool", payload)
                 failed_actions.append(payload)
-                self._report_recovery("model returned invalid action JSON")
+                self._report_recovery("invalid model action; retrying")
                 if consecutive_failures >= self.max_failures:
                     return AgentRunResult(
                         message=self._failure_summary(consecutive_failures, parse_error),
@@ -316,15 +316,27 @@ class CodingAgent:
 
     def _parse_action(self, raw: str) -> tuple[AgentAction | None, str | None]:
         try:
-            start = raw.index("{")
-            end = raw.rindex("}") + 1
-            data: Any = json.loads(raw[start:end])
+            data = self._extract_first_json_object(raw)
             return ACTION_ADAPTER.validate_python(data), None
         except (ValueError, json.JSONDecodeError, ValidationError) as exc:
             return None, (
                 "The model response was not a valid action JSON object. "
                 f"Error: {exc}. Reply with one valid action JSON object and continue solving the task."
             )
+
+    @staticmethod
+    def _extract_first_json_object(raw: str) -> Any:
+        decoder = json.JSONDecoder()
+        for index, char in enumerate(raw):
+            if char != "{":
+                continue
+            try:
+                data, _end = decoder.raw_decode(raw[index:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(data, dict):
+                return data
+        raise ValueError("No JSON object found in model response.")
 
     def _run_tool(self, action: AgentAction) -> ToolResult:
         try:
