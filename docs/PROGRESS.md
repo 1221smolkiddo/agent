@@ -6,15 +6,15 @@ This document tracks how far the coding agent has come and what collaborators ca
 
 **Stage:** Basic single-model CLI agent with Agent47 engineering protocol
 
-**Approximate progress toward an industry-standard local AI coding agent:** 60%
+**Approximate progress toward an industry-standard local AI coding agent:** 62%
 
-The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, durable plan checkpoints with target-file, ownership, check, blocker, and risk metadata, persisted structured work reports, non-workspace intent routing, general web search with provider fallback, structured patch application with multi-file change-set metadata, approved git-diff awareness, lightweight repo mapping, task-aware relevance ranking, compact symbol indexing, deterministic local evals for baseline safety regressions and fixture-based coding tasks, a versioned newline-delimited JSON protocol with correlated stdin approval responses for future frontends, model fallback with usage/cost tracking, install diagnostics and cross-platform install guidance, verification command detection/suggestion/automatic execution/outcome summaries, disk-verified mutation tracking for truthful final answers, prompt-injection defenses for untrusted tool output, clearer interactive terminal panels with short transcript context and structured session state, run history detail views, resumable runs, tests, GitHub collaboration setup, and release metadata/checklists for public alpha preparation.
+The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, durable plan checkpoints with target-file, ownership, check, blocker, and risk metadata, persisted structured work reports, non-workspace intent routing, general web search with provider fallback, structured patch application with multi-file change-set metadata and inverse-patch revert support, approved git-diff awareness, lightweight repo mapping, task-aware relevance ranking, compact symbol indexing, deterministic local evals for baseline safety regressions and fixture-based coding tasks, a versioned newline-delimited JSON protocol with correlated stdin approval responses for future frontends, model fallback with usage/cost tracking, install diagnostics and cross-platform install guidance, verification command detection/suggestion/automatic execution/outcome summaries, disk-verified mutation tracking for truthful final answers, prompt-injection defenses for untrusted tool output, clearer interactive terminal panels with short transcript context and structured session state, run history detail views, resumable runs, tests, GitHub collaboration setup, and release metadata/checklists for public alpha preparation.
 
 This file should be updated whenever a meaningful Agent47 capability is added. Keep the enabled commands/actions current, move completed items out of "What Is Left" when they land, and update the percentage only when the agent gains real product capability rather than documentation alone.
 
 ## Enabled CLI Commands
 
-There are currently **10 user-facing CLI command entries**:
+There are currently **11 user-facing CLI command entries**:
 
 | Command | Purpose |
 | --- | --- |
@@ -24,6 +24,7 @@ There are currently **10 user-facing CLI command entries**:
 | `code-agent history` | Show recent saved agent runs from SQLite. |
 | `code-agent history show <run-id>` | Show saved steps for one agent run. |
 | `code-agent resume <run-id>` | Resume a saved run with compact prior context. |
+| `code-agent revert <run-id>` | Revert verified file changes from a prior run. |
 | `code-agent sandbox diff <sandbox-path>` | Show changed files and unified diffs between a sandbox and base workspace. |
 | `code-agent sandbox apply <sandbox-path>` | Promote approved sandbox changes back to the base workspace. |
 | `code-agent evals` | Run offline deterministic safety and regression evals. |
@@ -41,13 +42,14 @@ uv run code-agent run --max-failures 5 "Recover from failed tool attempts"
 uv run code-agent history
 uv run code-agent history show 12
 uv run code-agent resume 12 "Continue after the failed check"
+uv run code-agent revert 12
 uv run code-agent sandbox diff .code-agent/sandboxes/sandbox-20260619-120000
 uv run code-agent sandbox apply .code-agent/sandboxes/sandbox-20260619-120000
 uv run code-agent evals
 agent47
 ```
 
-Inside `agent47`, there are currently **18 slash commands**:
+Inside `agent47`, there are currently **19 slash commands**:
 
 | Slash command | Purpose |
 | --- | --- |
@@ -67,6 +69,7 @@ Inside `agent47`, there are currently **18 slash commands**:
 | `/history` | Show recent saved agent runs. |
 | `/history-show <run-id>` | Show saved steps for one agent run. |
 | `/resume <run-id> [instruction]` | Resume a saved run with optional extra instruction. |
+| `/revert <run-id>` | Revert verified file changes from a prior run. |
 | `/stop` | Quit interactive mode. |
 | `/exit` | Quit interactive mode. |
 
@@ -136,6 +139,7 @@ There are currently **18 model-requestable actions**:
 | Automatic focused verification execution | Enabled |
 | Verification outcome summaries | Enabled |
 | Disk-verified mutation tracking for final-answer honesty | Enabled |
+| Patch revert from stored inverse changes | Enabled |
 | Operation status labels | Enabled |
 | Compact model streaming progress | Enabled |
 | Bordered interactive terminal panels | Enabled |
@@ -181,10 +185,10 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 ## Next Recommended Build Order
 
 1. Add dependency graph indexing on top of the symbol index.
-2. Add patch revert from stored inverse changes.
-3. Add storage migrations for durable public releases.
-4. Add richer terminal/editor diff approval UI.
-5. Add stronger process isolation for sandboxed commands.
+2. Add storage migrations for durable public releases.
+3. Add richer terminal/editor diff approval UI.
+4. Add stronger process isolation for sandboxed commands.
+5. Add formal security policy and threat model.
 
 ## Current Safety Notes
 
@@ -203,7 +207,7 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 - `--dry-run` skips writes and shell commands.
 - `agent47` interactive mode starts write-enabled, while `/dry-run` remains available for inspect-only sessions.
 - Human approval prompts are implemented for write/edit/apply-patch/shell/web-search actions.
-- Mutation attempts are tracked and verified against disk state so final answers cannot claim file creation, edits, patches, or deletions without a verified successful mutation.
+- Mutation attempts are tracked and verified against disk state so final answers cannot claim file creation, edits, patches, or deletions without a verified successful mutation. Successful mutations also store inverse patches plus before/after hashes for audited revert.
 - Interactive session state tracks the current task, pending user info, target files, changed files, blockers, and recent tool results for follow-up turns.
 - Interactive mode starts with a centered `A G E N T 4 7` banner and uses optional terminal colors for panels, prompts, and status labels.
 - Streaming-capable model clients now feed compact `STREAMING` progress markers in CLI and `agent47`, with `/stream [off]`, `--stream/--no-stream`, and `AGENT_STREAM` controls.
@@ -216,6 +220,7 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 - CLI and `agent47` render a structured work report before the final response for non-trivial runs, including current task, current step, files, planned targets, file ownership, planned checks, blockers, risk notes, progress, commands, validation, change summary, changed-line diff review, and final outcome.
 - Structured work reports are persisted in SQLite, shown in `history show`, and included in resume context.
 - `apply_patch` validates target paths, previews a multi-file change-set summary plus the full patch for approval, checks patch applicability, applies it with `git apply`, and records file-level operation/addition/deletion metadata.
+- `code-agent revert <run-id>` and `/revert <run-id>` preview and apply stored inverse patches, fail on conflicts, and verify reverted files against recorded pre-change hashes/existence.
 - `delete_file` removes files through a first-class approved mutation action instead of shell commands.
 - `detect_verification` scans known project files for likely test, lint, typecheck, and build commands.
 - `suggest_verification` ranks focused checks from changed paths, and successful file mutations now trigger automatic focused verification when commands are detected.

@@ -18,6 +18,7 @@ Use this checklist before tagging any public alpha release.
 - [ ] JSON protocol approvals fail closed unless a matching response is supplied.
 - [ ] Patch previews include every changed file before approval.
 - [ ] Patch apply metadata records every changed file after apply.
+- [ ] Patch revert previews inverse changes and verifies reverted file hashes.
 - [ ] Mutation verification prevents false final-answer success claims.
 
 ## Verification Gates

@@ -21,6 +21,7 @@ from .protocol import (
     json_approval_callback,
 )
 from .resume import build_resume_task, format_run_detail
+from .revert import apply_revert_plan, build_revert_plan, format_revert_preview
 from .sandbox import (
     create_sandbox_workspace,
     diff_sandbox_workspace,
@@ -314,6 +315,29 @@ def resume(
         raise typer.Exit(code=130)
     print_work_report_panel(result)
     typer.echo(result.message)
+
+
+@app.command("revert")
+def revert_command(
+    run_id: int = typer.Argument(..., help="Run ID whose verified changes should be reverted."),
+) -> None:
+    """Revert verified file changes from a previous run."""
+    storage = AgentStorage(Settings().agent_db_path)
+    try:
+        plan = build_revert_plan(storage, run_id)
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1)
+    typer.echo(format_revert_preview(plan))
+    result = apply_revert_plan(
+        storage,
+        plan,
+        approval_callback=confirm_permission,
+    )
+    typer.echo(result.output)
+    typer.echo(f"Revert run id: {result.run_id}")
+    if not result.ok:
+        raise typer.Exit(code=1)
 
 
 @history_app.callback(invoke_without_command=True)

@@ -11,6 +11,7 @@ from .factory import create_agent
 from .model_profiles import validate_profile_name
 from .permissions import confirm_permission
 from .resume import build_resume_task, format_run_detail
+from .revert import apply_revert_plan, build_revert_plan, format_revert_preview
 from .sandbox import (
     create_sandbox_workspace,
     diff_sandbox_workspace,
@@ -282,6 +283,8 @@ def handle_command(
             max_failures=max_failures,
             session_state=session_state,
         )
+    elif command == "/revert":
+        run_revert_command(settings, value)
     elif command == "/history-show":
         print_history_detail(settings, value)
     elif command == "/status":
@@ -337,6 +340,7 @@ Commands:
   /history           Show recent saved agent runs.
   /history-show <id> Show saved steps for one run.
   /resume <id> [msg] Resume a saved run with optional extra instruction.
+  /revert <id>       Revert verified file changes from a prior run.
   /stop              Quit.
   /exit              Quit.
 """.strip()
@@ -430,6 +434,27 @@ def run_resume_command(
     print_panel("Agent47", result.message)
     if session_state is not None:
         session_state.update(f"resume run {run_id}", result)
+
+
+def run_revert_command(settings: Settings, value: str) -> None:
+    if not value:
+        print_panel("Revert", "Usage: /revert <run-id>")
+        return
+    try:
+        run_id = int(value)
+    except ValueError:
+        print_panel("Revert", f"Invalid run id: {value}")
+        return
+    storage = AgentStorage(settings.agent_db_path)
+    try:
+        plan = build_revert_plan(storage, run_id)
+    except ValueError as exc:
+        print_panel("Revert", str(exc))
+        return
+    print_panel("Revert Preview", format_revert_preview(plan))
+    result = apply_revert_plan(storage, plan, approval_callback=confirm_permission)
+    body = result.output + f"\nRevert run id: {result.run_id}"
+    print_panel("Revert", body)
 
 
 def is_casual_greeting(user_input: str) -> bool:

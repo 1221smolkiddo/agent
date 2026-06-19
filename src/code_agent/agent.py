@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,7 @@ from typing import Any
 from pydantic import TypeAdapter, ValidationError
 
 from .models import ChatMessage, ModelClient
+from .patches import git_style_unified_diff
 from .prompts import system_prompt
 from .schema import AgentAction, FinalAction, RunShellAction, ToolResult, UpdatePlanAction
 from .storage import AgentStorage
@@ -737,10 +739,15 @@ class CodingAgent:
         record.update(
             {
                 "verified": True,
+                "exists_before": before_exists,
                 "exists_after": after_exists,
                 "content_changed": content_changed,
             }
         )
+        if before_exists and isinstance(before_content, str):
+            record["before_sha256"] = self._content_sha256(before_content)
+        if after_exists and isinstance(after_content, str):
+            record["after_sha256"] = self._content_sha256(after_content)
 
         if action.type == "write_file":
             expected = getattr(action, "content", None)
@@ -760,7 +767,19 @@ class CodingAgent:
                 record["verification_error"] = "delete_file reported success but file still exists"
             elif not before_exists:
                 record["verification_error"] = "delete_file target did not exist before mutation"
+        if record.get("ok") is True and content_changed:
+            record["inverse_patch"] = git_style_unified_diff(
+                path,
+                str(after_content or ""),
+                str(before_content or ""),
+                before_exists=after_exists,
+                after_exists=before_exists,
+            )
         return record
+
+    @staticmethod
+    def _content_sha256(content: str) -> str:
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
     def _mutation_state_after_path(self, path: str) -> dict[str, Any]:
         try:

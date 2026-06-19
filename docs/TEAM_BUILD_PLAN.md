@@ -123,7 +123,7 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 - [x] Issue 4: Patch Model. Owner: Agent47
 - [x] Issue 5: Patch Preview And Approval. Owner: Agent47
 - [x] Issue 6: Patch Apply And Verify. Owner: Agent47
-- [ ] Issue 7: Patch Revert. Owner:
+- [x] Issue 7: Patch Revert. Owner: Agent47
 
 ### Phase 3: Permissions And Policy
 
@@ -380,6 +380,8 @@ Acceptance criteria:
 
 - A run with file changes can be reverted.
 - Revert is tested.
+
+Status: **Baseline done**. Successful verified mutations now store inverse patches plus before/after file hashes and existence facts. Added `code-agent revert <run-id>` and `/revert <run-id>` to preview inverse patches, apply them through the normal patch approval path, fail on conflicts, and verify reverted files against recorded pre-change state. Tests cover approved revert, denied revert, conflict protection, created-file removal, and CLI revert.
 
 ## Phase 3: Permissions And Policy
 

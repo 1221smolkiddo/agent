@@ -70,6 +70,7 @@ code-agent evals
 code-agent history
 code-agent history show 12
 code-agent resume 12 "Continue from the failed verification"
+code-agent revert 12
 code-agent sandbox diff .code-agent/sandboxes/sandbox-20260619-120000
 code-agent sandbox apply .code-agent/sandboxes/sandbox-20260619-120000
 ```
@@ -124,6 +125,7 @@ agent47: /profile coder
 agent47: /max-failures 5
 agent47: /history-show 12
 agent47: /resume 12 continue from the failed verification
+agent47: /revert 12
 agent47: /stop
 agent47: /exit
 ```

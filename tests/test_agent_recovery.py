@@ -521,17 +521,17 @@ def test_agent_accepts_deleted_claim_after_delete_file(tmp_path: Path) -> None:
 
     assert result.message == "I removed hello_world.py from the workspace."
     assert result.changed_paths == ["hello_world.py"]
-    assert result.mutation_records == [
-        {
-            "action": "delete_file",
-            "path": "hello_world.py",
-            "ok": True,
-            "output": "recovered",
-            "verified": True,
-            "exists_after": False,
-            "content_changed": True,
-        }
-    ]
+    assert len(result.mutation_records) == 1
+    mutation = result.mutation_records[0]
+    assert mutation["action"] == "delete_file"
+    assert mutation["path"] == "hello_world.py"
+    assert mutation["ok"] is True
+    assert mutation["verified"] is True
+    assert mutation["exists_before"] is True
+    assert mutation["exists_after"] is False
+    assert mutation["content_changed"] is True
+    assert mutation["before_sha256"]
+    assert "diff --git a/hello_world.py b/hello_world.py" in mutation["inverse_patch"]
     report = agent.storage.get_work_report(result.run_id)
     assert report is not None
     assert report["payload"]["type"] == "work_report"

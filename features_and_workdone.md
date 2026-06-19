@@ -43,6 +43,8 @@ This document summarizes the current state of Agent47 for collaborators.
 - File operations with `pathlib`.
 - Bounded diff previews for write, edit, delete, and structured patch operations.
 - Structured `apply_patch` action backed by `git apply`.
+- Stored inverse patches and before/after hashes for verified mutations.
+- Patch revert through `code-agent revert <run-id>` and `/revert <run-id>`, with preview, approval, conflict detection, and post-revert verification.
 - First-class `delete_file` action for approved file removal.
 - Verification command detection for Python, Node, Rust, and Go projects.
 - Focused verification command suggestions based on changed file paths.
@@ -63,6 +65,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - SQLite run history.
 - Run detail views through `code-agent history show <run-id>` and `/history-show <run-id>`.
 - Resumable runs through `code-agent resume <run-id>` and `/resume <run-id>`.
+- Revert runs through `code-agent revert <run-id>` and `/revert <run-id>`.
 - Durable `update_plan` checkpoints with `pending`, `in_progress`, `completed`, and `blocked` step statuses plus target files, owned files, checks, blockers, and risk notes.
 - Plan updates are saved in run history, rendered in live CLI panels, summarized in work reports, and included in resume context.
 - CLI and `agent47` render structured work reports before the final response for non-trivial runs.
@@ -72,6 +75,7 @@ This document summarizes the current state of Agent47 for collaborators.
 - More tolerant action parsing for valid JSON actions wrapped in prose or code fences.
 - Workspace tools are blocked for prompts that do not appear to be about the local project, files, code changes, tests, or commands.
 - Mutation tool results include verified changed paths, post-mutation disk facts, and automatic verification results or a verification hint for the next model step.
+- Mutation tool results include inverse patches and hashes so verified changes can be reverted without blind overwrites.
 - Bordered terminal panels distinguish user prompts, Agent47 responses, help, status, and history.
 - Interactive mode keeps a short in-memory transcript for follow-up summaries and recaps.
 - Interactive mode keeps structured session state for the current task, pending user info, target files, last changed files, blockers, and recent tool results.
@@ -107,6 +111,7 @@ Inside `agent47`:
 /max-steps 20
 /max-failures 5
 /history
+/revert 12
 /stop
 ```
 
@@ -154,6 +159,7 @@ Inside `agent47`:
 - Agent failure recovery.
 - False-completion prevention after blocked writes.
 - Structured patch application and path validation.
+- Patch revert from stored inverse changes.
 - Verification command detection.
 - Focused verification command suggestion.
 - Automatic focused verification execution.

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import shutil
-import difflib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,6 +8,7 @@ from typing import Any
 
 from .schema import ApplyPatchAction
 from .tools import ToolRegistry
+from .patches import git_style_unified_diff
 
 
 SANDBOX_EXCLUDES = {
@@ -115,18 +115,13 @@ def diff_sandbox_workspace(
             continue
 
         changed_paths.append(relative)
-        fromfile = f"a/{relative}" if before_exists else "/dev/null"
-        tofile = f"b/{relative}" if after_exists else "/dev/null"
-        body = "\n".join(
-            difflib.unified_diff(
-                before if before_exists else [],
-                after if after_exists else [],
-                fromfile=fromfile,
-                tofile=tofile,
-                lineterm="",
-            )
+        diff = git_style_unified_diff(
+            relative,
+            "\n".join(before),
+            "\n".join(after),
+            before_exists=before_exists,
+            after_exists=after_exists,
         )
-        diff = _git_style_file_diff(relative, body, before_exists, after_exists)
         if diff:
             patch_parts.append(diff.rstrip() + "\n")
 
@@ -270,20 +265,3 @@ def _verify_promoted_files(diff: SandboxDiff) -> str | None:
             return f"Sandbox promotion verification failed for {relative}: content mismatch."
     return None
 
-
-def _git_style_file_diff(
-    relative: str,
-    body: str,
-    before_exists: bool,
-    after_exists: bool,
-) -> str:
-    if not body:
-        return ""
-    header = [f"diff --git a/{relative} b/{relative}"]
-    if not before_exists:
-        header.extend(["new file mode 100644", "index 0000000..0000000"])
-    elif not after_exists:
-        header.extend(["deleted file mode 100644", "index 0000000..0000000"])
-    else:
-        header.append("index 0000000..0000000 100644")
-    return "\n".join([*header, body])
