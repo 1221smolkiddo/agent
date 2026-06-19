@@ -191,9 +191,12 @@ def builtin_fixture_eval_cases() -> list[FixtureEvalCase]:
                 "pyproject.toml": (
                     "[project]\n"
                     'name = "fixture"\n'
+                    'version = "0.1.0"\n'
+                    'requires-python = ">=3.9"\n'
                     'dependencies = ["pytest"]\n\n'
                     "[tool.pytest.ini_options]\n"
                     'testpaths = ["tests"]\n'
+                    'pythonpath = ["."]\n'
                 ),
                 "calculator.py": "def add(a, b):\n    return a - b\n",
                 "tests/test_calculator.py": (
@@ -201,6 +204,7 @@ def builtin_fixture_eval_cases() -> list[FixtureEvalCase]:
                     "def test_add():\n"
                     "    assert add(2, 3) == 5\n"
                 ),
+                "uv.lock": "version = 1\nrequires-python = \">=3.9\"\n",
             },
             responses=[
                 (
@@ -297,6 +301,7 @@ def run_fixture_eval(case: FixtureEvalCase) -> tuple[bool, str]:
             dry_run=False,
             approval_callback=case.approval_policy,
         )
+
         agent = _make_fixture_agent(
             workspace,
             model,

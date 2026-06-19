@@ -44,12 +44,21 @@ class JsonProtocolReporter:
     def __init__(self, emitter: JsonEventEmitter) -> None:
         self.emitter = emitter
         self._stream_chars = 0
+        self._has_plan = False
+        self._consecutive_retries = 0
 
     def thinking(self, step: int) -> None:
-        self.emitter.emit("status", label="THINKING", detail=f"step {step}", step=step)
+        label = "PLANNING" if self._has_plan else "THINKING"
+        self.emitter.emit("status", label=label, detail=f"step {step}", step=step)
 
     def action(self, action: AgentAction) -> None:
+        self._consecutive_retries = 0
         status = format_action_status(action)
+        if status is None:
+            from .schema import UpdatePlanAction as UP
+            if isinstance(action, UP):
+                self._has_plan = True
+            return
         label, _, detail = status.partition(" ")
         self.emitter.emit(
             "action_started",
@@ -58,16 +67,23 @@ class JsonProtocolReporter:
             detail=detail,
             action=action.model_dump(exclude_none=True),
         )
+        from .schema import UpdatePlanAction as UP
+        if isinstance(action, UP):
+            self._has_plan = True
 
     def recovery(self, detail: str) -> None:
-        self.emitter.emit("recovery", label="RECOVERING", detail=detail)
+        self._consecutive_retries += 1
+        # Only emit recovery events on 2nd+ consecutive retry
+        if self._consecutive_retries >= 2:
+            self.emitter.emit("recovery", label="RETRYING", detail=_friendly_retry_detail(detail))
 
     def done(self) -> None:
-        self.emitter.emit("status", label="DONE", detail="")
+        # Suppress DONE — response itself implies completion
+        pass
 
     def model_stream_start(self, step: int) -> None:
         self._stream_chars = 0
-        self.emitter.emit("model_stream_started", step=step)
+        self.emitter.emit("model_stream_started", label="GENERATING", step=step)
 
     def model_stream_chunk(self, chunk: str) -> None:
         self._stream_chars += len(chunk)
@@ -75,6 +91,22 @@ class JsonProtocolReporter:
 
     def model_stream_end(self) -> None:
         self.emitter.emit("model_stream_finished")
+
+    def workspace_analysis(self, summary: str) -> None:
+        self.emitter.emit("workspace_analysis", summary=summary)
+
+    def mutation_preview(
+        self,
+        creates: list[str],
+        modifies: list[str],
+        deletes: list[str],
+    ) -> None:
+        self.emitter.emit(
+            "mutation_preview",
+            creates=creates,
+            modifies=modifies,
+            deletes=deletes,
+        )
 
 
 def json_approval_callback(
@@ -209,7 +241,7 @@ def emit_run_failed(emitter: JsonEventEmitter, message: str, *, code: str = "run
 def result_payload(result: AgentRunResult) -> dict[str, Any]:
     return {
         "run_id": result.run_id,
-        "task": result.task,
+        "task": getattr(result, "clean_task", "") or result.task,
         "message": result.message,
         "blocked": result.blocked,
         "changed_paths": result.changed_paths,
@@ -222,3 +254,16 @@ def result_payload(result: AgentRunResult) -> dict[str, Any]:
         "failed_actions": result.failed_actions,
         "denied_actions": result.denied_actions,
     }
+
+
+def _friendly_retry_detail(detail: str) -> str:
+    lowered = detail.lower()
+    if "invalid model action" in lowered or "parse" in lowered:
+        return "retrying with a cleaner response"
+    if "non-workspace" in lowered or "blocked workspace tool" in lowered:
+        return "switching back to chat mode"
+    if "tool failed" in lowered:
+        return "trying another approach"
+    if "model failed" in lowered:
+        return "model call failed"
+    return "trying again"

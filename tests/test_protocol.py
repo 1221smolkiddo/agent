@@ -44,16 +44,15 @@ def test_json_protocol_reporter_emits_action_events() -> None:
 
     reporter.thinking(1)
     reporter.action(ReadFileAction(type="read_file", path="README.md"))
-    reporter.recovery("try again")
-    reporter.done()
+    reporter.recovery("try again")  # First retry: suppressed
+    reporter.done()  # Suppressed
 
     events = parse_json_lines(stream.getvalue())
     assert [event["event"] for event in events] == [
         "status",
         "action_started",
-        "recovery",
-        "status",
     ]
+    assert events[0]["label"] == "THINKING"
     assert events[1]["action_type"] == "read_file"
     assert events[1]["label"] == "READING"
     assert events[1]["action"] == {"type": "read_file", "path": "README.md"}

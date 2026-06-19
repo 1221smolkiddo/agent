@@ -4,6 +4,7 @@ from typer._click.exceptions import Abort
 import code_agent.interactive as interactive
 from code_agent.agent import AgentRunResult
 from code_agent.interactive import DEFAULT_DRY_RUN, read_prompt, run_interactive_turn
+from code_agent.interactive import is_persona_instruction
 from code_agent.session import SessionState
 from code_agent.terminal_ui import (
     format_agent_banner,
@@ -32,11 +33,7 @@ def test_format_panel_makes_labeled_box() -> None:
 def test_format_agent_banner_centers_title() -> None:
     banner = format_agent_banner(width=32)
 
-    assert banner.splitlines() == [
-        "+------------------------------+",
-        "|        A G E N T 4 7         |",
-        "+------------------------------+",
-    ]
+    assert banner == "Agent47 --- terminal coding agen"
 
 
 def test_format_panel_wraps_long_lines() -> None:
@@ -155,24 +152,20 @@ def test_format_work_report_body_uses_requested_sections_and_changed_diff_lines(
 
     body = format_work_report_body(result)
 
-    assert "Current Task:\n  update the docs" in body
-    assert "Current Step:\n  Update report UI" in body
-    assert "Files Being Modified:\n  docs/PROGRESS.md" in body
-    assert "Planned Target Files:\n  docs/PROGRESS.md" in body
-    assert "Owned Files:\n  docs/PROGRESS.md" in body
-    assert "Planned Checks:\n  uv run pytest tests/test_terminal_ui.py" in body
+    assert "Task:\n  update the docs" in body
+    assert "Plan:\n  2 completed, 0 current, 0 pending, 0 blocked." in body
+    assert "Files Modified:\n  docs/PROGRESS.md" in body
+    assert "Intended Files:\n  docs/PROGRESS.md" in body
     assert "Blockers:\n  none" in body
-    assert "Risk Notes:\n  docs-only change" in body
-    assert "Context Analysis:\n  - repo_map: ok\n  - rank_context: ok for `update report UI`" in body
-    assert "Model Usage:\n  - primary-model: ok, tokens=42, cost=0.0012" in body
+    assert "Risks:\n  docs-only change" in body
+    assert "Analyzed:\n  - repo_map: ok\n  - rank_context: ok for `update report UI`" in body
+    assert "Model Usage:" not in body
     assert "Commands Executed:\n  - `uv run pytest`: passed" in body
-    assert "Validation Status:\n  - test `uv run pytest`: passed" in body
-    assert "Change Summary:\n  - edit_file docs/PROGRESS.md: ok" in body
-    assert "Diff Review:" in body
-    assert "  -old line" in body
-    assert "  +new line" in body
-    assert "unchanged context" not in body
-    assert "Final Outcome:\n  Updated docs and verified tests." in body
+    assert "Validation:\n  - test `uv run pytest`: passed" in body
+    assert "Changes:\n  \u2713 Modified docs/PROGRESS.md" in body
+    assert "<none>" not in body
+    assert "Diff Review:" not in body
+    assert "Result:\n  Updated docs and verified tests." in body
 
 
 def test_should_show_work_report_stays_quiet_for_simple_chat() -> None:
@@ -195,11 +188,10 @@ def test_stream_helpers_render_compact_progress(monkeypatch) -> None:
     print_stream_marker()
     print_stream_end()
 
-    assert "STREAMING" in echoed[0][0]
+    assert "GENERATING" in echoed[0][0]
     assert "model response for step 1" in echoed[0][0]
-    assert echoed[0][1] is False
-    assert echoed[1] == (".", False)
-    assert echoed[2] == ("", True)
+    assert echoed[0][1] is True
+    assert len(echoed) == 1
 
 
 def test_interactive_mode_starts_write_enabled() -> None:
@@ -242,7 +234,7 @@ def test_interactive_turn_does_not_print_user_panel(monkeypatch) -> None:
     assert transcript == [("make a file", "done")]
 
 
-def test_interactive_turn_prints_work_report_before_agent_message(monkeypatch) -> None:
+def test_interactive_turn_prints_work_report_as_single_final_surface(monkeypatch) -> None:
     printed: list[tuple[str, str]] = []
     monkeypatch.setattr(interactive, "print_panel", lambda title, body: printed.append((title, body)))
     monkeypatch.setattr(
@@ -281,8 +273,14 @@ def test_interactive_turn_prints_work_report_before_agent_message(monkeypatch) -
     transcript = run_interactive_turn("make progress visible", Agent(), [], SessionState())
 
     assert printed[0][0] == "Work Report"
-    assert "Current Task:\n  make progress visible" in printed[0][1]
-    assert "Diff Review:" in printed[0][1]
-    assert "  +new" in printed[0][1]
-    assert printed[1] == ("Agent47", "done")
+    assert "Task:\n  make progress visible" in printed[0][1]
+    assert "Changes:" in printed[0][1]
+    assert "Result:\n  done" in printed[0][1]
+    assert printed == [printed[0]]
     assert transcript == [("make progress visible", "done")]
+
+
+def test_is_persona_instruction() -> None:
+    assert is_persona_instruction("You are a senior frontend engineer")
+    assert is_persona_instruction("Act as a concise reviewer")
+    assert not is_persona_instruction("You are a senior frontend engineer; update the app")

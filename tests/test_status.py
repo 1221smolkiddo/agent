@@ -70,7 +70,8 @@ def test_format_action_status_for_update_plan() -> None:
         )
     )
 
-    assert status == "PLANNING updating task plan"
+    # Plan updates are suppressed from status line; plan panel handles display.
+    assert status is None
 
 
 def test_format_action_status_for_repo_map() -> None:

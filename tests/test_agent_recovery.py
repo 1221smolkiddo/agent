@@ -68,6 +68,17 @@ class RecordingReporter:
     def model_stream_end(self) -> None:
         self.events.append("stream_end")
 
+    def workspace_analysis(self, summary: str) -> None:
+        self.events.append(f"workspace:{summary}")
+
+    def mutation_preview(
+        self,
+        creates: list[str],
+        modifies: list[str],
+        deletes: list[str],
+    ) -> None:
+        self.events.append(f"preview:creates={creates},modifies={modifies},deletes={deletes}")
+
 
 class RecoveringTools:
     def __init__(self, workspace: Path | None = None) -> None:
@@ -537,7 +548,7 @@ def test_agent_accepts_deleted_claim_after_delete_file(tmp_path: Path) -> None:
     assert report["payload"]["type"] == "work_report"
     assert report["payload"]["sections"]["current_task"] == "remove the file you just created"
     assert report["payload"]["sections"]["modified_files"] == ["hello_world.py"]
-    assert "Change Summary:" in report["body"]
+    assert "Changes:" in report["body"]
 
 
 def test_agent_rejects_deleted_claim_without_delete_file(tmp_path: Path) -> None:
@@ -755,7 +766,7 @@ def test_agent_records_repo_context_actions_in_work_report(tmp_path: Path) -> No
         {"action": "repo_map", "status": "ok", "detail": ""},
         {"action": "rank_context", "status": "ok", "detail": " for `fix CLI tests`"},
     ]
-    assert "Context Analysis:" in report["body"]
+    assert "Analyzed:" in report["body"]
 
 
 def test_agent_records_symbol_index_as_untrusted_context(tmp_path: Path) -> None:

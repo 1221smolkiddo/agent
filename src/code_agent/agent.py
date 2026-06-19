@@ -14,7 +14,7 @@ from .patches import git_style_unified_diff
 from .prompts import system_prompt
 from .schema import AgentAction, FinalAction, RunShellAction, ToolResult, UpdatePlanAction
 from .storage import AgentStorage
-from .status import StatusReporter
+from .status import StatusReporter, analyze_workspace
 from .tools import ToolRegistry
 from .verification import select_verification_commands
 from .work_report import build_work_report_payload, should_show_work_report
@@ -27,6 +27,7 @@ class AgentRunResult:
     message: str
     run_id: int
     task: str = ""
+    clean_task: str = ""
     changed_paths: list[str] = field(default_factory=list)
     mutation_records: list[dict[str, Any]] = field(default_factory=list)
     command_records: list[dict[str, str | bool]] = field(default_factory=list)
@@ -66,7 +67,8 @@ class CodingAgent:
         return self.run_detailed(task).message
 
     def run_detailed(self, task: str) -> AgentRunResult:
-        run_id = self.storage.create_run(task=task, model=self.model_client.model, cwd=self.cwd)
+        clean_task = self._extract_user_task(task)
+        run_id = self.storage.create_run(task=clean_task, model=self.model_client.model, cwd=self.cwd)
         workspace_task = self._is_workspace_task(task)
         consecutive_failures = 0
         previous_tool_failed = False
@@ -84,6 +86,11 @@ class CodingAgent:
             {"role": "system", "content": system_prompt(self.cwd, self.dry_run)},
             {"role": "user", "content": task},
         ]
+
+        # Workspace discovery
+        if workspace_task and self.reporter:
+            summary = analyze_workspace(self.cwd)
+            self.reporter.workspace_analysis(summary)
 
         for step in range(1, self.max_steps + 1):
             self._report_thinking(step)
@@ -104,6 +111,7 @@ class CodingAgent:
                         message=f"Stopped after a model failure: {payload['output']}",
                         run_id=run_id,
                         task=task,
+                        clean_task=clean_task,
                         command_records=command_records,
                         verification_results=verification_results,
                         context_records=context_records,
@@ -124,6 +132,7 @@ class CodingAgent:
                             message=response.strip(),
                             run_id=run_id,
                             task=task,
+                            clean_task=clean_task,
                             model_usage_records=model_usage_records,
                         )
                     )
@@ -144,6 +153,7 @@ class CodingAgent:
                             message=self._failure_summary(consecutive_failures, parse_error),
                             run_id=run_id,
                             task=task,
+                            clean_task=clean_task,
                             model_usage_records=model_usage_records,
                             failed_actions=failed_actions,
                             blocked=True,
@@ -179,6 +189,7 @@ class CodingAgent:
                             message=self._failure_summary(consecutive_failures, payload["output"]),
                             run_id=run_id,
                             task=task,
+                            clean_task=clean_task,
                             model_usage_records=model_usage_records,
                             failed_actions=failed_actions,
                             blocked=True,
@@ -230,6 +241,7 @@ class CodingAgent:
                                 message=self._failure_summary(consecutive_failures, payload["output"]),
                                 run_id=run_id,
                                 task=task,
+                                clean_task=clean_task,
                                 changed_paths=self._successful_mutation_paths(mutation_records),
                                 mutation_records=mutation_records,
                                 command_records=command_records,
@@ -269,6 +281,7 @@ class CodingAgent:
                         message=self._with_verification_summary(action.message, verification_results),
                         run_id=run_id,
                         task=task,
+                        clean_task=clean_task,
                         changed_paths=self._successful_mutation_paths(mutation_records),
                         mutation_records=mutation_records,
                         command_records=command_records,
@@ -283,6 +296,13 @@ class CodingAgent:
                 )
 
             before_mutation = self._mutation_state_for_action(action)
+            # File operation preview before execution
+            if action.type in {"write_file", "edit_file", "apply_patch", "delete_file"} and self.reporter:
+                preview_paths = self._changed_paths_from_action(action)
+                creates = [p for p in preview_paths if not (self.cwd / p).exists()]
+                modifies = [p for p in preview_paths if (self.cwd / p).exists() and action.type != "delete_file"]
+                deletes = [p for p in preview_paths if action.type == "delete_file"]
+                self.reporter.mutation_preview(creates, modifies, deletes)
             self._report_action(action)
             result = self._run_tool(action)
             new_mutation_records = self._mutation_records_from_action(action, result, before_mutation)
@@ -368,6 +388,7 @@ class CodingAgent:
                         message=self._failure_summary(consecutive_failures, result.output),
                         run_id=run_id,
                         task=task,
+                        clean_task=clean_task,
                         changed_paths=self._successful_mutation_paths(mutation_records),
                         mutation_records=mutation_records,
                         command_records=command_records,
@@ -385,12 +406,22 @@ class CodingAgent:
             messages.append({"role": "assistant", "content": action.model_dump_json()})
             messages.append({"role": "user", "content": json.dumps(tool_payload)})
 
+        successful_paths = self._successful_mutation_paths(mutation_records)
+        goals_achieved = bool(successful_paths) and consecutive_failures == 0
+        if goals_achieved:
+            message = self._with_verification_summary(
+                f"Completed. Modified: {', '.join(successful_paths)}.",
+                verification_results,
+            )
+        else:
+            message = f"Stopped after {self.max_steps} steps. Increase --max-steps if the task needs more work."
         return self._finalize_run(
             AgentRunResult(
-                message=f"Stopped after {self.max_steps} steps. Increase --max-steps if the task needs more work.",
+                message=message,
                 run_id=run_id,
                 task=task,
-                changed_paths=self._successful_mutation_paths(mutation_records),
+                clean_task=clean_task,
+                changed_paths=successful_paths,
                 mutation_records=mutation_records,
                 command_records=command_records,
                 verification_results=verification_results,
@@ -399,7 +430,7 @@ class CodingAgent:
                 plan_updates=plan_updates,
                 failed_actions=failed_actions,
                 denied_actions=denied_actions,
-                blocked=True,
+                blocked=not goals_achieved,
             )
         )
 
@@ -619,6 +650,23 @@ class CodingAgent:
             return task, ""
         latest, transcript = task.split(marker, 1)
         return latest.strip(), transcript.strip()
+
+    @staticmethod
+    def _extract_user_task(task: str) -> str:
+        """Strip internal session state and transcript from the task string.
+
+        Returns only the user's original request.
+        """
+        text = task
+        for marker in [
+            "\nCurrent interactive session state:\n",
+            "\nCurrent interactive session state:",
+            "\nRecent interactive transcript for reference:\n",
+            "\nRecent interactive transcript for reference:",
+        ]:
+            if marker in text:
+                text = text[:text.index(marker)]
+        return text.strip()
 
     @staticmethod
     def _has_workspace_signal(text: str, workspace_terms: list[str]) -> bool:

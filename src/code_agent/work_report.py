@@ -7,24 +7,25 @@ if TYPE_CHECKING:
 
 
 def should_show_work_report(result: AgentRunResult) -> bool:
-    return bool(
+    did_real_work = bool(
         result.plan_updates
         or result.changed_paths
         or result.mutation_records
         or result.command_records
         or result.verification_results
         or result.context_records
-        or result.model_usage_records
-        or result.failed_actions
-        or result.denied_actions
-        or result.blocked
+    )
+    return bool(
+        did_real_work
+        or ((result.failed_actions or result.denied_actions or result.blocked) and did_real_work)
     )
 
 
 def build_work_report_payload(result: AgentRunResult) -> dict[str, Any]:
     body = format_work_report_body(result)
+    task_text = _clean_task_text(result)
     sections = {
-        "current_task": _single_line(result.task) or "<not recorded>",
+        "current_task": _single_line(task_text) or "<not recorded>",
         "current_step": _current_step(result.plan_updates),
         "files_being_modified": result.changed_paths,
         "progress": _progress_summary(result),
@@ -51,51 +52,82 @@ def build_work_report_payload(result: AgentRunResult) -> dict[str, Any]:
 
 
 def format_work_report_body(result: AgentRunResult) -> str:
-    sections = [
-        ("Current Task", _single_line(result.task) or "<not recorded>"),
-        ("Current Step", _current_step(result.plan_updates)),
-        ("Files Being Modified", _list_or_none(result.changed_paths)),
-        ("Progress", _progress_summary(result)),
-        ("Planned Target Files", _list_or_none(_latest_plan_list(result.plan_updates, "target_files"))),
-        ("Owned Files", _list_or_none(_latest_plan_list(result.plan_updates, "owned_files"))),
-        ("Planned Checks", _list_or_none(_latest_plan_list(result.plan_updates, "checks"))),
-        ("Blockers", _list_or_none(_latest_plan_list(result.plan_updates, "blockers"))),
-        ("Risk Notes", _list_or_none(_latest_plan_list(result.plan_updates, "risk_notes"))),
-        ("Context Analysis", _context_summary(result)),
-        ("Model Usage", _model_usage_summary(result)),
-        ("Commands Executed", _commands_summary(result)),
-        ("Validation Status", _validation_summary(result)),
-        ("Modified Files", _list_or_none(result.changed_paths)),
-        ("Change Summary", _change_summary(result)),
-        ("Diff Review", _diff_review(result)),
-        ("Final Outcome", _single_line(result.message, max_chars=900)),
-    ]
+    sections = _meaningful_sections(result)
     lines: list[str] = []
     for title, body in sections:
+        if not body.strip():
+            continue
         lines.append(f"{title}:")
         lines.extend(f"  {line}" for line in body.splitlines())
         lines.append("")
     return "\n".join(lines).rstrip()
 
 
+def _meaningful_sections(result: AgentRunResult) -> list[tuple[str, str]]:
+    sections: list[tuple[str, str]] = []
+    task = _single_line(_clean_task_text(result))
+    if task:
+        sections.append(("Task", task))
+    progress = _progress_summary(result)
+    if progress:
+        sections.append(("Plan", progress))
+    targets = _latest_plan_list(result.plan_updates, "target_files")
+    if targets:
+        sections.append(("Intended Files", _list_or_empty(targets)))
+    if result.changed_paths:
+        sections.append(("Files Modified", _list_or_empty(result.changed_paths)))
+    # Reconcile intended vs actual
+    if targets and result.changed_paths:
+        intended_set = set(targets)
+        actual_set = set(result.changed_paths)
+        missed = sorted(intended_set - actual_set)
+        extra = sorted(actual_set - intended_set)
+        if missed:
+            sections.append(("Intended But Not Modified", _list_or_empty(missed)))
+        if extra:
+            sections.append(("Additionally Modified", _list_or_empty(extra)))
+    changes = _compact_change_summary(result)
+    if changes:
+        sections.append(("Changes", changes))
+    context = _context_summary(result)
+    if context:
+        sections.append(("Analyzed", context))
+    commands = _commands_summary(result)
+    if commands:
+        sections.append(("Commands Executed", commands))
+    validation = _validation_summary(result)
+    if validation:
+        sections.append(("Validation", validation))
+    blockers = _latest_plan_list(result.plan_updates, "blockers")
+    if blockers:
+        sections.append(("Blockers", _list_or_empty(blockers)))
+    risks = _latest_plan_list(result.plan_updates, "risk_notes")
+    if risks:
+        sections.append(("Risks", _list_or_empty(risks)))
+    outcome = _single_line(result.message, max_chars=900)
+    if outcome:
+        sections.append(("Result", outcome))
+    return sections
+
+
 def _current_step(plan_updates: list[dict[str, Any]]) -> str:
     if not plan_updates:
-        return "<none>"
+        return ""
     raw_steps = plan_updates[-1].get("steps", [])
     if not isinstance(raw_steps, list):
-        return "<none>"
+        return ""
     for item in raw_steps:
         if isinstance(item, dict) and item.get("status") == "in_progress":
             return str(item.get("step", "<unnamed step>"))
     for item in reversed(raw_steps):
         if isinstance(item, dict) and item.get("status") in {"blocked", "completed"}:
             return str(item.get("step", "<unnamed step>"))
-    return "<none>"
+    return ""
 
 
 def _progress_summary(result: AgentRunResult) -> str:
     if not result.plan_updates:
-        return "No durable plan was recorded."
+        return ""
     raw_steps = result.plan_updates[-1].get("steps", [])
     if not isinstance(raw_steps, list) or not raw_steps:
         return "Plan updated."
@@ -122,14 +154,14 @@ def _latest_plan_list(plan_updates: list[dict[str, Any]], key: str) -> list[str]
 
 def _commands_summary(result: AgentRunResult) -> str:
     commands = _command_items(result)
-    return "\n".join(f"- `{item['command']}`: {item['status']}" for item in commands) or "<none>"
+    return "\n".join(f"- `{item['command']}`: {item['status']}" for item in commands)
 
 
 def _context_summary(result: AgentRunResult) -> str:
     items = _context_items(result)
     return "\n".join(
         f"- {item['action']}: {item['status']}{item['detail']}" for item in items
-    ) or "<none>"
+    )
 
 
 def _context_items(result: AgentRunResult) -> list[dict[str, str]]:
@@ -192,7 +224,7 @@ def _validation_summary(result: AgentRunResult) -> str:
     items = _validation_items(result)
     return "\n".join(
         f"- {item['purpose']} `{item['command']}`: {item['status']}" for item in items
-    ) or "Not run."
+    )
 
 
 def _validation_items(result: AgentRunResult) -> list[dict[str, str]]:
@@ -212,7 +244,54 @@ def _change_summary(result: AgentRunResult) -> str:
     changes = _change_items(result)
     return "\n".join(
         f"- {item['action']} {item['path']}: {item['status']}{item['detail']}" for item in changes
-    ) or "<none>"
+    )
+
+
+def _compact_change_summary(result: AgentRunResult) -> str:
+    """Compact checklist-style change summary for user-facing reports."""
+    items = _change_items_filtered(result)
+    lines: list[str] = []
+    for item in items:
+        marker = "✓" if item["status"] == "ok" else "✗"
+        action_label = _friendly_action_label(item["action"])
+        line = f"{marker} {action_label} {item['path']}"
+        detail = item.get("detail", "")
+        if detail:
+            line += f" {detail}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _friendly_action_label(action: str) -> str:
+    return {
+        "write_file": "Created",
+        "edit_file": "Modified",
+        "apply_patch": "Patched",
+        "delete_file": "Deleted",
+    }.get(action, action.replace("_", " ").capitalize())
+
+
+def _change_items_filtered(result: AgentRunResult) -> list[dict[str, str]]:
+    """Return change items, hiding failed attempts when a success exists for the same path."""
+    all_items = _change_items(result)
+    successful_paths = {
+        item["path"] for item in all_items if item["status"] == "ok"
+    }
+    filtered: list[dict[str, str]] = []
+    seen_ok: set[str] = set()
+    retry_count: dict[str, int] = {}
+    for item in all_items:
+        path = item["path"]
+        if item["status"] != "ok" and path in successful_paths:
+            retry_count[path] = retry_count.get(path, 0) + 1
+            continue
+        if item["status"] == "ok" and path in seen_ok:
+            continue
+        seen_ok.add(path)
+        if path in retry_count:
+            item = {**item, "detail": f"({retry_count[path]} retries)"}
+        filtered.append(item)
+    return filtered
 
 
 def _change_items(result: AgentRunResult) -> list[dict[str, str]]:
@@ -238,7 +317,7 @@ def _patch_detail(record: dict[str, Any]) -> str:
     deletions = patch.get("deletions")
     if not operation and additions is None and deletions is None:
         return ""
-    return f" ({operation}, +{additions} -{deletions})"
+    return f"(+{additions} -{deletions})"
 
 
 def _diff_review(result: AgentRunResult, max_lines: int = 80) -> str:
@@ -273,8 +352,17 @@ def _list_or_none(items: list[str]) -> str:
     return ", ".join(items) if items else "<none>"
 
 
+def _list_or_empty(items: list[str]) -> str:
+    return ", ".join(items)
+
+
 def _single_line(value: str, max_chars: int = 500) -> str:
     rendered = " ".join(value.split())
     if len(rendered) <= max_chars:
         return rendered
     return rendered[:max_chars].rstrip() + " <truncated>"
+
+
+def _clean_task_text(result: AgentRunResult) -> str:
+    """Return user-facing task text, preferring clean_task over raw task."""
+    return getattr(result, "clean_task", "") or result.task

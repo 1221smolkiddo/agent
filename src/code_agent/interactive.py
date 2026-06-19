@@ -9,7 +9,7 @@ from typer._click.exceptions import Abort
 from .config import Settings
 from .factory import create_agent
 from .model_profiles import validate_profile_name
-from .permissions import confirm_permission
+from .permissions import ApprovalMode, PermissionPolicy, confirm_permission
 from .resume import build_resume_task, format_run_detail
 from .revert import apply_revert_plan, build_revert_plan, format_revert_preview
 from .sandbox import (
@@ -20,9 +20,10 @@ from .sandbox import (
 )
 from .session import SessionState
 from .storage import AgentStorage
-from .status import StatusReporter
+from .status import StatusReporter, analyze_workspace
 from .terminal_ui import (
     colorize_panel,
+    format_compact_startup,
     format_prompt_footer,
     format_prompt_header,
     print_agent_banner,
@@ -30,6 +31,7 @@ from .terminal_ui import (
     print_panel,
     print_work_report_panel,
 )
+from .work_report import should_show_work_report
 
 DEFAULT_DRY_RUN = False
 
@@ -51,16 +53,18 @@ def main() -> None:
     max_failures: int | None = None
     transcript: list[tuple[str, str]] = []
     session_state = SessionState()
+    permission_policy = PermissionPolicy(confirm_permission, ApprovalMode.auto_read)
 
     print_agent_banner()
-    print_panel(
+    workspace_summary = analyze_workspace(cwd)
+    print_key_values(
         "Status",
-        (
-            "Interactive coding agent\n"
-            "Type a task or question. Use /help for commands. Use /stop or Ctrl+C to quit.\n\n"
-            f"Workspace: {cwd}\n"
-            f"Mode: {'dry-run' if dry_run else 'write-enabled'}"
-        ),
+        [
+            ("Workspace", f"{cwd} ({workspace_summary})"),
+            ("Mode", "dry-run" if dry_run else "write-enabled"),
+            ("Model", model or settings.agent_model),
+            ("Approvals", permission_policy.mode.value),
+        ],
     )
 
     while True:
@@ -75,6 +79,9 @@ def main() -> None:
 
         if is_casual_greeting(user_input):
             print_panel("Agent47", "Hey! I am ready. Ask me a question, or use /help to see commands.")
+            continue
+        if is_persona_instruction(user_input):
+            print_panel("Agent47", "Got it. I will use that as guidance for future turns.")
             continue
 
         if user_input.startswith("/"):
@@ -91,6 +98,7 @@ def main() -> None:
                 max_steps,
                 max_failures,
                 session_state,
+                permission_policy,
             )
             if command_result.exit_requested:
                 print_panel("System", "bye")
@@ -106,6 +114,31 @@ def main() -> None:
             max_failures = command_result.max_failures
             continue
 
+        # Chat vs Execute separation: lightweight chat path for non-workspace questions
+        if is_chat_request(user_input):
+            agent = create_agent(
+                settings=settings,
+                cwd=cwd,
+                model=model,
+                profile=profile,
+                dry_run=dry_run,
+                max_steps=1,
+                max_failures=1,
+                approval_callback=permission_policy.approve,
+                reporter=None,
+                stream_model=stream_model,
+            )
+            try:
+                response = agent.run(user_input)
+            except KeyboardInterrupt:
+                print_panel("System", "STOPPED by user")
+                return
+            print_panel("Agent47", response)
+            transcript.append((user_input, response))
+            transcript = transcript[-8:]
+            continue
+
+        permission_policy.reset_task()
         agent = create_agent(
             settings=settings,
             cwd=cwd,
@@ -114,7 +147,7 @@ def main() -> None:
             dry_run=dry_run,
             max_steps=max_steps,
             max_failures=max_failures,
-            approval_callback=confirm_permission,
+            approval_callback=permission_policy.approve,
             reporter=StatusReporter(),
             stream_model=stream_model,
         )
@@ -164,6 +197,7 @@ def handle_command(
     max_steps: int,
     max_failures: int | None,
     session_state: SessionState | None = None,
+    permission_policy: PermissionPolicy | None = None,
 ) -> CommandState:
     parts = raw.split(maxsplit=1)
     command = parts[0].lower()
@@ -277,6 +311,7 @@ def handle_command(
             settings=settings,
             cwd=cwd,
             model=model,
+            profile=profile,
             dry_run=dry_run,
             stream_model=stream_model,
             max_steps=max_steps,
@@ -291,18 +326,24 @@ def handle_command(
         print_key_values(
             "Status",
             [
-                ("Base workspace", base_cwd),
                 ("Workspace", cwd),
-                ("Model", model or settings.agent_model),
-                ("Profile", profile or settings.agent_profile),
                 ("Mode", "dry-run" if dry_run else "write-enabled"),
-                ("Streaming", "on" if stream_model else "off"),
-                ("Sandbox", "on" if sandbox_enabled else "off"),
-                ("Max steps", max_steps),
-                ("Max failures", max_failures or settings.agent_max_failures),
-                ("Session", session_state.render() if session_state else "<unavailable>"),
+                ("Current model", model or settings.agent_model),
+                ("Approvals", permission_policy.mode.value if permission_policy else "per_action"),
             ],
         )
+    elif command == "/approve-all":
+        if permission_policy:
+            permission_policy.set_mode(ApprovalMode.approve_task)
+        print_panel("Mode", "Approve all actions for each task after first approval.")
+    elif command == "/auto-read":
+        if permission_policy:
+            permission_policy.set_mode(ApprovalMode.auto_read)
+        print_panel("Mode", "Auto-approve read-only operations. Mutations still require approval.")
+    elif command == "/per-action":
+        if permission_policy:
+            permission_policy.set_mode(ApprovalMode.per_action)
+        print_panel("Mode", "Every action requires individual approval.")
     else:
         print_panel("Unknown Command", f"{command}\nUse /help to see available commands.")
 
@@ -325,7 +366,7 @@ def print_help() -> None:
         """
 Commands:
   /help              Show this help.
-  /status            Show current workspace, model, mode, and max steps.
+  /status            Show current workspace, model, mode, and approvals.
   /dry-run           Inspect only; skip writes and shell commands.
   /write             Allow writes and shell commands.
   /stream [off]      Turn compact model streaming progress on or off.
@@ -337,6 +378,9 @@ Commands:
   /profile <name>    Change model profile: default, planner, coder, reviewer, or fast.
   /max-steps <n>     Change max agent loop steps.
   /max-failures <n>  Change consecutive failure recovery budget.
+  /approve-all       Approve all actions for each task after first approval.
+  /auto-read         Auto-approve read-only operations.
+  /per-action        Require individual approval for every action.
   /history           Show recent saved agent runs.
   /history-show <id> Show saved steps for one run.
   /resume <id> [msg] Resume a saved run with optional extra instruction.
@@ -431,7 +475,8 @@ def run_resume_command(
     )
     result = agent.run_detailed(task)
     print_work_report_panel(result)
-    print_panel("Agent47", result.message)
+    if not should_show_work_report(result):
+        print_panel("Agent47", result.message)
     if session_state is not None:
         session_state.update(f"resume run {run_id}", result)
 
@@ -462,6 +507,84 @@ def is_casual_greeting(user_input: str) -> bool:
     return normalized in {"hey", "hi", "hello", "yo", "sup", "hiya"}
 
 
+def is_chat_request(user_input: str) -> bool:
+    """Detect non-workspace questions that should use a lightweight chat path."""
+    normalized = user_input.strip().lower()
+
+    # Short meta-questions
+    chat_patterns = [
+        "what can you do",
+        "who are you",
+        "what are you",
+        "how do you work",
+        "help me",
+        "what is ",
+        "what are ",
+        "explain ",
+        "define ",
+        "how to ",
+        "how do i ",
+        "tell me about ",
+        "what's the difference ",
+        "compare ",
+        "why is ",
+        "why does ",
+        "when was ",
+        "when did ",
+        "who is ",
+        "who was ",
+        "thank",
+        "thanks",
+    ]
+
+    # If it starts with a chat pattern and doesn't mention workspace terms, it's chat
+    workspace_terms = [
+        "file", "project", "workspace", "codebase", "repo", "directory",
+        "create", "edit", "update", "fix", "build", "test", "run",
+        "commit", "diff", "patch", "lint", "debug", "refactor",
+        "add", "delete", "remove", "implement", "install",
+    ]
+
+    has_workspace_signal = any(term in normalized for term in workspace_terms)
+    has_chat_signal = any(normalized.startswith(pattern) for pattern in chat_patterns)
+
+    if has_chat_signal and not has_workspace_signal:
+        return True
+
+    return False
+
+
+def is_persona_instruction(user_input: str) -> bool:
+    normalized = " ".join(user_input.strip().lower().split())
+    if not normalized:
+        return False
+    starters = (
+        "you are ",
+        "you're ",
+        "act as ",
+        "pretend you are ",
+        "from now on ",
+        "respond as ",
+    )
+    task_terms = (
+        "create",
+        "write",
+        "edit",
+        "update",
+        "fix",
+        "implement",
+        "run",
+        "test",
+        "inspect",
+        "read",
+        "search",
+        "build",
+    )
+    return normalized.startswith(starters) and not any(
+        f" {term} " in f" {normalized} " for term in task_terms
+    )
+
+
 def read_prompt() -> str:
     typer.echo("")
     typer.echo(colorize_panel(format_prompt_header("You"), "You"))
@@ -479,7 +602,8 @@ def run_interactive_turn(
     task = task_with_context(user_input, transcript, session_state)
     result = agent.run_detailed(task)
     print_work_report_panel(result)
-    print_panel("Agent47", result.message)
+    if not should_show_work_report(result):
+        print_panel("Agent47", result.message)
     session_state.update(user_input, result)
     transcript.append((user_input, result.message))
     return transcript[-8:]

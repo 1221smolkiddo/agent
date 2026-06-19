@@ -41,7 +41,8 @@ PANEL_COLORS = {
 
 
 STATUS_COLORS = {
-    "THINKING": typer.colors.BLUE,
+    "THINKING": typer.colors.MAGENTA,
+    "PLANNING": typer.colors.BLUE,
     "READING": typer.colors.CYAN,
     "SEARCHING": typer.colors.CYAN,
     "SEARCHING WEB": typer.colors.CYAN,
@@ -52,13 +53,18 @@ STATUS_COLORS = {
     "TESTING": typer.colors.BLUE,
     "BUILDING": typer.colors.BLUE,
     "RUNNING": typer.colors.WHITE,
-    "RECOVERING": typer.colors.YELLOW,
-    "STREAMING": typer.colors.BLUE,
+    "RETRYING": typer.colors.YELLOW,
+    "GENERATING": typer.colors.BLUE,
+    "WORKSPACE": typer.colors.CYAN,
+    "PREVIEW": typer.colors.YELLOW,
+    "VALIDATING": typer.colors.MAGENTA,
     "DONE": typer.colors.GREEN,
 }
 
 
 def print_panel(title: str, body: str, *, width: int = PANEL_WIDTH) -> None:
+    if not body.strip():
+        return
     typer.echo(colorize_panel(format_panel(title, body, width=width), title))
 
 
@@ -68,12 +74,23 @@ def print_agent_banner(*, width: int = PANEL_WIDTH) -> None:
 
 def format_agent_banner(*, width: int = PANEL_WIDTH) -> str:
     safe_width = max(width, 24)
-    inner_width = safe_width - 2
-    title = "A G E N T 4 7"
-    top = "+" + "-" * inner_width + "+"
-    middle = "|" + title.center(inner_width) + "|"
-    bottom = "+" + "-" * inner_width + "+"
-    return "\n".join([top, middle, bottom])
+    title = "Agent47"
+    suffix = "terminal coding agent"
+    available = safe_width - len(title) - 4
+    if available <= 0:
+        return title
+    return f"{title} {'-' * min(3, available)} {suffix}"[:safe_width]
+
+
+def format_compact_startup(
+    cwd: str,
+    mode: str,
+    model: str,
+    *,
+    width: int = PANEL_WIDTH,
+) -> str:
+    """Compact single-line startup for subsequent launches."""
+    return f"Agent47 \u2502 {cwd} \u2502 {mode} \u2502 {model}"[:max(width, 24)]
 
 
 def format_panel(title: str, body: str, *, width: int = PANEL_WIDTH) -> str:
@@ -94,7 +111,10 @@ def format_key_values(title: str, rows: Iterable[tuple[str, object]], *, width: 
 
 
 def print_key_values(title: str, rows: Iterable[tuple[str, object]], *, width: int = PANEL_WIDTH) -> None:
-    typer.echo(colorize_panel(format_key_values(title, rows, width=width), title))
+    rendered_rows = list(rows)
+    if not rendered_rows:
+        return
+    typer.echo(colorize_panel(format_key_values(title, rendered_rows, width=width), title))
 
 
 def format_plan_panel(plan_updates: list[dict[str, object]], *, width: int = PANEL_WIDTH) -> str:
@@ -179,18 +199,19 @@ def print_status_line(label: str, detail: str) -> None:
 
 
 def print_stream_start(detail: str) -> None:
-    color = STATUS_COLORS.get("STREAMING", typer.colors.BLUE)
-    rendered_label = style(f"{'STREAMING':<10}", fg=color, bold=True)
+    color = STATUS_COLORS.get("GENERATING", typer.colors.BLUE)
+    rendered_label = style(f"{'GENERATING':<10}", fg=color, bold=True)
     rendered_detail = style(detail, fg=typer.colors.WHITE)
-    typer.echo(f"  {rendered_label} {rendered_detail}", nl=False)
+    typer.echo(f"  {rendered_label} {rendered_detail}")
 
 
-def print_stream_marker(marker: str = ".") -> None:
-    typer.echo(style(marker, fg=typer.colors.BLUE), nl=False)
+def print_stream_marker(marker: str = "") -> None:
+    if marker:
+        typer.echo(style(marker, fg=typer.colors.BLUE), nl=False)
 
 
 def print_stream_end() -> None:
-    typer.echo("")
+    return None
 
 
 def format_prompt_header(title: str, *, width: int = PANEL_WIDTH) -> str:
@@ -252,14 +273,7 @@ def colorize_panel(panel: str, title: str) -> str:
 def colorize_banner(banner: str) -> str:
     if not should_color():
         return banner
-    lines = banner.splitlines()
-    return "\n".join(
-        [
-            style(lines[0], fg=MUTED_COLOR),
-            style(lines[1], fg=TITLE_COLOR, bold=True),
-            style(lines[2], fg=MUTED_COLOR),
-        ]
-    )
+    return style(banner, fg=TITLE_COLOR, bold=True)
 
 
 def style(value: str, *, fg: str, bold: bool = False) -> str:

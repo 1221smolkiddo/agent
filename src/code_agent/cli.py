@@ -31,6 +31,7 @@ from .sandbox import (
 from .storage import AgentStorage
 from .status import StatusReporter
 from .terminal_ui import print_work_report_panel
+from .work_report import should_show_work_report
 
 app = typer.Typer(help="A CLI-first coding agent.")
 history_app = typer.Typer(
@@ -100,7 +101,8 @@ def run(
         typer.echo("\nSTOPPED by user")
         raise typer.Exit(code=130)
     print_work_report_panel(result)
-    typer.echo(result.message)
+    if not should_show_work_report(result):
+        typer.echo(result.message)
 
 
 @app.command("evals")
@@ -314,7 +316,8 @@ def resume(
         typer.echo("\nSTOPPED by user")
         raise typer.Exit(code=130)
     print_work_report_panel(result)
-    typer.echo(result.message)
+    if not should_show_work_report(result):
+        typer.echo(result.message)
 
 
 @app.command("revert")

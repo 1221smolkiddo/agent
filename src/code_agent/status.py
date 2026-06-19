@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from .schema import (
     AgentAction,
     ApplyPatchAction,
@@ -26,20 +28,37 @@ from .terminal_ui import print_status_line, print_stream_end, print_stream_marke
 class StatusReporter:
     def __init__(self) -> None:
         self._stream_chars = 0
+        self._has_plan = False
+        self._consecutive_retries = 0
 
     def thinking(self, step: int) -> None:
-        print_status_line("THINKING", f"step {step}")
+        if self._has_plan:
+            print_status_line("PLANNING", f"step {step}")
+        else:
+            print_status_line("THINKING", f"step {step}")
 
     def action(self, action: AgentAction) -> None:
+        self._consecutive_retries = 0
         status = format_action_status(action)
+        if status is None:
+            # Suppressed action (e.g. internal plan updates)
+            if isinstance(action, UpdatePlanAction):
+                self._has_plan = True
+            return
         label, _, detail = status.partition(" ")
         print_status_line(label, detail)
+        if isinstance(action, UpdatePlanAction):
+            self._has_plan = True
 
     def recovery(self, detail: str) -> None:
-        print_status_line("RECOVERING", detail)
+        self._consecutive_retries += 1
+        # Only surface retries on 2nd+ consecutive failure
+        if self._consecutive_retries >= 2:
+            print_status_line("RETRYING", friendly_retry_detail(detail))
 
     def done(self) -> None:
-        print_status_line("DONE", "")
+        # Issue #20: The response itself implies completion; suppress DONE line
+        pass
 
     def model_stream_start(self, step: int) -> None:
         self._stream_chars = 0
@@ -54,8 +73,29 @@ class StatusReporter:
     def model_stream_end(self) -> None:
         print_stream_end()
 
+    def workspace_analysis(self, summary: str) -> None:
+        """Report workspace discovery results."""
+        print_status_line("WORKSPACE", summary)
 
-def format_action_status(action: AgentAction) -> str:
+    def mutation_preview(
+        self,
+        creates: list[str],
+        modifies: list[str],
+        deletes: list[str],
+    ) -> None:
+        """Show file operation preview before execution."""
+        parts: list[str] = []
+        if creates:
+            parts.append("create: " + ", ".join(creates))
+        if modifies:
+            parts.append("modify: " + ", ".join(modifies))
+        if deletes:
+            parts.append("delete: " + ", ".join(deletes))
+        if parts:
+            print_status_line("PREVIEW", "; ".join(parts))
+
+
+def format_action_status(action: AgentAction) -> str | None:
     if isinstance(action, ListFilesAction):
         return f"READING listing {action.path or '.'}"
     if isinstance(action, ReadFileAction):
@@ -87,7 +127,9 @@ def format_action_status(action: AgentAction) -> str:
     if isinstance(action, SymbolIndexAction):
         return "ANALYZING symbol index"
     if isinstance(action, UpdatePlanAction):
-        return "PLANNING updating task plan"
+        # Issue #15: Suppress internal plan update status lines;
+        # the plan panel already surfaces plan state.
+        return None
     if isinstance(action, RunShellAction):
         return format_shell_status(action.command)
     return f"WORKING {action.type}"
@@ -104,3 +146,50 @@ def format_shell_status(command: str) -> str:
     if any(token in normalized for token in [" lint", "ruff check", "eslint"]):
         return f"CHECKING with {command}"
     return f"RUNNING shell command {command}"
+
+
+def friendly_retry_detail(detail: str) -> str:
+    lowered = detail.lower()
+    if "invalid model action" in lowered or "parse" in lowered:
+        return "retrying with a cleaner response"
+    if "non-workspace" in lowered or "blocked workspace tool" in lowered:
+        return "switching back to chat mode"
+    if "tool failed" in lowered:
+        return "trying another approach"
+    if "model failed" in lowered:
+        return "model call failed"
+    return "trying again"
+
+
+def analyze_workspace(cwd: Path) -> str:
+    """Detect workspace type and produce a human-readable summary."""
+    indicators: list[str] = []
+
+    if (cwd / "package.json").exists():
+        indicators.append("Node.js project (package.json)")
+    if (cwd / "pyproject.toml").exists():
+        indicators.append("Python project (pyproject.toml)")
+    if (cwd / "Cargo.toml").exists():
+        indicators.append("Rust project (Cargo.toml)")
+    if (cwd / "go.mod").exists():
+        indicators.append("Go project (go.mod)")
+    if (cwd / "Makefile").exists():
+        indicators.append("Makefile found")
+    if (cwd / "Dockerfile").exists():
+        indicators.append("Docker project")
+
+    # Detect key directories
+    key_dirs = ["src", "tests", "test", "lib", "docs", "scripts"]
+    found_dirs = [d for d in key_dirs if (cwd / d).is_dir()]
+    if found_dirs:
+        indicators.append("dirs: " + ", ".join(found_dirs))
+
+    if not indicators:
+        # Check if empty
+        children = list(cwd.iterdir())
+        non_hidden = [c for c in children if not c.name.startswith(".")]
+        if not non_hidden:
+            return "Empty directory"
+        return f"Directory with {len(non_hidden)} items"
+
+    return "; ".join(indicators)
