@@ -23,7 +23,6 @@ from .storage import AgentStorage
 from .status import StatusReporter, analyze_workspace
 from .terminal_ui import (
     colorize_panel,
-    format_compact_startup,
     format_prompt_footer,
     format_prompt_header,
     print_agent_banner,
