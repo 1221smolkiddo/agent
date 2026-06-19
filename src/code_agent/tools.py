@@ -3,12 +3,14 @@ from __future__ import annotations
 import base64
 import difflib
 import html.parser
+import inspect
 import re
 import subprocess
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from .schema import (
     AgentAction,
@@ -24,13 +26,14 @@ from .schema import (
     RunShellAction,
     SearchAction,
     SuggestVerificationAction,
+    SymbolIndexAction,
     SummarizeCodeAction,
     ToolResult,
     WebSearchAction,
     WriteFileAction,
 )
 from .parsing import summarize_code_file
-from .repo_index import build_repo_map, rank_context
+from .repo_index import build_repo_map, build_symbol_index, rank_context
 from .safety import classify_network_url, classify_shell_command, is_sensitive_path, redact_secrets
 from .verification import detect_verification_commands, suggest_verification_commands
 
@@ -92,6 +95,8 @@ class ToolRegistry:
             return self._repo_map(action.max_files)
         if isinstance(action, RankContextAction):
             return self._rank_context(action.task, action.max_results)
+        if isinstance(action, SymbolIndexAction):
+            return self._symbol_index(action.max_files, action.max_symbols)
         return ToolResult(ok=False, output=f"Unsupported action: {action.type}")
 
     def resolve_inside_workspace(self, requested_path: str | None = None) -> Path:
@@ -178,7 +183,8 @@ class ToolRegistry:
                 ),
             )
         try:
-            paths = self._paths_from_patch(patch)
+            metadata = self._patch_metadata(patch)
+            paths = set(metadata["paths"])
             if not paths:
                 return ToolResult(ok=False, output="Patch does not contain any target file paths.")
             for path in paths:
@@ -187,13 +193,19 @@ class ToolRegistry:
                     return ToolResult(ok=False, output=f"Refusing to patch sensitive file: {path}.")
         except ValueError as exc:
             return ToolResult(ok=False, output=str(exc))
-        if not self._approve("apply_patch", patch):
+        approval_detail = self._patch_approval_detail(patch, metadata)
+        if not self._approve("apply_patch", approval_detail, metadata):
             return ToolResult(ok=False, output="Permission denied for apply_patch.")
 
         check = self._git_apply(patch, check=True)
         if not check.ok:
+            check.metadata = metadata | {"stage": "check"}
             return check
-        return self._git_apply(patch, check=False)
+        applied = self._git_apply(patch, check=False)
+        applied.metadata = metadata | {"stage": "apply"}
+        if applied.ok:
+            applied.output = self._patch_applied_output(metadata)
+        return applied
 
     def _delete_file(self, requested_path: str) -> ToolResult:
         if self.dry_run:
@@ -358,6 +370,21 @@ class ToolRegistry:
             return ToolResult(ok=False, output="Permission denied for rank_context.")
         return ToolResult(ok=True, output=rank_context(self.workspace, task, max_results=max_results))
 
+    def _symbol_index(self, max_files: int, max_symbols: int) -> ToolResult:
+        if not self._approve(
+            "symbol_index",
+            "Build a compact symbol index from source and test files.",
+        ):
+            return ToolResult(ok=False, output="Permission denied for symbol_index.")
+        return ToolResult(
+            ok=True,
+            output=build_symbol_index(
+                self.workspace,
+                max_files=max_files,
+                max_symbols=max_symbols,
+            ),
+        )
+
     def _web_search(self, query: str) -> ToolResult:
         approval_detail = (
             f"Risk: medium\n"
@@ -387,10 +414,30 @@ class ToolRegistry:
             ),
         )
 
-    def _approve(self, action: str, detail: str) -> bool:
+    def _approve(self, action: str, detail: str, metadata: dict[str, Any] | None = None) -> bool:
         if self.approval_callback is None:
             return False
+        if metadata is not None and self._callback_accepts_metadata():
+            return self.approval_callback(action, detail, metadata)
         return self.approval_callback(action, detail)
+
+    def _callback_accepts_metadata(self) -> bool:
+        if self.approval_callback is None:
+            return False
+        try:
+            signature = inspect.signature(self.approval_callback)
+        except (TypeError, ValueError):
+            return False
+        positional = 0
+        for parameter in signature.parameters.values():
+            if parameter.kind == inspect.Parameter.VAR_POSITIONAL:
+                return True
+            if parameter.kind in {
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            }:
+                positional += 1
+        return positional >= 3
 
     def _search_bing(self, query: str) -> list[tuple[str, str]]:
         url = "https://www.bing.com/search?" + urllib.parse.urlencode({"q": query})
@@ -471,26 +518,101 @@ class ToolRegistry:
 
     @staticmethod
     def _paths_from_patch(patch: str) -> set[str]:
-        paths: set[str] = set()
+        return set(ToolRegistry._patch_metadata(patch)["paths"])
+
+    @staticmethod
+    def _patch_metadata(patch: str) -> dict[str, Any]:
+        files: dict[str, dict[str, Any]] = {}
+        current_paths: set[str] = set()
         for line in patch.splitlines():
             if line.startswith("diff --git "):
+                current_paths = set()
                 parts = line.split()
                 if len(parts) >= 4:
-                    paths.update(
-                        path
-                        for path in [
-                            ToolRegistry._clean_patch_path(parts[2]),
-                            ToolRegistry._clean_patch_path(parts[3]),
-                        ]
-                        if path
-                    )
+                    for raw_path in [parts[2], parts[3]]:
+                        path = ToolRegistry._clean_patch_path(raw_path)
+                        if path:
+                            current_paths.add(path)
+                            files.setdefault(path, ToolRegistry._empty_patch_file_metadata(path))
                 continue
             if line.startswith("--- ") or line.startswith("+++ "):
+                if line.startswith("--- "):
+                    current_paths = set()
                 raw_path = line[4:].split("\t", 1)[0].strip()
                 path = ToolRegistry._clean_patch_path(raw_path)
                 if path:
-                    paths.add(path)
-        return paths
+                    current_paths.add(path)
+                    files.setdefault(path, ToolRegistry._empty_patch_file_metadata(path))
+                continue
+            if not current_paths:
+                continue
+            if line.startswith("+") and not line.startswith("+++"):
+                for path in current_paths:
+                    files[path]["additions"] += 1
+            elif line.startswith("-") and not line.startswith("---"):
+                for path in current_paths:
+                    files[path]["deletions"] += 1
+
+        for item in files.values():
+            additions = int(item["additions"])
+            deletions = int(item["deletions"])
+            if additions and deletions:
+                item["operation"] = "update"
+            elif additions:
+                item["operation"] = "create_or_update"
+            elif deletions:
+                item["operation"] = "delete_or_update"
+            else:
+                item["operation"] = "metadata_only"
+
+        ordered_files = sorted(files.values(), key=lambda item: str(item["path"]))
+        return {
+            "kind": "unified_diff_change_set",
+            "file_count": len(ordered_files),
+            "paths": [str(item["path"]) for item in ordered_files],
+            "files": ordered_files,
+            "total_additions": sum(int(item["additions"]) for item in ordered_files),
+            "total_deletions": sum(int(item["deletions"]) for item in ordered_files),
+        }
+
+    @staticmethod
+    def _empty_patch_file_metadata(path: str) -> dict[str, Any]:
+        return {"path": path, "operation": "update", "additions": 0, "deletions": 0}
+
+    @staticmethod
+    def _patch_approval_detail(patch: str, metadata: dict[str, Any]) -> str:
+        file_lines = [
+            (
+                f"- {item['path']}: {item['operation']}, "
+                f"+{item['additions']} -{item['deletions']}"
+            )
+            for item in metadata.get("files", [])
+        ]
+        summary = [
+            "Patch preview:",
+            f"Files: {metadata['file_count']}",
+            f"Total changes: +{metadata['total_additions']} -{metadata['total_deletions']}",
+            *file_lines,
+            "",
+            "Unified diff:",
+            patch,
+        ]
+        return "\n".join(summary)
+
+    @staticmethod
+    def _patch_applied_output(metadata: dict[str, Any]) -> str:
+        file_lines = [
+            f"- {item['path']}: {item['operation']} (+{item['additions']} -{item['deletions']})"
+            for item in metadata.get("files", [])
+        ]
+        return "\n".join(
+            [
+                "Patch applied.",
+                f"Files changed: {metadata['file_count']}",
+                f"Total changes: +{metadata['total_additions']} -{metadata['total_deletions']}",
+                *file_lines,
+            ]
+        )
 
     @staticmethod
     def _clean_patch_path(path: str) -> str | None:

@@ -211,7 +211,7 @@ def _validation_items(result: AgentRunResult) -> list[dict[str, str]]:
 def _change_summary(result: AgentRunResult) -> str:
     changes = _change_items(result)
     return "\n".join(
-        f"- {item['action']} {item['path']}: {item['status']}" for item in changes
+        f"- {item['action']} {item['path']}: {item['status']}{item['detail']}" for item in changes
     ) or "<none>"
 
 
@@ -223,9 +223,22 @@ def _change_items(result: AgentRunResult) -> list[dict[str, str]]:
                 "action": str(record.get("action", "change")),
                 "path": str(record.get("path", "<unknown>")),
                 "status": "ok" if record.get("ok") is True else "failed",
+                "detail": _patch_detail(record),
             }
         )
     return changes
+
+
+def _patch_detail(record: dict[str, Any]) -> str:
+    patch = record.get("patch")
+    if not isinstance(patch, dict):
+        return ""
+    operation = str(patch.get("operation", "")).strip()
+    additions = patch.get("additions")
+    deletions = patch.get("deletions")
+    if not operation and additions is None and deletions is None:
+        return ""
+    return f" ({operation}, +{additions} -{deletions})"
 
 
 def _diff_review(result: AgentRunResult, max_lines: int = 80) -> str:

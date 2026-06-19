@@ -28,13 +28,14 @@ This document summarizes the current state of Agent47 for collaborators.
 - Git-diff awareness through an approved `inspect_git_diff` action that reports dirty paths and can include bounded diff hunks when needed.
 - Lightweight repo mapping through an approved `repo_map` action that reports important project files, file counts, and top-level layout while skipping ignored local state.
 - Task-aware context ranking through an approved `rank_context` action that scores likely relevant files before broad reads.
-- Repo-map and ranking actions are saved in run history and summarized in structured work reports as context analysis.
+- Compact symbol indexing through an approved `symbol_index` action that locates Python classes/functions and JavaScript/TypeScript declarations before implementation reads.
+- Repo-map, ranking, and symbol-index actions are saved in run history and summarized in structured work reports as context analysis.
 - Offline deterministic eval harness through `code-agent evals`.
 - Built-in safety regressions for greeting routing, blocked-write honesty, denied-read non-leakage, and sandbox write isolation.
 - Built-in fixture coding evals for create-file, edit-file, fix-test, and failed-read recovery tasks.
 - Versioned newline-delimited JSON protocol through `code-agent run-json` for future VS Code and non-terminal frontends.
-- JSON protocol events cover run start/finish, status, action starts, approval requests, recovery, failures, work reports, and final results.
-- JSON protocol approval handling fails closed by default, with explicit `--approve-all` only for trusted automation.
+- JSON protocol events cover run start/finish, status, action starts, approval requests, approval resolutions, recovery, failures, work reports, and final results.
+- JSON protocol approval handling fails closed by default, supports `--approval-stdin` request/response handling for parent editor processes, and keeps explicit `--approve-all` only for trusted automation.
 - Install diagnostics through `code-agent doctor`.
 - Cross-platform install guide for Windows, macOS, Linux, uv, pip editable installs, and pipx.
 - File operations with `pathlib`.
@@ -155,7 +156,7 @@ Inside `agent47`:
 - Verification outcome summaries.
 - Clean terminal panel formatting.
 - Project search fallback when `ripgrep` is unavailable.
-- Lightweight repo index and context ranking.
+- Lightweight repo index, context ranking, and symbol indexing.
 - Local deterministic eval harness.
 - Fixture-based coding evals.
 - Versioned NDJSON protocol for frontend integrations.
@@ -176,8 +177,7 @@ Inside `agent47`:
 - Network policy controls.
 - Rich token-level streaming views for future non-JSON frontends.
 - Broader fixture evals with multi-file patches, larger repos, and prompt-injection scenarios.
-- Deeper repo intelligence with symbol/dependency graphs on top of the baseline repo index.
-- Interactive JSON approval response handling for editor frontends.
+- Deeper dependency graphs on top of the baseline repo and symbol indexes.
 - Additional concrete providers beyond OpenAI-compatible APIs.
 - Package metadata, license, changelog, and release checklist.
 - VS Code extension frontend.

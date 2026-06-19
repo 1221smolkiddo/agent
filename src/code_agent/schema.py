@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, Optional, Union
+from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -126,6 +126,12 @@ class RankContextAction(BaseModel):
     max_results: int = Field(default=12, ge=3, le=50)
 
 
+class SymbolIndexAction(BaseModel):
+    type: Literal["symbol_index"]
+    max_files: int = Field(default=40, ge=5, le=200)
+    max_symbols: int = Field(default=120, ge=10, le=500)
+
+
 AgentAction = Union[
     FinalAction,
     UpdatePlanAction,
@@ -144,9 +150,11 @@ AgentAction = Union[
     InspectGitDiffAction,
     RepoMapAction,
     RankContextAction,
+    SymbolIndexAction,
 ]
 
 
 class ToolResult(BaseModel):
     ok: bool
     output: str = Field(default="")
+    metadata: dict[str, Any] = Field(default_factory=dict)

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from code_agent.repo_index import build_repo_map, index_repo, rank_context
+from code_agent.repo_index import build_repo_map, build_symbol_index, index_repo, rank_context
 
 
 def test_repo_index_ignores_local_state_and_classifies_files(tmp_path: Path) -> None:
@@ -52,3 +52,42 @@ def test_rank_context_prefers_task_terms_and_tests(tmp_path: Path) -> None:
     assert "Ranked context:" in output
     assert "tests/test_verification.py" in output
     assert output.index("tests/test_verification.py") < output.index("src/code_agent/storage.py")
+
+
+def test_symbol_index_extracts_python_and_javascript_declarations(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text(
+        "\n".join(
+            [
+                "class Agent:",
+                "    async def run(self):",
+                "        pass",
+                "",
+                "def helper():",
+                "    pass",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "ui.ts").write_text(
+        "\n".join(
+            [
+                "export class Panel {}",
+                "export function render() {}",
+                "const localState = {};",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    output = build_symbol_index(tmp_path)
+
+    assert "Symbol index:" in output
+    assert "src/app.py:" in output
+    assert "- L1 class Agent" in output
+    assert "- L2 async def run" in output
+    assert "- L5 def helper" in output
+    assert "src/ui.ts:" in output
+    assert "- L1 class Panel" in output
+    assert "- L2 function render" in output
+    assert "- L3 binding localState" in output

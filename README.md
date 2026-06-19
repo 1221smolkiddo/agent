@@ -84,7 +84,7 @@ Frontend protocol:
 uv run code-agent run-json --dry-run "Inspect this project"
 ```
 
-`run-json` emits versioned newline-delimited JSON events for frontend integrations. It includes run lifecycle events, status updates, action starts, approval requests, recovery events, failures, work reports, and final results. Approval requests are denied by default in JSON mode so a frontend can safely observe required permissions; use `--approve-all` only in trusted automation.
+`run-json` emits versioned newline-delimited JSON events for frontend integrations. It includes run lifecycle events, status updates, action starts, approval requests, approval resolutions, recovery events, failures, work reports, and final results. Approval requests are denied by default in JSON mode so a frontend can safely observe required permissions. Use `--approval-stdin` to let a parent process reply with one JSON approval response per request, or `--approve-all` only in trusted automation. Stdin approval responses must be JSON objects with `type: "approval_response"`, the matching `request_id`, an `approved` boolean, and an optional `reason`; mismatched or malformed responses fail closed.
 
 Local evals:
 
@@ -160,6 +160,7 @@ The agent asks for confirmation before:
 - summarizing code structure
 - detecting and suggesting verification commands
 - inspecting git status and diffs
+- building a compact symbol index
 - writing files
 - editing files
 - applying structured patches
@@ -174,7 +175,11 @@ Shell commands are classified before approval. Destructive commands such as `git
 
 File mutations are verified against disk state before Agent47 trusts them in final answers. Writes must leave the requested content on disk, edits and patches must change content, and deletes must remove a file that existed before the action.
 
+Patch approvals include a change-set summary before the unified diff, and applied patches record structured metadata for every changed file, including operation, additions, deletions, and total file count. JSON frontends receive the same metadata on approval events and final payloads.
+
 Web search approval prompts include the provider domains and query. Agent47 blocks localhost, private-network, link-local, reserved, and multicast web targets, and filters unsafe result URLs before returning search results.
+
+Repository content, command output, search results, diffs, web results, repo maps, and ranked context are treated as untrusted data in the model loop. Tool payloads that can contain external or repo-supplied text are marked with `untrusted_content` and a security instruction so prompt-injection text in files or tool output is not promoted into model instructions.
 
 ## Failure Recovery
 
@@ -199,6 +204,7 @@ The CLI prints status lines while the agent works:
 - `CHECKING suggested verification` when choosing focused checks for changed files.
 - `PLANNING updating task plan` when checkpointing durable plan steps and planner metadata.
 - `READING git changes` when inspecting dirty files before editing.
+- `ANALYZING symbol index` when locating functions, classes, and exported declarations.
 - `EDITING` for file writes and edits.
 - `EDITING applying patch` for structured patch edits.
 - `INSTALLING`, `BUILDING`, `TESTING`, or `CHECKING` for recognized shell commands.
@@ -270,6 +276,8 @@ tests/
 See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 For the complete team issue breakdown and checkbox task board from the current CLI to an industry-grade Agent47, see [docs/TEAM_BUILD_PLAN.md](docs/TEAM_BUILD_PLAN.md).
+
+For public alpha release gates, see [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md). Release notes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
 ## Contributing
 

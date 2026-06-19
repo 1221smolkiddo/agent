@@ -65,10 +65,77 @@ def test_json_approval_callback_fails_closed_by_default() -> None:
     approve = json_approval_callback(emitter)
 
     assert approve("read_file", "README.md") is False
-    event = parse_json_lines(stream.getvalue())[0]
-    assert event["event"] == "approval_requested"
-    assert event["approved"] is False
-    assert event["mode"] == "default_deny"
+    events = parse_json_lines(stream.getvalue())
+    assert [event["event"] for event in events] == ["approval_requested", "approval_resolved"]
+    assert events[0]["approved"] is False
+    assert events[0]["mode"] == "default_deny"
+    assert events[0]["request_id"]
+    assert events[1]["request_id"] == events[0]["request_id"]
+    assert events[1]["approved"] is False
+
+
+class ApprovalResponseStream(StringIO):
+    def __init__(self, event_stream: StringIO, *, approved: bool = True, reason: str = "trusted") -> None:
+        super().__init__("")
+        self.event_stream = event_stream
+        self.approved = approved
+        self.reason = reason
+
+    def readline(self, *_args: Any, **_kwargs: Any) -> str:
+        request = parse_json_lines(self.event_stream.getvalue())[-1]
+        return json.dumps(
+            {
+                "type": "approval_response",
+                "request_id": request["request_id"],
+                "approved": self.approved,
+                "reason": self.reason,
+            }
+        ) + "\n"
+
+
+def test_json_approval_callback_accepts_stdin_response() -> None:
+    stream = StringIO()
+    emitter = JsonEventEmitter(stream)
+    input_stream = ApprovalResponseStream(stream)
+    approve = json_approval_callback(emitter, input_stream=input_stream)
+
+    assert approve("read_file", "README.md") is True
+    events = parse_json_lines(stream.getvalue())
+    assert [event["event"] for event in events] == ["approval_requested", "approval_resolved"]
+    assert events[0]["mode"] == "stdin"
+    assert events[0]["approved"] is None
+    assert events[0]["response_schema"]["request_id"] == events[0]["request_id"]
+    assert events[1]["request_id"] == events[0]["request_id"]
+    assert events[1]["approved"] is True
+    assert events[1]["reason"] == "trusted"
+
+
+def test_json_approval_callback_emits_metadata_for_frontends() -> None:
+    stream = StringIO()
+    emitter = JsonEventEmitter(stream)
+    input_stream = ApprovalResponseStream(stream)
+    approve = json_approval_callback(emitter, input_stream=input_stream)
+
+    assert approve("apply_patch", "Patch preview", {"paths": ["a.py", "b.py"]}) is True
+    events = parse_json_lines(stream.getvalue())
+
+    assert events[0]["metadata"] == {"paths": ["a.py", "b.py"]}
+    assert events[1]["request_id"] == events[0]["request_id"]
+
+
+def test_json_approval_callback_rejects_invalid_stdin_response() -> None:
+    stream = StringIO()
+    emitter = JsonEventEmitter(stream)
+    approve = json_approval_callback(
+        emitter,
+        input_stream=StringIO('{"type":"approval_response","request_id":"wrong","approved":true}\n'),
+    )
+
+    assert approve("write_file", "README.md") is False
+    events = parse_json_lines(stream.getvalue())
+    assert events[1]["event"] == "approval_resolved"
+    assert events[1]["approved"] is False
+    assert "request_id did not match" in events[1]["reason"]
 
 
 def test_result_payload_contains_frontend_fields() -> None:
@@ -118,6 +185,62 @@ def test_run_json_command_emits_ndjson_events(monkeypatch, tmp_path: Path) -> No
     assert events[1]["run_id"] == 7
     assert isinstance(captured["reporter"], JsonProtocolReporter)
     assert captured["stream_model"] is False
+
+
+def test_run_json_command_can_read_approval_from_stdin(monkeypatch, tmp_path: Path) -> None:
+    class FakeAgent:
+        def __init__(self, approval_callback: Any) -> None:
+            self.approval_callback = approval_callback
+
+        def run_detailed(self, task: str) -> AgentRunResult:
+            approved = self.approval_callback("read_file", "README.md")
+            return AgentRunResult(message=f"approved={approved}", run_id=9, task=task, blocked=not approved)
+
+    def fake_create_agent(**kwargs: Any) -> FakeAgent:
+        return FakeAgent(kwargs["approval_callback"])
+
+    monkeypatch.setattr(cli, "create_agent", fake_create_agent)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        ["run-json", "read docs", "--cwd", str(tmp_path), "--approval-stdin", "--no-stream"],
+        input='{"type":"approval_response","request_id":"wrong","approved":true,"reason":"editor approved"}\n',
+    )
+
+    assert result.exit_code == 1
+    events = parse_json_lines(result.output)
+    assert [event["event"] for event in events] == [
+        "run_started",
+        "approval_requested",
+        "approval_resolved",
+        "run_finished",
+    ]
+    assert events[1]["mode"] == "stdin"
+    assert events[2]["approved"] is False
+    assert "request_id did not match" in events[2]["reason"]
+    assert events[3]["message"] == "approved=False"
+
+
+def test_run_json_command_rejects_conflicting_approval_modes(tmp_path: Path) -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        [
+            "run-json",
+            "read docs",
+            "--cwd",
+            str(tmp_path),
+            "--approve-all",
+            "--approval-stdin",
+        ],
+    )
+
+    assert result.exit_code == 2
+    events = parse_json_lines(result.output)
+    assert events[0]["event"] == "run_failed"
+    assert events[0]["code"] == "invalid_approval_mode"
 
 
 def test_run_json_command_reports_failures(monkeypatch, tmp_path: Path) -> None:

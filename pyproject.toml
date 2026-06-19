@@ -4,6 +4,25 @@ version = "0.1.0"
 description = "A Python CLI-first coding agent with a reusable core for future editor integrations."
 readme = "README.md"
 requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Agent47 contributors" },
+]
+keywords = ["ai", "coding-agent", "cli", "developer-tools", "agent47"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development",
+  "Topic :: Software Development :: Code Generators",
+  "Topic :: Utilities",
+]
 dependencies = [
   "openai>=1.84.0",
   "pydantic-settings>=2.8.0",
@@ -24,6 +43,12 @@ parsing = [
 [project.scripts]
 code-agent = "code_agent.cli:app"
 agent47 = "code_agent.interactive:main"
+
+[project.urls]
+Homepage = "https://github.com/1221smolkiddo/agent"
+Documentation = "https://github.com/1221smolkiddo/agent#readme"
+Issues = "https://github.com/1221smolkiddo/agent/issues"
+Changelog = "https://github.com/1221smolkiddo/agent/blob/main/CHANGELOG.md"
 
 [build-system]
 requires = ["hatchling"]

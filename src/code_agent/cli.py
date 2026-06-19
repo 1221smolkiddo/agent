@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 from typing import Optional
 
 import typer
@@ -142,9 +143,21 @@ def run_json(
         "--approve-all",
         help="Approve every tool request. Intended only for trusted automation.",
     ),
+    approval_stdin: bool = typer.Option(
+        False,
+        "--approval-stdin",
+        help="Read one JSON approval response from stdin for each approval request.",
+    ),
 ) -> None:
     """Run the agent and emit newline-delimited JSON protocol events."""
     emitter = JsonEventEmitter()
+    if approve_all and approval_stdin:
+        emit_run_failed(
+            emitter,
+            "--approve-all and --approval-stdin cannot be used together.",
+            code="invalid_approval_mode",
+        )
+        raise typer.Exit(code=2)
     settings = Settings()
     workspace = cwd.resolve()
     try:
@@ -170,7 +183,11 @@ def run_json(
             dry_run=dry_run,
             max_steps=max_steps,
             max_failures=max_failures,
-            approval_callback=json_approval_callback(emitter, approve_all=approve_all),
+            approval_callback=json_approval_callback(
+                emitter,
+                approve_all=approve_all,
+                input_stream=sys.stdin if approval_stdin else None,
+            ),
             reporter=JsonProtocolReporter(emitter),
             stream_model=stream,
             profile=profile,

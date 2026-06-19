@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TextIO
@@ -80,19 +81,95 @@ def json_approval_callback(
     emitter: JsonEventEmitter,
     *,
     approve_all: bool = False,
-) -> Callable[[str, str], bool]:
-    def approve(action: str, detail: str) -> bool:
-        approved = approve_all
+    input_stream: TextIO | None = None,
+) -> Callable[..., bool]:
+    def approve(action: str, detail: str, metadata: dict[str, Any] | None = None) -> bool:
+        request_id = str(uuid.uuid4())
+        approval_payload = {
+            "request_id": request_id,
+            "action_type": action,
+            "detail": detail,
+            "metadata": metadata or {},
+        }
+        if approve_all:
+            emitter.emit(
+                "approval_requested",
+                **approval_payload,
+                approved=True,
+                mode="approve_all",
+            )
+            emitter.emit(
+                "approval_resolved",
+                request_id=request_id,
+                action_type=action,
+                approved=True,
+                mode="approve_all",
+                reason="approved by --approve-all",
+            )
+            return True
+        if input_stream is None:
+            emitter.emit(
+                "approval_requested",
+                **approval_payload,
+                approved=False,
+                mode="default_deny",
+            )
+            emitter.emit(
+                "approval_resolved",
+                request_id=request_id,
+                action_type=action,
+                approved=False,
+                mode="default_deny",
+                reason="JSON mode denies approvals unless --approval-stdin or --approve-all is used",
+            )
+            return False
+
         emitter.emit(
             "approval_requested",
+            **approval_payload,
+            approved=None,
+            mode="stdin",
+            response_schema={
+                "type": "approval_response",
+                "request_id": request_id,
+                "approved": True,
+                "reason": "optional short reason",
+            },
+        )
+        approved, reason = _read_json_approval_response(input_stream, request_id)
+        emitter.emit(
+            "approval_resolved",
+            request_id=request_id,
             action_type=action,
-            detail=detail,
             approved=approved,
-            mode="approve_all" if approve_all else "default_deny",
+            mode="stdin",
+            reason=reason,
         )
         return approved
 
     return approve
+
+
+def _read_json_approval_response(input_stream: TextIO, request_id: str) -> tuple[bool, str]:
+    raw = input_stream.readline()
+    if not raw:
+        return False, "approval input ended before a response was received"
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return False, f"invalid approval JSON: {exc.msg}"
+    if not isinstance(payload, dict):
+        return False, "approval response must be a JSON object"
+    if payload.get("type") != "approval_response":
+        return False, "approval response type must be approval_response"
+    response_request_id = payload.get("request_id")
+    if response_request_id != request_id:
+        return False, "approval response request_id did not match"
+    approved = payload.get("approved")
+    if not isinstance(approved, bool):
+        return False, "approval response must include approved boolean"
+    reason = str(payload.get("reason") or ("approved" if approved else "denied"))
+    return approved, reason
 
 
 def emit_run_started(

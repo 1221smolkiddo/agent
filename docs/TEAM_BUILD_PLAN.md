@@ -103,6 +103,7 @@ These are already built and should be maintained while new work continues.
 - [x] Lightweight repo map and task-aware relevance ranking.
 - [x] Local deterministic eval harness with baseline safety regressions.
 - [x] Baseline newline-delimited JSON protocol for future frontends.
+- [x] JSON protocol approval request/response handling for editor frontends with correlated request IDs and fail-closed responses.
 - [x] Model fallback and usage/cost tracking baseline.
 - [x] Install doctor and cross-platform install guide.
 - [x] Fixture-based coding evals for create/edit/fix/recover tasks.
@@ -119,9 +120,9 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 
 ### Phase 2: Patch-Based Editing
 
-- [ ] Issue 4: Patch Model. Owner:
-- [ ] Issue 5: Patch Preview And Approval. Owner:
-- [ ] Issue 6: Patch Apply And Verify. Owner:
+- [x] Issue 4: Patch Model. Owner: Agent47
+- [x] Issue 5: Patch Preview And Approval. Owner: Agent47
+- [x] Issue 6: Patch Apply And Verify. Owner: Agent47
 - [ ] Issue 7: Patch Revert. Owner:
 
 ### Phase 3: Permissions And Policy
@@ -148,7 +149,7 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 
 - [x] Issue 19: Repo Map. Owner: Agent47
 - [x] Issue 20: File Relevance Ranking. Owner: Agent47
-- [ ] Issue 21: Tree-Sitter Symbol Index. Owner:
+- [x] Issue 21: Symbol Index Baseline. Owner: Agent47
 - [x] Issue 22: Git Awareness. Owner: Agent47
 
 ### Phase 7: Planner And Task State
@@ -178,9 +179,9 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 
 ### Phase 11: Public Packaging
 
-- [ ] Issue 36: Package Metadata. Owner:
+- [x] Issue 36: Package Metadata. Owner: Agent47
 - [x] Issue 37: Install Guide. Owner: Agent47
-- [ ] Issue 38: Versioning And Releases. Owner:
+- [x] Issue 38: Versioning And Releases. Owner: Agent47
 - [ ] Issue 39: PyPI Or GitHub Release. Owner:
 
 ### Phase 12: Evals And Reliability
@@ -199,8 +200,8 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 
 - [ ] Issue 46: Security Policy. Owner:
 - [ ] Issue 47: Threat Model. Owner:
-- [ ] Issue 48: Prompt Injection Defenses. Owner:
-- [ ] Issue 49: Public Alpha Checklist. Owner:
+- [x] Issue 48: Prompt Injection Defenses. Owner: Agent47
+- [x] Issue 49: Public Alpha Checklist. Owner: Agent47
 
 ### Phase 15: VS Code Later
 
@@ -317,6 +318,8 @@ Acceptance criteria:
 - Patch objects can be previewed.
 - Patch objects can be validated before apply.
 
+Status: **Baseline done**. Unified-diff patch actions now produce structured change-set metadata with changed paths, file count, per-file operation, additions, deletions, and totals. The same metadata is carried through approval events, tool results, mutation records, work reports, and JSON result payloads.
+
 #### 5. Patch Preview And Approval
 
 Owner suggestion: Safety/Tools Owner
@@ -337,6 +340,8 @@ Acceptance criteria:
 - Denied patch does not modify files.
 - Approved patch modifies expected files only.
 
+Status: **Baseline done**. Patch approval prompts include a multi-file summary before the unified diff, validate workspace-relative target paths before prompting, and expose the same metadata to JSON frontends for editor diff approval UI.
+
 #### 6. Patch Apply And Verify
 
 Owner suggestion: Safety/Tools Owner
@@ -356,6 +361,8 @@ Acceptance criteria:
 - Patch apply is deterministic.
 - Failed patch gives useful recovery output.
 - Agent can retry with updated context.
+
+Status: **Baseline done**. Patch apply runs `git apply --check` before applying, records check/apply stage metadata, verifies changed files against disk state, and feeds failed patch checks back into the normal recovery loop.
 
 #### 7. Patch Revert
 
@@ -670,7 +677,7 @@ Acceptance criteria:
 
 Status: **Done for baseline**. Agent47 now exposes an approved `rank_context` action that scores indexed files against the user task using path terms, file kind, tests, docs, source modules, and important project-file signals. Repo-map and ranking usage is recorded in run history and structured work reports.
 
-#### 21. Tree-Sitter Symbol Index
+#### 21. Symbol Index Baseline
 
 Owner suggestion: Agent Core Owner
 
@@ -686,6 +693,8 @@ Tasks:
 Acceptance criteria:
 
 - Agent can locate functions/classes without scanning full files.
+
+Status: **Baseline done**. Added an approved `symbol_index` action that indexes Python classes/functions with `ast` and conservative JavaScript/TypeScript declarations with deterministic parsing. Symbol-index output is recorded as context analysis and marked as untrusted model context before reuse. Tree-sitter-backed richer symbol graphs remain a possible future enhancement.
 
 #### 22. Git Awareness
 
@@ -976,6 +985,8 @@ Acceptance criteria:
 
 - Package metadata is PyPI-ready.
 
+Status: **Done for public-alpha baseline**. `pyproject.toml` now includes license, author, classifiers, keywords, and project URLs, with `LICENSE` and `CHANGELOG.md` present.
+
 #### 37. Install Guide
 
 Owner suggestion: CLI/UX Owner
@@ -1008,6 +1019,8 @@ Tasks:
 Acceptance criteria:
 
 - Team can cut a release repeatably.
+
+Status: **Done for public-alpha baseline**. Added `docs/RELEASE_CHECKLIST.md` with package, safety, verification, and release gates, plus changelog guidance for dated release entries.
 
 #### 39. PyPI Or GitHub Release
 
@@ -1191,6 +1204,8 @@ Acceptance criteria:
 
 - Agent does not follow instructions found in files as system instructions.
 
+Status: **Baseline done**. The system prompt treats repo content, diffs, command output, web results, search results, repo maps, and ranked context as untrusted data. Tool payloads that can contain external or repository-supplied text are marked with `untrusted_content` and a security instruction before returning to the model, with regression coverage for malicious file content.
+
 #### 49. Public Alpha Checklist
 
 Owner suggestion: Infrastructure/Release Owner
@@ -1210,6 +1225,8 @@ Checklist:
 Acceptance criteria:
 
 - Team agrees project is alpha-ready.
+
+Status: **Checklist done**. `docs/RELEASE_CHECKLIST.md` defines the public-alpha gates the team must pass before a release. Actual alpha readiness still depends on running and signing off those gates for a specific release candidate.
 
 ## Phase 15: VS Code Later
 
@@ -1235,7 +1252,7 @@ Acceptance criteria:
 
 - Team chooses one approach and documents tradeoffs.
 
-Status: **Done for baseline**. Agent47 now exposes `code-agent run-json`, a subprocess-friendly newline-delimited JSON event protocol for status, action starts, approval requests, recovery, failures, work reports, and final results. VS Code can build on this transport before a fuller JSON-RPC layer is needed.
+Status: **Done for baseline**. Agent47 now exposes `code-agent run-json`, a subprocess-friendly newline-delimited JSON event protocol for status, action starts, approval requests, approval resolutions, recovery, failures, work reports, and final results. JSON mode fails closed by default, supports `--approval-stdin` for parent editor processes to answer approval requests, and keeps `--approve-all` limited to trusted automation. VS Code can build on this transport before a fuller JSON-RPC layer is needed.
 
 #### 51. Extension Scaffold
 

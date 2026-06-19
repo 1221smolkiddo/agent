@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -111,6 +112,28 @@ def rank_context(workspace: Path, task: str, *, max_results: int = 12) -> str:
     return "\n".join(lines)
 
 
+def build_symbol_index(workspace: Path, *, max_files: int = 40, max_symbols: int = 120) -> str:
+    files = [item for item in index_repo(workspace) if item.kind in {"source", "test"}]
+    lines = ["Symbol index:", f"- files scanned: {min(len(files), max_files)}", ""]
+    symbol_count = 0
+    for item in files[:max_files]:
+        path = workspace / item.path
+        symbols = _symbols_for_file(path)
+        if not symbols:
+            continue
+        lines.append(f"{item.path}:")
+        for symbol in symbols:
+            lines.append(f"- {symbol}")
+            symbol_count += 1
+            if symbol_count >= max_symbols:
+                lines.append(f"<truncated after {max_symbols} symbols>")
+                return "\n".join(lines)
+        lines.append("")
+    if symbol_count == 0:
+        lines.append("<no symbols found>")
+    return "\n".join(lines).rstrip()
+
+
 def index_repo(workspace: Path) -> list[RepoFile]:
     root = workspace.resolve()
     files: list[RepoFile] = []
@@ -153,6 +176,59 @@ def score_file(file: RepoFile, terms: list[str]) -> int:
     if any(term in {"cli", "command", "terminal"} for term in terms) and "cli" in path_lower:
         score += 8
     return score
+
+
+def _symbols_for_file(path: Path) -> list[str]:
+    if path.suffix == ".py":
+        return _python_symbols(path)
+    if path.suffix in {".js", ".jsx", ".ts", ".tsx"}:
+        return _javascript_like_symbols(path)
+    return []
+
+
+def _python_symbols(path: Path) -> list[str]:
+    try:
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return []
+    symbols: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            symbols.append(f"L{node.lineno} class {node.name}")
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            prefix = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
+            symbols.append(f"L{node.lineno} {prefix} {node.name}")
+    return sorted(symbols, key=_symbol_line_number)
+
+
+def _javascript_like_symbols(path: Path) -> list[str]:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return []
+    patterns = [
+        (re.compile(r"^\s*export\s+default\s+function\s+([A-Za-z_$][\w$]*)"), "function"),
+        (re.compile(r"^\s*export\s+function\s+([A-Za-z_$][\w$]*)"), "function"),
+        (re.compile(r"^\s*function\s+([A-Za-z_$][\w$]*)"), "function"),
+        (re.compile(r"^\s*export\s+class\s+([A-Za-z_$][\w$]*)"), "class"),
+        (re.compile(r"^\s*class\s+([A-Za-z_$][\w$]*)"), "class"),
+        (re.compile(r"^\s*export\s+(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*="), "binding"),
+        (re.compile(r"^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*="), "binding"),
+    ]
+    symbols: list[str] = []
+    for line_number, line in enumerate(lines, start=1):
+        for pattern, kind in patterns:
+            match = pattern.search(line)
+            if match:
+                symbols.append(f"L{line_number} {kind} {match.group(1)}")
+                break
+    return symbols
+
+
+def _symbol_line_number(symbol: str) -> int:
+    match = re.match(r"L(\d+)", symbol)
+    return int(match.group(1)) if match else 0
 
 
 def _task_terms(task: str) -> list[str]:

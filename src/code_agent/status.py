@@ -14,6 +14,7 @@ from .schema import (
     RunShellAction,
     SearchAction,
     SuggestVerificationAction,
+    SymbolIndexAction,
     SummarizeCodeAction,
     UpdatePlanAction,
     WebSearchAction,
@@ -83,6 +84,8 @@ def format_action_status(action: AgentAction) -> str:
         return "ANALYZING repository map"
     if isinstance(action, RankContextAction):
         return "ANALYZING relevant context"
+    if isinstance(action, SymbolIndexAction):
+        return "ANALYZING symbol index"
     if isinstance(action, UpdatePlanAction):
         return "PLANNING updating task plan"
     if isinstance(action, RunShellAction):
