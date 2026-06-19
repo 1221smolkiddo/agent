@@ -11,7 +11,12 @@ from .factory import create_agent
 from .model_profiles import validate_profile_name
 from .permissions import confirm_permission
 from .resume import build_resume_task, format_run_detail
-from .sandbox import create_sandbox_workspace
+from .sandbox import (
+    create_sandbox_workspace,
+    diff_sandbox_workspace,
+    format_sandbox_diff,
+    promote_sandbox_changes,
+)
 from .session import SessionState
 from .storage import AgentStorage
 from .status import StatusReporter
@@ -198,6 +203,36 @@ def handle_command(
             cwd = base_cwd
             sandbox_enabled = False
             print_key_values("Sandbox", [("Sandbox", "off"), ("Workspace", cwd)])
+        elif value.lower().startswith("diff"):
+            if not sandbox_enabled:
+                print_panel("Sandbox", "Sandbox is not active. Use /sandbox first.")
+            else:
+                paths = value.split()[1:]
+                try:
+                    diff = diff_sandbox_workspace(base_cwd, cwd, paths=paths)
+                except ValueError as exc:
+                    print_panel("Sandbox", str(exc))
+                else:
+                    print_panel("Sandbox Diff", format_sandbox_diff(diff))
+        elif value.lower().startswith("apply"):
+            if not sandbox_enabled:
+                print_panel("Sandbox", "Sandbox is not active. Use /sandbox first.")
+            else:
+                paths = value.split()[1:]
+                try:
+                    result = promote_sandbox_changes(
+                        base_cwd,
+                        cwd,
+                        paths=paths,
+                        approval_callback=confirm_permission,
+                    )
+                except ValueError as exc:
+                    print_panel("Sandbox Apply", str(exc))
+                else:
+                    body = result.output
+                    if result.changed_paths:
+                        body += "\nPromoted files: " + ", ".join(result.changed_paths)
+                    print_panel("Sandbox Apply", body)
         else:
             sandbox_workspace = create_sandbox_workspace(base_cwd)
             cwd = sandbox_workspace.path
@@ -293,6 +328,8 @@ Commands:
   /stream [off]      Turn compact model streaming progress on or off.
   /cwd <path>        Change workspace.
   /sandbox [off]     Create and use a sandbox copy, or turn it off.
+  /sandbox diff      Show changes between the sandbox and base workspace.
+  /sandbox apply     Promote sandbox changes back to the base workspace.
   /model <name>      Change model for this session.
   /profile <name>    Change model profile: default, planner, coder, reviewer, or fast.
   /max-steps <n>     Change max agent loop steps.

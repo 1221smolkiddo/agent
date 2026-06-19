@@ -8,6 +8,7 @@ from code_agent.schema import (
     RunShellAction,
     SearchAction,
     SuggestVerificationAction,
+    SymbolIndexAction,
     UpdatePlanAction,
     WebSearchAction,
 )
@@ -80,6 +81,12 @@ def test_format_action_status_for_rank_context() -> None:
     status = format_action_status(RankContextAction(type="rank_context", task="fix cli"))
 
     assert status == "ANALYZING relevant context"
+
+
+def test_format_action_status_for_symbol_index() -> None:
+    status = format_action_status(SymbolIndexAction(type="symbol_index"))
+
+    assert status == "ANALYZING symbol index"
 
 
 def test_format_shell_status_for_install() -> None:

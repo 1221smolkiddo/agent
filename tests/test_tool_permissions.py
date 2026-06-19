@@ -11,6 +11,7 @@ from code_agent.schema import (
     SearchAction,
     WebSearchAction,
     WriteFileAction,
+    SymbolIndexAction,
 )
 from code_agent.tools import BingParser, ToolRegistry
 
@@ -59,6 +60,15 @@ def test_rank_context_requires_permission(tmp_path: Path) -> None:
 
     assert not result.ok
     assert result.output == "Permission denied for rank_context."
+
+
+def test_symbol_index_requires_permission(tmp_path: Path) -> None:
+    tools = ToolRegistry(workspace=tmp_path, dry_run=True, approval_callback=lambda _a, _d: False)
+
+    result = tools.run(SymbolIndexAction(type="symbol_index"))
+
+    assert not result.ok
+    assert result.output == "Permission denied for symbol_index."
 
 
 def test_delete_file_requires_permission(tmp_path: Path) -> None:
@@ -176,11 +186,14 @@ def test_repo_map_and_rank_context_succeed_with_permission(tmp_path: Path) -> No
 
     repo_map = tools.run(RepoMapAction(type="repo_map", max_files=20))
     ranked = tools.run(RankContextAction(type="rank_context", task="fix cli", max_results=5))
+    symbols = tools.run(SymbolIndexAction(type="symbol_index", max_files=20, max_symbols=20))
 
     assert repo_map.ok
     assert "Repository map:" in repo_map.output
     assert ranked.ok
     assert "src/cli.py" in ranked.output
+    assert symbols.ok
+    assert "Symbol index:" in symbols.output
 
 
 def test_bing_parser_extracts_general_web_results() -> None:

@@ -21,7 +21,12 @@ from .protocol import (
     json_approval_callback,
 )
 from .resume import build_resume_task, format_run_detail
-from .sandbox import create_sandbox_workspace
+from .sandbox import (
+    create_sandbox_workspace,
+    diff_sandbox_workspace,
+    format_sandbox_diff,
+    promote_sandbox_changes,
+)
 from .storage import AgentStorage
 from .status import StatusReporter
 from .terminal_ui import print_work_report_panel
@@ -32,7 +37,9 @@ history_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
 )
+sandbox_app = typer.Typer(help="Inspect and promote sandbox workspace changes.")
 app.add_typer(history_app, name="history")
+app.add_typer(sandbox_app, name="sandbox")
 
 
 def validate_profile_option(value: Optional[str]) -> Optional[str]:
@@ -114,6 +121,47 @@ def doctor_command(
     report = run_doctor(cwd=cwd)
     typer.echo(report.to_json() if json_output else report.format_text())
     if not report.ok or (strict and report.has_warnings):
+        raise typer.Exit(code=1)
+
+
+@sandbox_app.command("diff")
+def sandbox_diff_command(
+    sandbox: Path = typer.Argument(..., help="Sandbox workspace path."),
+    base: Path = typer.Option(Path.cwd(), "--base", help="Base workspace to compare against."),
+    path: list[str] = typer.Option(None, "--path", help="Limit diff/apply to a workspace-relative file."),
+) -> None:
+    """Show changed files and unified diff between a sandbox and base workspace."""
+    try:
+        diff = diff_sandbox_workspace(base, sandbox, paths=path)
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=2)
+    typer.echo(format_sandbox_diff(diff))
+    if diff.skipped_paths:
+        raise typer.Exit(code=1)
+
+
+@sandbox_app.command("apply")
+def sandbox_apply_command(
+    sandbox: Path = typer.Argument(..., help="Sandbox workspace path."),
+    base: Path = typer.Option(Path.cwd(), "--base", help="Base workspace to promote changes into."),
+    path: list[str] = typer.Option(None, "--path", help="Limit apply to a workspace-relative file."),
+) -> None:
+    """Promote sandbox changes into the base workspace through patch approval and verification."""
+    try:
+        result = promote_sandbox_changes(
+            base,
+            sandbox,
+            paths=path,
+            approval_callback=confirm_permission,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=2)
+    typer.echo(result.output)
+    if result.changed_paths:
+        typer.echo("Promoted files: " + ", ".join(result.changed_paths))
+    if not result.ok:
         raise typer.Exit(code=1)
 
 

@@ -14,7 +14,7 @@ This file should be updated whenever a meaningful Agent47 capability is added. K
 
 ## Enabled CLI Commands
 
-There are currently **8 user-facing CLI command entries**:
+There are currently **10 user-facing CLI command entries**:
 
 | Command | Purpose |
 | --- | --- |
@@ -24,6 +24,8 @@ There are currently **8 user-facing CLI command entries**:
 | `code-agent history` | Show recent saved agent runs from SQLite. |
 | `code-agent history show <run-id>` | Show saved steps for one agent run. |
 | `code-agent resume <run-id>` | Resume a saved run with compact prior context. |
+| `code-agent sandbox diff <sandbox-path>` | Show changed files and unified diffs between a sandbox and base workspace. |
+| `code-agent sandbox apply <sandbox-path>` | Promote approved sandbox changes back to the base workspace. |
 | `code-agent evals` | Run offline deterministic safety and regression evals. |
 | `agent47` | Open an interactive terminal session for free-form prompts. |
 
@@ -39,11 +41,13 @@ uv run code-agent run --max-failures 5 "Recover from failed tool attempts"
 uv run code-agent history
 uv run code-agent history show 12
 uv run code-agent resume 12 "Continue after the failed check"
+uv run code-agent sandbox diff .code-agent/sandboxes/sandbox-20260619-120000
+uv run code-agent sandbox apply .code-agent/sandboxes/sandbox-20260619-120000
 uv run code-agent evals
 agent47
 ```
 
-Inside `agent47`, there are currently **16 slash commands**:
+Inside `agent47`, there are currently **18 slash commands**:
 
 | Slash command | Purpose |
 | --- | --- |
@@ -54,6 +58,8 @@ Inside `agent47`, there are currently **16 slash commands**:
 | `/stream [off]` | Turn compact model streaming progress on or off. |
 | `/cwd <path>` | Change workspace. |
 | `/sandbox [off]` | Create and use a sandbox copy, or return to the base workspace. |
+| `/sandbox diff` | Show sandbox changes before promotion. |
+| `/sandbox apply` | Promote approved sandbox changes back to the base workspace. |
 | `/model <name>` | Change model for this session. |
 | `/profile <name>` | Change model profile: `default`, `planner`, `coder`, `reviewer`, or `fast`. |
 | `/max-steps <n>` | Change max agent loop steps. |
@@ -119,7 +125,7 @@ There are currently **18 model-requestable actions**:
 | Task-aware context ranking | Enabled |
 | Compact symbol index | Enabled |
 | Web search | Enabled with user approval |
-| Local workspace sandbox | Enabled |
+| Local workspace sandbox | Enabled with diff/apply promotion |
 | Tool failure recovery loop | Enabled |
 | Agent47 engineering protocol | Enabled |
 | Non-workspace question routing | Enabled |
@@ -175,16 +181,16 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 ## Next Recommended Build Order
 
 1. Add dependency graph indexing on top of the symbol index.
-2. Add sandbox diff/apply commands for safer promotion workflows.
-3. Add patch revert from stored inverse changes.
-4. Add storage migrations for durable public releases.
-5. Add richer terminal/editor diff approval UI.
+2. Add patch revert from stored inverse changes.
+3. Add storage migrations for durable public releases.
+4. Add richer terminal/editor diff approval UI.
+5. Add stronger process isolation for sandboxed commands.
 
 ## Current Safety Notes
 
 - Paths are guarded so tools cannot access files outside the workspace.
 - Workspace tools are blocked for prompts that do not appear to be about the local project, local files, code changes, tests, or commands.
-- Sandbox mode copies the workspace into `.code-agent/sandboxes/` and excludes secrets/local state.
+- Sandbox mode copies the workspace into `.code-agent/sandboxes/`, excludes secrets/local state, shows changed files as unified diffs, and promotes selected changes through patch approval and disk verification.
 - `.env`, `.venv`, caches, and local agent databases are ignored by git.
 - Read/list/project-search/code-summary actions now ask for user approval.
 - Project search skips local state and secret files such as `.env`, `.git`, `.code-agent`, caches, and virtual environments.

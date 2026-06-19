@@ -24,6 +24,8 @@ This document summarizes the current state of Agent47 for collaborators.
 - Compact model streaming progress is available through `AGENT_STREAM`, `--stream/--no-stream`, and `/stream [off]`.
 - Model profile selection is available through `AGENT_PROFILE`, `--profile`, and `/profile`.
 - Local workspace sandbox mode through `--sandbox` or `/sandbox`.
+- Sandbox diff/apply promotion is available through `code-agent sandbox diff`, `code-agent sandbox apply`, `/sandbox diff`, and `/sandbox apply`.
+- Sandbox promotion uses patch approval and disk verification before changes reach the base workspace.
 - Workspace path guardrails to block access outside the selected workspace.
 - Git-diff awareness through an approved `inspect_git_diff` action that reports dirty paths and can include bounded diff hunks when needed.
 - Lightweight repo mapping through an approved `repo_map` action that reports important project files, file counts, and top-level layout while skipping ignored local state.
@@ -118,6 +120,7 @@ Inside `agent47`:
 - The agent asks before running shell commands.
 - The agent asks before using web search.
 - Sandbox mode copies the workspace and excludes `.env`, `.git`, `.venv`, caches, and local agent state.
+- Sandbox diff/apply tests cover changed-file previews, approved promotion, denied promotion, and CLI diff output.
 - Failed writes in dry-run mode do not count as completed work.
 - Project search skips local state and secret files such as `.env`, `.git`, `.code-agent`, caches, and virtual environments.
 - Direct reads, writes, edits, deletes, and patches against sensitive credential files are refused by default.
@@ -143,6 +146,7 @@ Inside `agent47`:
 
 - Path safety.
 - Sandbox copying and exclusion behavior.
+- Sandbox diff/apply promotion behavior.
 - Tool permission behavior.
 - Permission preview truncation for large generated file diffs.
 - Shell command policy and secret redaction.
@@ -157,6 +161,7 @@ Inside `agent47`:
 - Clean terminal panel formatting.
 - Project search fallback when `ripgrep` is unavailable.
 - Lightweight repo index, context ranking, and symbol indexing.
+- Sandbox diff/apply promotion.
 - Local deterministic eval harness.
 - Fixture-based coding evals.
 - Versioned NDJSON protocol for frontend integrations.

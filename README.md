@@ -70,6 +70,8 @@ code-agent evals
 code-agent history
 code-agent history show 12
 code-agent resume 12 "Continue from the failed verification"
+code-agent sandbox diff .code-agent/sandboxes/sandbox-20260619-120000
+code-agent sandbox apply .code-agent/sandboxes/sandbox-20260619-120000
 ```
 
 With `uv`:
@@ -115,6 +117,8 @@ agent47: /write
 agent47: /stream
 agent47: /stream off
 agent47: /sandbox
+agent47: /sandbox diff
+agent47: /sandbox apply
 agent47: /sandbox off
 agent47: /profile coder
 agent47: /max-failures 5
@@ -241,10 +245,13 @@ In `agent47`:
 agent47: /sandbox
 agent47: /write
 agent47: Try the change in the sandbox
+agent47: /sandbox diff
+agent47: /sandbox apply
 agent47: /sandbox off
 ```
 
 Sandboxes are copied into `.code-agent/sandboxes/` and exclude `.env`, `.git`, `.venv`, caches, and other local state.
+Use `code-agent sandbox diff <sandbox-path>` to inspect changed files and unified diffs. Use `code-agent sandbox apply <sandbox-path>` to promote approved sandbox changes back to the base workspace through the same patch approval and verification pipeline as normal edits.
 
 ## Project Shape
 

@@ -134,8 +134,8 @@ Use this as the quick issue picker. Detailed descriptions and acceptance criteri
 
 ### Phase 4: Sandbox And Isolation
 
-- [ ] Issue 12: Sandbox Diff View. Owner:
-- [ ] Issue 13: Promote Sandbox Changes. Owner:
+- [x] Issue 12: Sandbox Diff View. Owner: Agent47
+- [x] Issue 13: Promote Sandbox Changes. Owner: Agent47
 - [ ] Issue 14: Sandbox Cleanup. Owner:
 - [ ] Issue 15: Process Isolation Research. Owner:
 
@@ -506,6 +506,8 @@ Acceptance criteria:
 
 - User can inspect sandbox changes before applying.
 
+Status: **Baseline done**. Added `code-agent sandbox diff <sandbox-path>` and `/sandbox diff` to show changed files plus unified diffs between the base workspace and active sandbox. Diffing skips ignored local state and reports unreadable files instead of silently applying them.
+
 #### 13. Promote Sandbox Changes
 
 Owner suggestion: Safety/Tools Owner
@@ -523,6 +525,8 @@ Acceptance criteria:
 
 - Sandbox changes do not affect real workspace until promoted.
 - Promotion is patch-based.
+
+Status: **Baseline done**. Added `code-agent sandbox apply <sandbox-path>` and `/sandbox apply`. Promotion generates a patch from sandbox changes, routes it through the normal patch approval/apply path, and verifies promoted base files match the sandbox after apply.
 
 #### 14. Sandbox Cleanup
 
