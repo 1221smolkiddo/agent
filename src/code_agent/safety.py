@@ -41,6 +41,31 @@ DESTRUCTIVE_PATTERNS = [
     re.compile(r"(?i)\bformat\b.*[A-Z]:"),
 ]
 
+SHELL_CONTROL_PATTERNS = [
+    re.compile(r"[;&|]"),
+    re.compile(r"`"),
+    re.compile(r"\$\("),
+    re.compile(r">\s*"),
+    re.compile(r"<\s*"),
+    re.compile(r"(?i)\b(?:2>|1>|out-file|set-content|add-content)\b"),
+]
+
+ARBITRARY_CODE_PATTERNS = [
+    re.compile(r"(?i)\bpython(?:3|3\.\d+)?\s+-c\b"),
+    re.compile(r"(?i)\bpy\s+-\d+(?:\.\d+)?\s+-c\b"),
+    re.compile(r"(?i)\bnode\s+-e\b"),
+    re.compile(r"(?i)\bpowershell\b.*\b(?:-encodedcommand|-enc|-command)\b"),
+    re.compile(r"(?i)\bpwsh\b.*\b(?:-encodedcommand|-enc|-command)\b"),
+    re.compile(r"(?i)\bperl\s+-e\b"),
+    re.compile(r"(?i)\bruby\s+-e\b"),
+]
+
+WORKSPACE_ESCAPE_PATTERNS = [
+    re.compile(r"(?i)(?:^|\s)(?:cd|pushd|set-location)\s+\.\."),
+    re.compile(r"(?i)(?:^|\s)(?:cd|pushd|set-location)\s+[A-Za-z]:\\"),
+    re.compile(r"(?i)(?:^|\s)(?:cd|pushd|set-location)\s+/"),
+]
+
 
 @dataclass(frozen=True)
 class ShellPolicy:
@@ -48,6 +73,10 @@ class ShellPolicy:
     risk: str
     allowed: bool
     reason: str
+    may_write: bool = False
+    may_network: bool = False
+    arbitrary_code: bool = False
+    timeout_seconds: int = 60
 
 
 @dataclass(frozen=True)
@@ -92,6 +121,38 @@ def classify_shell_command(command: str) -> ShellPolicy:
             "critical",
             False,
             "Destructive shell commands are blocked by Agent47 policy.",
+            may_write=True,
+            timeout_seconds=0,
+        )
+    if any(pattern.search(normalized) for pattern in SHELL_CONTROL_PATTERNS):
+        return ShellPolicy(
+            "compound-shell",
+            "high",
+            False,
+            "Compound shell syntax, redirection, and pipelines are blocked; run one explicit command at a time.",
+            may_write=True,
+            arbitrary_code=True,
+            timeout_seconds=0,
+        )
+    if any(pattern.search(normalized) for pattern in WORKSPACE_ESCAPE_PATTERNS):
+        return ShellPolicy(
+            "workspace-escape",
+            "critical",
+            False,
+            "Changing the shell working directory outside the workspace is blocked.",
+            may_write=True,
+            arbitrary_code=True,
+            timeout_seconds=0,
+        )
+    if any(pattern.search(normalized) for pattern in ARBITRARY_CODE_PATTERNS):
+        return ShellPolicy(
+            "arbitrary-code",
+            "critical",
+            False,
+            "Inline interpreter execution is blocked; use checked-in scripts or project verification commands.",
+            may_write=True,
+            arbitrary_code=True,
+            timeout_seconds=0,
         )
     if _looks_like_install_or_network(lowered):
         return ShellPolicy(
@@ -99,14 +160,44 @@ def classify_shell_command(command: str) -> ShellPolicy:
             "high",
             True,
             "May install packages or contact external network resources.",
+            may_write=True,
+            may_network=True,
+            timeout_seconds=180,
         )
     if _looks_like_test_or_build(lowered):
-        return ShellPolicy("verification", "medium", True, "Runs project verification.")
+        return ShellPolicy(
+            "verification",
+            "medium",
+            True,
+            "Runs project verification.",
+            may_write=True,
+            timeout_seconds=120,
+        )
     if _looks_like_git(lowered):
-        return ShellPolicy("git", "medium", True, "Touches git metadata or repository state.")
+        return ShellPolicy(
+            "git",
+            "medium",
+            True,
+            "Touches git metadata or repository state.",
+            may_write=True,
+            timeout_seconds=60,
+        )
     if _looks_like_read_only(lowered):
-        return ShellPolicy("read-only", "low", True, "Inspects local state without obvious mutation.")
-    return ShellPolicy("unknown", "medium", True, "Unclassified shell command; review before allowing.")
+        return ShellPolicy(
+            "read-only",
+            "low",
+            True,
+            "Inspects local state without obvious mutation.",
+            timeout_seconds=30,
+        )
+    return ShellPolicy(
+        "unknown",
+        "high",
+        False,
+        "Unclassified shell commands are blocked until an explicit policy class is added.",
+        arbitrary_code=True,
+        timeout_seconds=0,
+    )
 
 
 def classify_network_url(url: str) -> NetworkPolicy:

@@ -4,6 +4,7 @@ import base64
 import difflib
 import html.parser
 import inspect
+import os
 import re
 import subprocess
 import urllib.parse
@@ -51,6 +52,34 @@ IGNORED_NAMES = {
 }
 
 MAX_MUTATION_OUTPUT_CHARS = 12000
+MAX_SHELL_OUTPUT_CHARS = 20000
+SAFE_ENV_KEYS = {
+    "ALLUSERSPROFILE",
+    "APPDATA",
+    "COMSPEC",
+    "HOME",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "LOCALAPPDATA",
+    "NUMBER_OF_PROCESSORS",
+    "OS",
+    "PATH",
+    "PATHEXT",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "PROGRAMW6432",
+    "PSMODULEPATH",
+    "PUBLIC",
+    "SYSTEMDRIVE",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "USERDOMAIN",
+    "USERNAME",
+    "USERPROFILE",
+    "WINDIR",
+}
 
 
 class ToolRegistry:
@@ -258,21 +287,38 @@ class ToolRegistry:
             f"Risk: {policy.risk}\n"
             f"Category: {policy.category}\n"
             f"Reason: {policy.reason}\n"
+            f"May write files: {'yes' if policy.may_write else 'no'}\n"
+            f"May access network: {'yes' if policy.may_network else 'no'}\n"
+            f"Arbitrary code: {'yes' if policy.arbitrary_code else 'no'}\n"
+            f"Timeout: {policy.timeout_seconds}s\n"
             f"Command: {command}"
         )
         if not self._approve("run_shell", approval_detail):
             return ToolResult(ok=False, output="Permission denied for run_shell.")
-        completed = subprocess.run(
-            command,
-            cwd=self.workspace,
-            shell=True,
-            text=True,
-            capture_output=True,
-            timeout=120,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=self.workspace,
+                shell=True,
+                text=True,
+                capture_output=True,
+                timeout=policy.timeout_seconds,
+                check=False,
+                env=self._safe_shell_env(),
+            )
+        except subprocess.TimeoutExpired as exc:
+            output = "\n".join(
+                self._coerce_process_output(part) for part in [exc.stdout, exc.stderr] if part
+            ).strip()
+            detail = f"Shell command timed out after {policy.timeout_seconds}s."
+            if output:
+                detail += "\n" + output
+            return ToolResult(ok=False, output=redact_secrets(self._truncate(detail, MAX_SHELL_OUTPUT_CHARS)))
         output = "\n".join(part for part in [completed.stdout, completed.stderr] if part).strip()
-        return ToolResult(ok=completed.returncode == 0, output=redact_secrets(output) or "<no output>")
+        return ToolResult(
+            ok=completed.returncode == 0,
+            output=redact_secrets(self._truncate(output, MAX_SHELL_OUTPUT_CHARS)) or "<no output>",
+        )
 
     def _search(self, query: str, requested_path: str | None) -> ToolResult:
         if not self._approve("search", f"Search {requested_path or '.'} for {query}"):
@@ -503,6 +549,22 @@ class ToolRegistry:
         except ValueError:
             return True
         return any(part in IGNORED_NAMES for part in relative.parts)
+
+    @staticmethod
+    def _safe_shell_env() -> dict[str, str]:
+        env: dict[str, str] = {}
+        for key, value in os.environ.items():
+            upper = key.upper()
+            if upper in SAFE_ENV_KEYS:
+                env[key] = value
+        env["AGENT47_SANDBOXED_SHELL"] = "1"
+        return env
+
+    @staticmethod
+    def _coerce_process_output(value: str | bytes) -> str:
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        return value
 
     @staticmethod
     def _diff(path: str, before: str, after: str) -> str:

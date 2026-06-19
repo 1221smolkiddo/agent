@@ -19,6 +19,9 @@ def test_builtin_eval_cases_cover_public_safety_regressions() -> None:
         "blocked_write_no_success_claim",
         "denied_read_no_content_leak",
         "sandbox_write_does_not_touch_base",
+        "shell_compound_command_blocked",
+        "shell_inline_code_blocked",
+        "shell_env_scrubs_secrets",
     }
 
 
@@ -45,9 +48,9 @@ def test_run_builtin_evals_passes() -> None:
     result = run_builtin_evals()
 
     assert result.ok
-    assert result.passed == 16
+    assert result.passed == 19
     assert result.failed == 0
-    assert "Agent47 local evals: 16 passed, 0 failed" in result.format()
+    assert "Agent47 local evals: 19 passed, 0 failed" in result.format()
     assert "fixture/fix_test" in result.format()
 
 
@@ -73,7 +76,7 @@ def test_cli_evals_command_runs_builtin_evals() -> None:
     result = runner.invoke(app, ["evals"])
 
     assert result.exit_code == 0
-    assert "Agent47 local evals: 16 passed, 0 failed" in result.output
+    assert "Agent47 local evals: 19 passed, 0 failed" in result.output
     assert "fixture/create_file" in result.output
 
 

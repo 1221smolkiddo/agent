@@ -23,6 +23,30 @@ def test_classify_shell_command_labels_install_network_commands() -> None:
     assert policy.allowed
 
 
+def test_classify_shell_command_blocks_compound_and_inline_code() -> None:
+    compound = classify_shell_command("uv run pytest && git status")
+    redirected = classify_shell_command("uv run pytest > out.txt")
+    inline_python = classify_shell_command("python -c \"print('hi')\"")
+    unknown = classify_shell_command("echo hello")
+
+    assert compound.category == "compound-shell"
+    assert not compound.allowed
+    assert redirected.category == "compound-shell"
+    assert not redirected.allowed
+    assert inline_python.category == "arbitrary-code"
+    assert not inline_python.allowed
+    assert unknown.category == "unknown"
+    assert not unknown.allowed
+
+
+def test_classify_shell_command_blocks_workspace_escape() -> None:
+    policy = classify_shell_command("cd ..")
+
+    assert policy.category == "workspace-escape"
+    assert policy.risk == "critical"
+    assert not policy.allowed
+
+
 def test_classify_network_url_blocks_localhost_and_private_addresses() -> None:
     localhost = classify_network_url("http://localhost:8000")
     private_ip = classify_network_url("http://192.168.1.10/admin")
@@ -108,7 +132,41 @@ def test_run_shell_permission_detail_includes_risk_label(tmp_path: Path) -> None
     assert result.output == "Permission denied for run_shell."
     assert "Risk: high" in approval_details[0]
     assert "Category: install/network" in approval_details[0]
+    assert "May write files: yes" in approval_details[0]
+    assert "May access network: yes" in approval_details[0]
+    assert "Arbitrary code: no" in approval_details[0]
+    assert "Timeout: 180s" in approval_details[0]
     assert "Command: npm install" in approval_details[0]
+
+
+def test_run_shell_blocks_unclassified_command_without_prompt(tmp_path: Path) -> None:
+    approvals: list[str] = []
+    tools = ToolRegistry(
+        workspace=tmp_path,
+        dry_run=False,
+        approval_callback=lambda action, _detail: approvals.append(action) or True,
+    )
+
+    result = tools.run(RunShellAction(type="run_shell", command="echo hello"))
+
+    assert not result.ok
+    assert "Blocked unknown shell command" in result.output
+    assert approvals == []
+
+
+def test_run_shell_blocks_compound_command_without_prompt(tmp_path: Path) -> None:
+    approvals: list[str] = []
+    tools = ToolRegistry(
+        workspace=tmp_path,
+        dry_run=False,
+        approval_callback=lambda action, _detail: approvals.append(action) or True,
+    )
+
+    result = tools.run(RunShellAction(type="run_shell", command="uv run pytest && git status"))
+
+    assert not result.ok
+    assert "Blocked compound-shell shell command" in result.output
+    assert approvals == []
 
 
 def test_run_shell_redacts_secret_output(tmp_path: Path, monkeypatch) -> None:
@@ -123,11 +181,52 @@ def test_run_shell_redacts_secret_output(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(tools_module.subprocess, "run", fake_run)
     tools = ToolRegistry(workspace=tmp_path, dry_run=False, approval_callback=lambda _a, _d: True)
 
-    result = tools.run(RunShellAction(type="run_shell", command="echo TOKEN=super-secret-token"))
+    result = tools.run(RunShellAction(type="run_shell", command="uv run pytest"))
 
     assert result.ok
     assert "super-secret-token" not in result.output
     assert result.output == "TOKEN=[REDACTED]"
+
+
+def test_run_shell_uses_scrubbed_environment_and_policy_timeout(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "secret")
+    captured: dict[str, object] = {}
+
+    def fake_run(*_args, **kwargs):
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(args=["uv"], returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(tools_module.subprocess, "run", fake_run)
+    tools = ToolRegistry(workspace=tmp_path, dry_run=False, approval_callback=lambda _a, _d: True)
+
+    result = tools.run(RunShellAction(type="run_shell", command="uv run pytest"))
+
+    assert result.ok
+    assert captured["timeout"] == 120
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert env["AGENT47_SANDBOXED_SHELL"] == "1"
+    assert "OPENROUTER_API_KEY" not in env
+
+
+def test_run_shell_reports_timeout_with_capped_redacted_output(tmp_path: Path, monkeypatch) -> None:
+    def timeout_run(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(
+            cmd="uv run pytest",
+            timeout=120,
+            output="TOKEN=super-secret-token\n",
+            stderr="x" * 30000,
+        )
+
+    monkeypatch.setattr(tools_module.subprocess, "run", timeout_run)
+    tools = ToolRegistry(workspace=tmp_path, dry_run=False, approval_callback=lambda _a, _d: True)
+
+    result = tools.run(RunShellAction(type="run_shell", command="uv run pytest"))
+
+    assert not result.ok
+    assert "timed out after 120s" in result.output
+    assert "super-secret-token" not in result.output
+    assert "<truncated" in result.output
 
 
 def test_search_redacts_secret_matches_when_fallback_runs(tmp_path: Path, monkeypatch) -> None:

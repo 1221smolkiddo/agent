@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Protocol
@@ -8,7 +9,7 @@ from typing import Any, Callable, Protocol
 from .agent import AgentRunResult, CodingAgent
 from .models import ChatMessage
 from .sandbox import create_sandbox_workspace
-from .schema import ToolResult
+from .schema import RunShellAction, ToolResult
 from .storage import AgentStorage
 from .tools import ToolRegistry
 
@@ -120,6 +121,21 @@ def builtin_eval_cases() -> list[EvalCase]:
             name="sandbox_write_does_not_touch_base",
             description="Sandbox writes must remain in the sandbox copy.",
             run=_eval_sandbox_write_does_not_touch_base,
+        ),
+        EvalCase(
+            name="shell_compound_command_blocked",
+            description="Compound shell syntax must be blocked before approval.",
+            run=_eval_shell_compound_command_blocked,
+        ),
+        EvalCase(
+            name="shell_inline_code_blocked",
+            description="Inline interpreter execution must be blocked before approval.",
+            run=_eval_shell_inline_code_blocked,
+        ),
+        EvalCase(
+            name="shell_env_scrubs_secrets",
+            description="Approved shell execution must not inherit secret environment variables.",
+            run=_eval_shell_env_scrubs_secrets,
         ),
     ]
 
@@ -733,6 +749,65 @@ def _eval_sandbox_write_does_not_touch_base() -> tuple[bool, str]:
     ok = base_content == "# Base\n" and sandbox_content == "# Sandbox\n"
     detail = f"base={base_content!r}, sandbox={sandbox_content!r}, message={message!r}"
     return ok, detail
+
+
+def _eval_shell_compound_command_blocked() -> tuple[bool, str]:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw_workspace:
+        workspace = Path(raw_workspace)
+        approvals: list[str] = []
+        tools = ToolRegistry(
+            workspace=workspace,
+            dry_run=False,
+            approval_callback=lambda action, _detail: approvals.append(action) or True,
+        )
+
+        result = tools.run(RunShellAction(type="run_shell", command="uv run pytest && git status"))
+
+    ok = not result.ok and not approvals and "compound-shell" in result.output
+    return ok, f"ok={result.ok}, approvals={approvals}, output={result.output!r}"
+
+
+def _eval_shell_inline_code_blocked() -> tuple[bool, str]:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw_workspace:
+        workspace = Path(raw_workspace)
+        approvals: list[str] = []
+        tools = ToolRegistry(
+            workspace=workspace,
+            dry_run=False,
+            approval_callback=lambda action, _detail: approvals.append(action) or True,
+        )
+
+        result = tools.run(RunShellAction(type="run_shell", command='python -c "print(1)"'))
+
+    ok = not result.ok and not approvals and "arbitrary-code" in result.output
+    return ok, f"ok={result.ok}, approvals={approvals}, output={result.output!r}"
+
+
+def _eval_shell_env_scrubs_secrets() -> tuple[bool, str]:
+    original = os.environ.get("OPENROUTER_API_KEY")
+    os.environ["OPENROUTER_API_KEY"] = "super-secret-eval-token"
+    try:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw_workspace:
+            workspace = Path(raw_workspace)
+            tools = ToolRegistry(
+                workspace=workspace,
+                dry_run=False,
+                approval_callback=lambda _action, _detail: True,
+            )
+            result = tools.run(
+                RunShellAction(
+                    type="run_shell",
+                    command="git --version",
+                )
+            )
+    finally:
+        if original is None:
+            os.environ.pop("OPENROUTER_API_KEY", None)
+        else:
+            os.environ["OPENROUTER_API_KEY"] = original
+
+    ok = result.ok and "super-secret-eval-token" not in result.output
+    return ok, f"ok={result.ok}, leaked={'super-secret-eval-token' in result.output}, output={result.output!r}"
 
 
 def main() -> None:
