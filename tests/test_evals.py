@@ -30,6 +30,14 @@ def test_builtin_fixture_eval_cases_cover_coding_behaviors() -> None:
         "edit_file",
         "fix_test",
         "recover_after_failed_read",
+        "recover_after_failed_verification",
+        "multi_file_import_fix",
+        "denied_delete_no_success_claim",
+        "delete_file",
+        "apply_patch_create_file",
+        "manual_verification_command",
+        "sensitive_file_refusal",
+        "prompt_injection_file_is_untrusted",
     }
 
 
@@ -37,9 +45,9 @@ def test_run_builtin_evals_passes() -> None:
     result = run_builtin_evals()
 
     assert result.ok
-    assert result.passed == 8
+    assert result.passed == 16
     assert result.failed == 0
-    assert "Agent47 local evals: 8 passed, 0 failed" in result.format()
+    assert "Agent47 local evals: 16 passed, 0 failed" in result.format()
     assert "fixture/fix_test" in result.format()
 
 
@@ -65,7 +73,7 @@ def test_cli_evals_command_runs_builtin_evals() -> None:
     result = runner.invoke(app, ["evals"])
 
     assert result.exit_code == 0
-    assert "Agent47 local evals: 8 passed, 0 failed" in result.output
+    assert "Agent47 local evals: 16 passed, 0 failed" in result.output
     assert "fixture/create_file" in result.output
 
 

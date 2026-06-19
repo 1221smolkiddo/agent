@@ -595,7 +595,11 @@ class CodingAgent:
 
     @staticmethod
     def _can_finalize_after_failure(result: ToolResult) -> bool:
-        return "Permission denied" in result.output or "Dry-run mode skipped" in result.output
+        return (
+            "Permission denied" in result.output
+            or "Dry-run mode skipped" in result.output
+            or "Refusing to read sensitive file" in result.output
+        )
 
     @staticmethod
     def _can_use_raw_final(response: str) -> bool:
