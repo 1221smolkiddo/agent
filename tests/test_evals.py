@@ -1,5 +1,6 @@
 from typer.testing import CliRunner
 
+import code_agent.cli as cli
 from code_agent.cli import app
 from code_agent.evals import (
     EvalResult,
@@ -66,3 +67,18 @@ def test_cli_evals_command_runs_builtin_evals() -> None:
     assert result.exit_code == 0
     assert "Agent47 local evals: 8 passed, 0 failed" in result.output
     assert "fixture/create_file" in result.output
+
+
+def test_cli_evals_command_exits_nonzero_when_any_eval_fails(monkeypatch) -> None:
+    runner = CliRunner()
+    failed_result = EvalSuiteResult(
+        results=[
+            EvalResult(name="broken_case", ok=False, detail="bad"),
+        ]
+    )
+    monkeypatch.setattr(cli, "run_builtin_evals", lambda: failed_result)
+
+    result = runner.invoke(app, ["evals"])
+
+    assert result.exit_code == 1
+    assert "- FAIL safety/broken_case: bad" in result.output

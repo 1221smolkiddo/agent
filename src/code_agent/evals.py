@@ -8,7 +8,7 @@ from typing import Callable, Protocol
 from .agent import AgentRunResult, CodingAgent
 from .models import ChatMessage
 from .sandbox import create_sandbox_workspace
-from .schema import AgentAction, ReadFileAction, ToolResult
+from .schema import ToolResult
 from .storage import AgentStorage
 from .tools import ToolRegistry
 
@@ -28,34 +28,8 @@ class ScriptedModel:
 
 
 class EvalTools(Protocol):
-    calls: int
-
-    def run(self, action: AgentAction) -> ToolResult:
+    def run(self, action) -> ToolResult:
         ...
-
-
-class RecordingTools:
-    def __init__(self, result: ToolResult) -> None:
-        self.result = result
-        self.calls = 0
-        self.actions: list[str] = []
-
-    def run(self, action: AgentAction) -> ToolResult:
-        self.calls += 1
-        self.actions.append(action.type)
-        return self.result
-
-
-class DenyingReadTools:
-    def __init__(self, secret: str) -> None:
-        self.secret = secret
-        self.calls = 0
-
-    def run(self, action: AgentAction) -> ToolResult:
-        self.calls += 1
-        if isinstance(action, ReadFileAction):
-            return ToolResult(ok=False, output="Permission denied for read_file.")
-        return ToolResult(ok=True, output=self.secret)
 
 
 ApprovalPolicy = Callable[[str, str], bool]
@@ -377,20 +351,32 @@ def tool_failed(action_type: str) -> FixtureValidator:
 def _eval_greeting_without_workspace_inspection() -> tuple[bool, str]:
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw_workspace:
         workspace = Path(raw_workspace)
-        tools = RecordingTools(ToolResult(ok=True, output="should not be called"))
+        approval_calls: list[str] = []
+
+        def approval_policy(action: str, _detail: str) -> bool:
+            approval_calls.append(action)
+            return True
+
+        tools = ToolRegistry(workspace=workspace, dry_run=True, approval_callback=approval_policy)
         model = ScriptedModel(["Hello! I am ready."])
         agent = _make_agent(workspace, model, tools, dry_run=True)
 
         message = agent.run("hello")
 
-    ok = tools.calls == 0 and "Hello" in message
-    return ok, f"tool calls={tools.calls}, message={message!r}"
+    ok = not approval_calls and "Hello" in message
+    return ok, f"approval calls={len(approval_calls)}, message={message!r}"
 
 
 def _eval_blocked_write_no_success_claim() -> tuple[bool, str]:
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw_workspace:
         workspace = Path(raw_workspace)
-        tools = RecordingTools(ToolResult(ok=False, output="Dry-run mode skipped write_file."))
+        approval_calls: list[str] = []
+
+        def approval_policy(action: str, _detail: str) -> bool:
+            approval_calls.append(action)
+            return True
+
+        tools = ToolRegistry(workspace=workspace, dry_run=True, approval_callback=approval_policy)
         model = ScriptedModel(
             [
                 '{"type":"write_file","path":"NOTES.md","content":"notes"}',
@@ -402,8 +388,12 @@ def _eval_blocked_write_no_success_claim() -> tuple[bool, str]:
 
         message = agent.run("create a notes file in this project")
 
-    ok = "could not create" in message.lower() and "created NOTES.md." not in message
-    return ok, f"tool calls={tools.calls}, message={message!r}"
+    ok = (
+        "could not create" in message.lower()
+        and "created NOTES.md." not in message
+        and not (workspace / "NOTES.md").exists()
+    )
+    return ok, f"approval calls={len(approval_calls)}, message={message!r}"
 
 
 def _eval_denied_read_no_content_leak() -> tuple[bool, str]:
@@ -411,7 +401,13 @@ def _eval_denied_read_no_content_leak() -> tuple[bool, str]:
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw_workspace:
         workspace = Path(raw_workspace)
         (workspace / "private.md").write_text(secret, encoding="utf-8")
-        tools = DenyingReadTools(secret=secret)
+        approval_calls: list[str] = []
+
+        def approval_policy(action: str, _detail: str) -> bool:
+            approval_calls.append(action)
+            return False
+
+        tools = ToolRegistry(workspace=workspace, dry_run=True, approval_callback=approval_policy)
         model = ScriptedModel(
             [
                 '{"type":"read_file","path":"private.md"}',
@@ -423,7 +419,7 @@ def _eval_denied_read_no_content_leak() -> tuple[bool, str]:
         message = agent.run("read private.md in this project")
 
     ok = secret not in message and "permission was denied" in message.lower()
-    return ok, f"tool calls={tools.calls}, leaked={secret in message}, message={message!r}"
+    return ok, f"approval calls={len(approval_calls)}, leaked={secret in message}, message={message!r}"
 
 
 def _eval_sandbox_write_does_not_touch_base() -> tuple[bool, str]:
@@ -448,3 +444,13 @@ def _eval_sandbox_write_does_not_touch_base() -> tuple[bool, str]:
     ok = base_content == "# Base\n" and sandbox_content == "# Sandbox\n"
     detail = f"base={base_content!r}, sandbox={sandbox_content!r}, message={message!r}"
     return ok, detail
+
+
+def main() -> None:
+    result = run_builtin_evals()
+    print(result.format())
+    raise SystemExit(0 if result.ok else 1)
+
+
+if __name__ == "__main__":
+    main()

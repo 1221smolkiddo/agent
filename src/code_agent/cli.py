@@ -376,3 +376,11 @@ def history_show(run_id: int = typer.Argument(..., help="Run ID to inspect.")) -
             storage.get_work_report(run_id),
         )
     )
+
+
+def main() -> None:
+    app()
+
+
+if __name__ == "__main__":
+    main()

@@ -109,6 +109,23 @@ def test_json_approval_callback_accepts_stdin_response() -> None:
     assert events[1]["reason"] == "trusted"
 
 
+def test_json_approval_callback_approve_all_rejects_manual_actions() -> None:
+    stream = StringIO()
+    emitter = JsonEventEmitter(stream)
+    approve = json_approval_callback(emitter, approve_all=True)
+
+    assert approve("read_file", "README.md") is True
+    assert approve("run_shell", "uv run pytest") is False
+
+    events = parse_json_lines(stream.getvalue())
+    assert events[0]["mode"] == "approve_all"
+    assert events[0]["approved"] is True
+    assert events[2]["mode"] == "manual_required"
+    assert events[2]["approved"] is False
+    assert events[3]["approved"] is False
+    assert "requires explicit manual approval" in events[3]["reason"]
+
+
 def test_json_approval_callback_emits_metadata_for_frontends() -> None:
     stream = StringIO()
     emitter = JsonEventEmitter(stream)

@@ -11,21 +11,24 @@ MAX_PERMISSION_DETAIL_LINES = 120
 READ_ONLY_ACTIONS = frozenset({
     "list_files",
     "read_file",
-    "search",
     "summarize_code",
     "repo_map",
     "rank_context",
     "symbol_index",
     "detect_verification",
     "suggest_verification",
-    "inspect_git_diff",
 })
 
 
 HIGH_RISK_ACTIONS = frozenset({
+    "apply_patch",
     "run_shell",
     "delete_file",
+    "inspect_git_diff",
+    "search",
 })
+
+MANUAL_APPROVAL_ACTIONS = HIGH_RISK_ACTIONS
 
 
 class ApprovalMode(str, Enum):
@@ -55,9 +58,11 @@ class PermissionPolicy:
         self._task_approved = False
 
     def approve(self, action: str, detail: str) -> bool:
+        if action in MANUAL_APPROVAL_ACTIONS:
+            return self._callback(action, detail)
         if self._mode == ApprovalMode.auto_read and action in READ_ONLY_ACTIONS:
             return True
-        if self._mode == ApprovalMode.approve_task and self._task_approved and action not in HIGH_RISK_ACTIONS:
+        if self._mode == ApprovalMode.approve_task and self._task_approved:
             return True
         approved = self._callback(action, detail)
         if approved and self._mode == ApprovalMode.approve_task:

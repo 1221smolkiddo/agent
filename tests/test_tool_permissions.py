@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import code_agent.tools as tools_module
-from code_agent.permissions import format_permission_detail
+from code_agent.permissions import ApprovalMode, PermissionPolicy, format_permission_detail
 from code_agent.schema import (
     DeleteFileAction,
     ListFilesAction,
@@ -80,6 +80,28 @@ def test_delete_file_requires_permission(tmp_path: Path) -> None:
     assert not result.ok
     assert result.output == "Permission denied for delete_file."
     assert (tmp_path / "notes.md").exists()
+
+
+def test_auto_approval_modes_keep_subprocess_actions_manual() -> None:
+    requested: list[str] = []
+
+    def approve(action: str, _detail: str) -> bool:
+        requested.append(action)
+        return action == "read_file"
+
+    policy = PermissionPolicy(approve, ApprovalMode.auto_read)
+
+    assert policy.approve("read_file", "README.md") is True
+    assert policy.approve("search", "Search .") is False
+    assert requested == ["search"]
+
+    policy.set_mode(ApprovalMode.approve_task)
+    assert policy.approve("read_file", "README.md") is True
+    assert policy.approve("repo_map", "Map repo") is True
+    assert policy.approve("run_shell", "uv run pytest") is False
+    assert policy.approve("apply_patch", "Patch preview") is False
+    assert policy.approve("inspect_git_diff", "Git status") is False
+    assert requested == ["search", "read_file", "run_shell", "apply_patch", "inspect_git_diff"]
 
 
 def test_read_file_with_permission_succeeds(tmp_path: Path) -> None:

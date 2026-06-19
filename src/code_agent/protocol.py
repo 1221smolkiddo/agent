@@ -7,6 +7,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TextIO
 
+from .permissions import MANUAL_APPROVAL_ACTIONS
 from .schema import AgentAction
 from .status import format_action_status
 from .work_report import build_work_report_payload, should_show_work_report
@@ -123,6 +124,22 @@ def json_approval_callback(
             "detail": detail,
             "metadata": metadata or {},
         }
+        if approve_all and action in MANUAL_APPROVAL_ACTIONS:
+            emitter.emit(
+                "approval_requested",
+                **approval_payload,
+                approved=False,
+                mode="manual_required",
+            )
+            emitter.emit(
+                "approval_resolved",
+                request_id=request_id,
+                action_type=action,
+                approved=False,
+                mode="manual_required",
+                reason=f"{action} requires explicit manual approval and cannot use --approve-all",
+            )
+            return False
         if approve_all:
             emitter.emit(
                 "approval_requested",
