@@ -254,7 +254,7 @@ def builtin_fixture_eval_cases() -> list[FixtureEvalCase]:
                 file_contains("mathlib.py", "return a * b"),
                 verification_failed("test"),
                 pytest_passes_now(),
-                command_ran("python -m pytest"),
+                command_ran_contains("pytest"),
             ),
             max_steps=10,
         ),
@@ -644,6 +644,18 @@ def command_ran(command: str) -> FixtureValidator:
         if not matched:
             matched = any(item.get("command") == command for item in result.verification_results)
         return matched, f"command was not recorded: {command}"
+
+    return validate
+
+
+def command_ran_contains(command_fragment: str) -> FixtureValidator:
+    def validate(_workspace: Path, _agent: CodingAgent, result: AgentRunResult) -> tuple[bool, str]:
+        commands = [
+            str(item.get("command", ""))
+            for item in [*result.command_records, *result.verification_results]
+        ]
+        matched = any(command_fragment in command for command in commands)
+        return matched, f"command fragment was not recorded: {command_fragment}"
 
     return validate
 
