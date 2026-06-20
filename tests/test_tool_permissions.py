@@ -4,6 +4,7 @@ import code_agent.tools as tools_module
 from code_agent.permissions import ApprovalMode, PermissionPolicy, format_permission_detail
 from code_agent.schema import (
     DeleteFileAction,
+    DependencyGraphAction,
     ListFilesAction,
     RankContextAction,
     ReadFileAction,
@@ -71,6 +72,15 @@ def test_symbol_index_requires_permission(tmp_path: Path) -> None:
     assert result.output == "Permission denied for symbol_index."
 
 
+def test_dependency_graph_requires_permission(tmp_path: Path) -> None:
+    tools = ToolRegistry(workspace=tmp_path, dry_run=True, approval_callback=lambda _a, _d: False)
+
+    result = tools.run(DependencyGraphAction(type="dependency_graph"))
+
+    assert not result.ok
+    assert result.output == "Permission denied for dependency_graph."
+
+
 def test_delete_file_requires_permission(tmp_path: Path) -> None:
     (tmp_path / "notes.md").write_text("delete me", encoding="utf-8")
     tools = ToolRegistry(workspace=tmp_path, dry_run=False, approval_callback=lambda _a, _d: False)
@@ -92,6 +102,7 @@ def test_auto_approval_modes_keep_subprocess_actions_manual() -> None:
     policy = PermissionPolicy(approve, ApprovalMode.auto_read)
 
     assert policy.approve("read_file", "README.md") is True
+    assert policy.approve("dependency_graph", "Graph imports") is True
     assert policy.approve("search", "Search .") is False
     assert requested == ["search"]
 
@@ -209,6 +220,7 @@ def test_repo_map_and_rank_context_succeed_with_permission(tmp_path: Path) -> No
     repo_map = tools.run(RepoMapAction(type="repo_map", max_files=20))
     ranked = tools.run(RankContextAction(type="rank_context", task="fix cli", max_results=5))
     symbols = tools.run(SymbolIndexAction(type="symbol_index", max_files=20, max_symbols=20))
+    graph = tools.run(DependencyGraphAction(type="dependency_graph", max_files=20, max_edges=20))
 
     assert repo_map.ok
     assert "Repository map:" in repo_map.output
@@ -216,6 +228,8 @@ def test_repo_map_and_rank_context_succeed_with_permission(tmp_path: Path) -> No
     assert "src/cli.py" in ranked.output
     assert symbols.ok
     assert "Symbol index:" in symbols.output
+    assert graph.ok
+    assert "Dependency graph:" in graph.output
 
 
 def test_bing_parser_extracts_general_web_results() -> None:

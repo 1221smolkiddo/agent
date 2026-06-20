@@ -1,6 +1,7 @@
 from code_agent.schema import (
     ApplyPatchAction,
     DeleteFileAction,
+    DependencyGraphAction,
     DetectVerificationAction,
     EditFileAction,
     RankContextAction,
@@ -88,6 +89,12 @@ def test_format_action_status_for_symbol_index() -> None:
     status = format_action_status(SymbolIndexAction(type="symbol_index"))
 
     assert status == "ANALYZING symbol index"
+
+
+def test_format_action_status_for_dependency_graph() -> None:
+    status = format_action_status(DependencyGraphAction(type="dependency_graph"))
+
+    assert status == "ANALYZING dependency graph"
 
 
 def test_format_shell_status_for_install() -> None:

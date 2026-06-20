@@ -132,6 +132,12 @@ class SymbolIndexAction(BaseModel):
     max_symbols: int = Field(default=120, ge=10, le=500)
 
 
+class DependencyGraphAction(BaseModel):
+    type: Literal["dependency_graph"]
+    max_files: int = Field(default=60, ge=5, le=200)
+    max_edges: int = Field(default=160, ge=10, le=500)
+
+
 AgentAction = Union[
     FinalAction,
     UpdatePlanAction,
@@ -151,6 +157,7 @@ AgentAction = Union[
     RepoMapAction,
     RankContextAction,
     SymbolIndexAction,
+    DependencyGraphAction,
 ]
 
 

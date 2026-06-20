@@ -6,6 +6,7 @@ from .schema import (
     AgentAction,
     ApplyPatchAction,
     DeleteFileAction,
+    DependencyGraphAction,
     DetectVerificationAction,
     EditFileAction,
     InspectGitDiffAction,
@@ -126,6 +127,8 @@ def format_action_status(action: AgentAction) -> str | None:
         return "ANALYZING relevant context"
     if isinstance(action, SymbolIndexAction):
         return "ANALYZING symbol index"
+    if isinstance(action, DependencyGraphAction):
+        return "ANALYZING dependency graph"
     if isinstance(action, UpdatePlanAction):
         # Issue #15: Suppress internal plan update status lines;
         # the plan panel already surfaces plan state.

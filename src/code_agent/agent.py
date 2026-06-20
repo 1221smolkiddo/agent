@@ -14,6 +14,7 @@ from .patches import git_style_unified_diff
 from .prompts import system_prompt
 from .schema import (
     AgentAction,
+    DependencyGraphAction,
     FinalAction,
     RankContextAction,
     RepoMapAction,
@@ -539,6 +540,7 @@ class CodingAgent:
         ]
         if self._should_preflight_symbols(task):
             actions.append(SymbolIndexAction(type="symbol_index", max_files=30, max_symbols=80))
+            actions.append(DependencyGraphAction(type="dependency_graph", max_files=40, max_edges=100))
 
         records: list[dict[str, Any]] = []
         message_sections = [
@@ -799,6 +801,7 @@ class CodingAgent:
             "repo_map",
             "rank_context",
             "symbol_index",
+            "dependency_graph",
         }
 
     @staticmethod
@@ -1020,7 +1023,7 @@ class CodingAgent:
 
     @staticmethod
     def _context_record_from_action(action: AgentAction, result: ToolResult) -> dict[str, Any] | None:
-        if action.type not in {"repo_map", "rank_context", "symbol_index"}:
+        if action.type not in {"repo_map", "rank_context", "symbol_index", "dependency_graph"}:
             return None
         item: dict[str, Any] = {
             "action": action.type,
@@ -1043,6 +1046,7 @@ class CodingAgent:
             "repo_map",
             "rank_context",
             "symbol_index",
+            "dependency_graph",
             "web_search",
         }:
             return {}

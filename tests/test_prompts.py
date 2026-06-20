@@ -19,12 +19,14 @@ def test_system_prompt_names_agent47_engineering_protocol() -> None:
     assert "Use repo_map to understand unfamiliar repositories" in prompt
     assert "Use rank_context with the user's task" in prompt
     assert "Use symbol_index when you need to locate functions" in prompt
+    assert "Use dependency_graph when import relationships" in prompt
     assert '{ "type": "update_plan"' in prompt
     assert '"target_files": ["src/app.py"]' in prompt
     assert '"risk_notes": ["avoid unrelated refactors"]' in prompt
     assert '{ "type": "repo_map"' in prompt
     assert '{ "type": "rank_context"' in prompt
     assert '{ "type": "symbol_index"' in prompt
+    assert '{ "type": "dependency_graph"' in prompt
     assert "Prefer apply_patch for code edits" in prompt
     assert "Use delete_file for file removal" in prompt
     assert "use a file mutation tool instead of giving the user a template" in prompt

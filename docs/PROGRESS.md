@@ -6,9 +6,9 @@ This document tracks how far the coding agent has come and what collaborators ca
 
 **Stage:** Basic single-model CLI agent with Agent47 engineering protocol
 
-**Approximate progress toward an industry-standard local AI coding agent:** 62%
+**Approximate progress toward an industry-standard local AI coding agent:** 64%
 
-The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, durable plan checkpoints with target-file, ownership, check, blocker, and risk metadata, persisted structured work reports, non-workspace intent routing, general web search with provider fallback, structured patch application with multi-file change-set metadata and inverse-patch revert support, approved git-diff awareness, lightweight repo mapping, task-aware relevance ranking, compact symbol indexing, deterministic local evals for baseline safety regressions and fixture-based coding tasks, a versioned newline-delimited JSON protocol with correlated stdin approval responses for future frontends, model fallback with usage/cost tracking, install diagnostics and cross-platform install guidance, verification command detection/suggestion/automatic execution/outcome summaries, disk-verified mutation tracking for truthful final answers, prompt-injection defenses for untrusted tool output, clearer interactive terminal panels with short transcript context and structured session state, run history detail views, resumable runs, tests, GitHub collaboration setup, and release metadata/checklists for public alpha preparation.
+The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, durable plan checkpoints with target-file, ownership, check, blocker, and risk metadata, persisted structured work reports, non-workspace intent routing, general web search with provider fallback, structured patch application with multi-file change-set metadata and inverse-patch revert support, approved git-diff awareness, lightweight repo mapping, task-aware relevance ranking, compact symbol indexing, dependency graph indexing, deterministic local evals for baseline safety regressions and fixture-based coding tasks, a versioned newline-delimited JSON protocol with correlated stdin approval responses for future frontends, model fallback with usage/cost tracking, install diagnostics and cross-platform install guidance, verification command detection/suggestion/automatic execution/outcome summaries, disk-verified mutation tracking for truthful final answers, prompt-injection defenses for untrusted tool output, clearer interactive terminal panels with short transcript context and structured session state, run history detail views, resumable runs, tests, GitHub collaboration setup, and release metadata/checklists for public alpha preparation.
 
 This file should be updated whenever a meaningful Agent47 capability is added. Keep the enabled commands/actions current, move completed items out of "What Is Left" when they land, and update the percentage only when the agent gains real product capability rather than documentation alone.
 
@@ -75,7 +75,7 @@ Inside `agent47`, there are currently **19 slash commands**:
 
 ## Enabled Agent Actions
 
-There are currently **18 model-requestable actions**:
+There are currently **19 model-requestable actions**:
 
 | Action | Purpose |
 | --- | --- |
@@ -97,6 +97,7 @@ There are currently **18 model-requestable actions**:
 | `repo_map` | Build a compact repository map with important files and layout signals. |
 | `rank_context` | Rank likely relevant files for the current task before broader reads. |
 | `symbol_index` | Build a compact symbol index for source and test declarations before implementation reads. |
+| `dependency_graph` | Build a compact import dependency graph for source and test files before impact analysis. |
 
 ## Installed / Supported Stack
 
@@ -127,6 +128,7 @@ There are currently **18 model-requestable actions**:
 | Lightweight repo map | Enabled |
 | Task-aware context ranking | Enabled |
 | Compact symbol index | Enabled |
+| Lightweight dependency graph | Enabled |
 | Web search | Enabled with user approval |
 | Local workspace sandbox | Enabled with diff/apply promotion |
 | Tool failure recovery loop | Enabled |
@@ -171,7 +173,7 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 | --- | --- | --- | --- |
 | 1 | Structured patch editing | Gives safe, reviewable multi-file code changes instead of brittle full-file rewrites | Baseline done for preview, apply, verify, and metadata |
 | 2 | Verification loop | Lets Agent47 detect, suggest, run, and summarize the right tests, lint, typecheck, and builds after edits | Baseline done |
-| 3 | Repo intelligence | Helps the agent choose relevant context using symbols, dependencies, git diff, and architecture summaries | Baseline done for repo map, ranking, symbol indexing, and git awareness |
+| 3 | Repo intelligence | Helps the agent choose relevant context using symbols, dependencies, git diff, and architecture summaries | Baseline done for repo map, ranking, symbol indexing, dependency graphing, and git awareness |
 | 4 | Safer shell policy | Separates read-only, test/build, install/network, and destructive commands with stronger approvals | Baseline done |
 | 5 | Durable sessions | Enables pause/resume, plan state, checkpoints, and long task recovery | Partial, with resumable runs, visible durable plan checkpoints, planner metadata, and persisted structured work reports |
 | 6 | Streaming UX | Makes CLI and interactive mode feel alive during model reasoning and tool execution | Baseline done |
@@ -184,11 +186,11 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 
 ## Next Recommended Build Order
 
-1. Add dependency graph indexing on top of the symbol index.
-2. Add storage migrations for durable public releases.
-3. Add richer terminal/editor diff approval UI.
-4. Add stronger process isolation for sandboxed commands.
-5. Add formal security policy and threat model.
+1. Add storage migrations for durable public releases.
+2. Add richer terminal/editor diff approval UI.
+3. Add stronger process isolation for sandboxed commands.
+4. Add formal security policy and threat model.
+5. Add per-repo architecture and ownership memory under `.code-agent/`.
 
 ## Current Safety Notes
 
@@ -226,8 +228,8 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 - `suggest_verification` ranks focused checks from changed paths, and successful file mutations now trigger automatic focused verification when commands are detected.
 - Verification-like shell commands are recorded and appended to final summaries as pass/fail outcomes.
 - `inspect_git_diff` shows dirty files and optional bounded diff hunks so Agent47 can avoid overwriting existing user changes.
-- `repo_map`, `rank_context`, and `symbol_index` give Agent47 a lightweight repository index, task-aware file ranking, and compact declaration map before broad reads.
-- Repo-map, ranking, and symbol-index actions are stored in run history and summarized in structured work reports as context analysis.
+- `repo_map`, `rank_context`, `symbol_index`, and `dependency_graph` give Agent47 a lightweight repository index, task-aware file ranking, compact declaration map, and import impact map before broad reads.
+- Repo-map, ranking, symbol-index, and dependency-graph actions are stored in run history and summarized in structured work reports as context analysis.
 - `code-agent evals` runs offline deterministic checks for greeting routing, blocked-write honesty, denied-read non-leakage, sandbox isolation, file creation, file editing, test fixing, and failed-read recovery.
 - `code-agent run-json` emits versioned NDJSON events, fails closed on approvals by default, supports `--approval-stdin` request/response approvals with matching request IDs for parent editor processes, includes approval metadata for frontend UIs, and keeps `--approve-all` only for trusted automation.
 - `code-agent doctor` checks Python version, platform, workspace writability, SQLite storage, console scripts, Git, ripgrep, API-key presence, and `.env` setup without exposing secrets.
@@ -238,4 +240,4 @@ For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.
 
 ## Last Updated
 
-June 19, 2026
+June 20, 2026

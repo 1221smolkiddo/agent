@@ -17,6 +17,7 @@ from .schema import (
     AgentAction,
     ApplyPatchAction,
     DeleteFileAction,
+    DependencyGraphAction,
     DetectVerificationAction,
     EditFileAction,
     InspectGitDiffAction,
@@ -34,7 +35,7 @@ from .schema import (
     WriteFileAction,
 )
 from .parsing import summarize_code_file
-from .repo_index import build_repo_map, build_symbol_index, rank_context
+from .repo_index import build_dependency_graph, build_repo_map, build_symbol_index, rank_context
 from .safety import classify_network_url, classify_shell_command, is_sensitive_path, redact_secrets
 from .verification import detect_verification_commands, suggest_verification_commands
 
@@ -126,6 +127,8 @@ class ToolRegistry:
             return self._rank_context(action.task, action.max_results)
         if isinstance(action, SymbolIndexAction):
             return self._symbol_index(action.max_files, action.max_symbols)
+        if isinstance(action, DependencyGraphAction):
+            return self._dependency_graph(action.max_files, action.max_edges)
         return ToolResult(ok=False, output=f"Unsupported action: {action.type}")
 
     def resolve_inside_workspace(self, requested_path: str | None = None) -> Path:
@@ -428,6 +431,21 @@ class ToolRegistry:
                 self.workspace,
                 max_files=max_files,
                 max_symbols=max_symbols,
+            ),
+        )
+
+    def _dependency_graph(self, max_files: int, max_edges: int) -> ToolResult:
+        if not self._approve(
+            "dependency_graph",
+            "Build a lightweight dependency graph from source and test imports.",
+        ):
+            return ToolResult(ok=False, output="Permission denied for dependency_graph.")
+        return ToolResult(
+            ok=True,
+            output=build_dependency_graph(
+                self.workspace,
+                max_files=max_files,
+                max_edges=max_edges,
             ),
         )
 

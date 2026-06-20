@@ -57,6 +57,14 @@ class RepoFile:
     importance: int
 
 
+@dataclass(frozen=True)
+class DependencyEdge:
+    source: str
+    target: str
+    import_name: str
+    kind: str
+
+
 def build_repo_map(workspace: Path, *, max_files: int = 80) -> str:
     files = index_repo(workspace)
     important = [item for item in files if item.importance >= 6]
@@ -134,6 +142,47 @@ def build_symbol_index(workspace: Path, *, max_files: int = 40, max_symbols: int
     return "\n".join(lines).rstrip()
 
 
+def build_dependency_graph(workspace: Path, *, max_files: int = 60, max_edges: int = 160) -> str:
+    files = [item for item in index_repo(workspace) if item.kind in {"source", "test"}]
+    module_map = _module_map(files)
+    edges: list[DependencyEdge] = []
+    for item in files[:max_files]:
+        path = workspace / item.path
+        edges.extend(_dependency_edges_for_file(path, item.path, module_map))
+
+    internal = [edge for edge in edges if edge.kind == "internal"]
+    external = [edge for edge in edges if edge.kind == "external"]
+    lines = [
+        "Dependency graph:",
+        f"- files scanned: {min(len(files), max_files)}",
+        f"- internal edges: {len(internal)}",
+        f"- external imports: {len(external)}",
+        "",
+        "Internal dependencies:",
+    ]
+    if internal:
+        for edge in internal[:max_edges]:
+            lines.append(f"- {edge.source} -> {edge.target} ({edge.import_name})")
+    else:
+        lines.append("- <none detected>")
+
+    remaining_edges = max_edges - min(len(internal), max_edges)
+    lines.extend(["", "External imports:"])
+    if external and remaining_edges > 0:
+        grouped = _group_external_edges(external)
+        for source, imports in grouped[:remaining_edges]:
+            lines.append(f"- {source}: {', '.join(imports)}")
+    elif external:
+        lines.append("- <truncated before external imports>")
+    else:
+        lines.append("- <none detected>")
+
+    truncated = len(internal) + len(external) - max_edges
+    if truncated > 0:
+        lines.append(f"<truncated {truncated} dependency entries>")
+    return "\n".join(lines)
+
+
 def index_repo(workspace: Path) -> list[RepoFile]:
     root = workspace.resolve()
     files: list[RepoFile] = []
@@ -184,6 +233,163 @@ def _symbols_for_file(path: Path) -> list[str]:
     if path.suffix in {".js", ".jsx", ".ts", ".tsx"}:
         return _javascript_like_symbols(path)
     return []
+
+
+def _dependency_edges_for_file(
+    path: Path,
+    relative_path: str,
+    module_map: dict[str, str],
+) -> list[DependencyEdge]:
+    if path.suffix == ".py":
+        return _python_dependency_edges(path, relative_path, module_map)
+    if path.suffix in {".js", ".jsx", ".ts", ".tsx"}:
+        return _javascript_dependency_edges(path, relative_path, module_map)
+    return []
+
+
+def _python_dependency_edges(
+    path: Path,
+    relative_path: str,
+    module_map: dict[str, str],
+) -> list[DependencyEdge]:
+    try:
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return []
+
+    edges: list[DependencyEdge] = []
+    current_module = _module_name_for_path(relative_path)
+    current_package = current_module.rsplit(".", 1)[0] if "." in current_module else current_module
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                import_name = alias.name
+                edges.append(_dependency_edge(relative_path, import_name, module_map))
+        elif isinstance(node, ast.ImportFrom):
+            import_name = _resolve_python_from_import(current_package, node)
+            if import_name:
+                edges.append(_dependency_edge(relative_path, import_name, module_map))
+    return edges
+
+
+def _javascript_dependency_edges(
+    path: Path,
+    relative_path: str,
+    module_map: dict[str, str],
+) -> list[DependencyEdge]:
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+
+    patterns = [
+        re.compile(r"\bimport\s+(?:[^'\"]+\s+from\s+)?['\"]([^'\"]+)['\"]"),
+        re.compile(r"\bexport\s+[^'\"]+\s+from\s+['\"]([^'\"]+)['\"]"),
+        re.compile(r"\brequire\(\s*['\"]([^'\"]+)['\"]\s*\)"),
+    ]
+    imports: list[str] = []
+    for pattern in patterns:
+        imports.extend(match.group(1) for match in pattern.finditer(source))
+    return [_dependency_edge(relative_path, item, module_map) for item in sorted(set(imports))]
+
+
+def _dependency_edge(source: str, import_name: str, module_map: dict[str, str]) -> DependencyEdge:
+    target = _resolve_import_target(source, import_name, module_map)
+    if target:
+        return DependencyEdge(source=source, target=target, import_name=import_name, kind="internal")
+    return DependencyEdge(
+        source=source,
+        target=_external_import_name(import_name),
+        import_name=import_name,
+        kind="external",
+    )
+
+
+def _resolve_import_target(source: str, import_name: str, module_map: dict[str, str]) -> str | None:
+    if import_name.startswith("."):
+        return _resolve_relative_javascript_import(source, import_name, module_map)
+    parts = import_name.split(".")
+    for end in range(len(parts), 0, -1):
+        candidate = ".".join(parts[:end])
+        if candidate in module_map:
+            return module_map[candidate]
+    return None
+
+
+def _resolve_relative_javascript_import(
+    source: str,
+    import_name: str,
+    module_map: dict[str, str],
+) -> str | None:
+    base = Path(source).parent
+    normalized = (base / import_name).as_posix()
+    candidates = [
+        normalized,
+        f"{normalized}.js",
+        f"{normalized}.jsx",
+        f"{normalized}.ts",
+        f"{normalized}.tsx",
+        f"{normalized}/index.js",
+        f"{normalized}/index.jsx",
+        f"{normalized}/index.ts",
+        f"{normalized}/index.tsx",
+    ]
+    path_lookup = {path: path for path in module_map.values()}
+    for candidate in candidates:
+        if candidate in path_lookup:
+            return path_lookup[candidate]
+    return None
+
+
+def _resolve_python_from_import(current_package: str, node: ast.ImportFrom) -> str:
+    module = node.module or ""
+    if node.level <= 0:
+        return module
+    package_parts = current_package.split(".") if current_package else []
+    keep = max(len(package_parts) - node.level + 1, 0)
+    prefix = ".".join(package_parts[:keep])
+    if prefix and module:
+        return f"{prefix}.{module}"
+    return prefix or module
+
+
+def _module_map(files: list[RepoFile]) -> dict[str, str]:
+    modules: dict[str, str] = {}
+    for item in files:
+        module = _module_name_for_path(item.path)
+        if module:
+            modules[module] = item.path
+    return modules
+
+
+def _module_name_for_path(path: str) -> str:
+    item = Path(path)
+    if item.suffix == ".py":
+        without_suffix = item.with_suffix("")
+        parts = list(without_suffix.parts)
+        if parts and parts[0] == "src":
+            parts = parts[1:]
+        if parts and parts[-1] == "__init__":
+            parts = parts[:-1]
+        return ".".join(parts)
+    if item.suffix in {".js", ".jsx", ".ts", ".tsx"}:
+        return item.with_suffix("").as_posix()
+    return ""
+
+
+def _external_import_name(import_name: str) -> str:
+    if import_name.startswith("@"):
+        parts = import_name.split("/")
+        return "/".join(parts[:2]) if len(parts) >= 2 else import_name
+    return re.split(r"[./]", import_name, maxsplit=1)[0]
+
+
+def _group_external_edges(edges: list[DependencyEdge]) -> list[tuple[str, list[str]]]:
+    grouped: dict[str, set[str]] = {}
+    for edge in edges:
+        grouped.setdefault(edge.source, set()).add(edge.target)
+    return [(source, sorted(imports)) for source, imports in sorted(grouped.items())]
 
 
 def _python_symbols(path: Path) -> list[str]:

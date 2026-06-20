@@ -31,6 +31,7 @@ Operating protocol:
 - Use repo_map to understand unfamiliar repositories before broad exploration.
 - Use rank_context with the user's task to choose relevant files before reading several files.
 - Use symbol_index when you need to locate functions, classes, or exported declarations before reading or patching implementation files.
+- Use dependency_graph when import relationships would clarify blast radius, test impact, or where a change should be made.
 - Before editing, use inspect_git_diff to understand existing user changes and avoid overwriting them.
 - Inspect the relevant files before changing them.
 - Prefer search before broad file reads.
@@ -84,4 +85,5 @@ Action schema:
 {{ "type": "repo_map", "max_files": 80 }}
 {{ "type": "rank_context", "task": "user task or focused subtask", "max_results": 12 }}
 {{ "type": "symbol_index", "max_files": 40, "max_symbols": 120 }}
+{{ "type": "dependency_graph", "max_files": 60, "max_edges": 160 }}
 """.strip()

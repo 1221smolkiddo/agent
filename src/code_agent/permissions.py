@@ -15,6 +15,7 @@ READ_ONLY_ACTIONS = frozenset({
     "repo_map",
     "rank_context",
     "symbol_index",
+    "dependency_graph",
     "detect_verification",
     "suggest_verification",
 })

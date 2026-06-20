@@ -4,7 +4,7 @@ This is the build map for turning Agent47 from a promising CLI agent into an ind
 
 ## Current Position
 
-Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRouter/OpenAI-compatible model access, typed tool actions, durable plan checkpoints with visible plan snapshots, non-workspace intent routing, local file/search/shell/web tools with general web-search fallback, structured patch application, git-diff awareness, verification command detection/suggestion/automatic execution/outcome summaries, permission prompts, dry-run mode, local sandbox copies, SQLite run history with detail views and resume support, operation status labels, cleaner bordered terminal panels with short transcript context and structured session state, failure recovery, optional tree-sitter summaries, and an Agent47 engineering protocol in the system prompt.
+Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRouter/OpenAI-compatible model access, typed tool actions, durable plan checkpoints with visible plan snapshots, non-workspace intent routing, local file/search/shell/web tools with general web-search fallback, structured patch application, git-diff awareness, verification command detection/suggestion/automatic execution/outcome summaries, permission prompts, dry-run mode, local sandbox copies, SQLite run history with detail views and resume support, operation status labels, cleaner bordered terminal panels with short transcript context and structured session state, failure recovery, repo/symbol/dependency indexing, optional tree-sitter summaries, and an Agent47 engineering protocol in the system prompt.
 
 ## Industry-Standard Capability Checklist
 
@@ -12,7 +12,7 @@ Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRou
 | --- | --- | --- |
 | Agent loop | Basic typed action loop with failure recovery, non-workspace routing, durable plan checkpoints, and visible plan snapshots | Add richer task decomposition, cancellation, pause/resume, and bounded long-running work |
 | Code editing | Full-file writes, exact text replacement, and approved `git apply` patches | Add multi-file change set metadata, conflict handling, rollback support, and formatting hooks |
-| Repository intelligence | File listing, ripgrep search, optional code summaries, approved git status/diff inspection | Add repo index, symbol graph, dependency graph, ownership hints, and context ranking |
+| Repository intelligence | File listing, ripgrep search, optional code summaries, approved git status/diff inspection, repo map, context ranking, symbol index, dependency graph | Add ownership hints, architectural memory, and richer context ranking |
 | Verification | Agent can detect likely verification commands, suggest focused checks from changed paths, automatically run focused checks after successful mutations, feed failed checks back to the model, and summarize verification outcomes | Add richer retry policy and failure-output parsing |
 | Safety and sandboxing | Workspace path guard, dry-run, permission prompts, copy sandbox, shell command risk policy, destructive-command blocking, public-web network policy, and secret redaction | Add configurable command allow/deny policy, process limits, timeout tiers, and deeper secret scanning |
 | Model layer | Single OpenAI-compatible chat client | Add provider abstraction, model profiles, planner/coder/reviewer routing, fallback models, token/cost tracking, and streaming |
@@ -46,8 +46,7 @@ Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRou
 ## Phase 3: Repository Intelligence
 
 - Done: add git diff awareness so Agent47 can inspect dirty files before editing.
-- Build a lightweight repo index with files, symbols, imports, and recently changed paths.
-- Rank context by task relevance instead of reading broad files.
+- Done: build a lightweight repo index with files, symbols, imports, and ranked context.
 - Add code ownership and architectural summary files under `.code-agent/`.
 
 ## Phase 4: Safer Autonomy

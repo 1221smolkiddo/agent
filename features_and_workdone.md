@@ -31,7 +31,8 @@ This document summarizes the current state of Agent47 for collaborators.
 - Lightweight repo mapping through an approved `repo_map` action that reports important project files, file counts, and top-level layout while skipping ignored local state.
 - Task-aware context ranking through an approved `rank_context` action that scores likely relevant files before broad reads.
 - Compact symbol indexing through an approved `symbol_index` action that locates Python classes/functions and JavaScript/TypeScript declarations before implementation reads.
-- Repo-map, ranking, and symbol-index actions are saved in run history and summarized in structured work reports as context analysis.
+- Lightweight dependency graph indexing through an approved `dependency_graph` action that maps Python and JavaScript/TypeScript imports into internal edges and external packages before impact analysis.
+- Repo-map, ranking, symbol-index, and dependency-graph actions are saved in run history and summarized in structured work reports as context analysis.
 - Offline deterministic eval harness through `code-agent evals`.
 - Built-in safety regressions for greeting routing, blocked-write honesty, denied-read non-leakage, and sandbox write isolation.
 - Built-in fixture coding evals for create-file, edit-file, fix-test, and failed-read recovery tasks.
@@ -166,7 +167,7 @@ Inside `agent47`:
 - Verification outcome summaries.
 - Clean terminal panel formatting.
 - Project search fallback when `ripgrep` is unavailable.
-- Lightweight repo index, context ranking, and symbol indexing.
+- Lightweight repo index, context ranking, symbol indexing, and dependency graphing.
 - Sandbox diff/apply promotion.
 - Local deterministic eval harness.
 - Fixture-based coding evals.
@@ -188,7 +189,6 @@ Inside `agent47`:
 - Network policy controls.
 - Rich token-level streaming views for future non-JSON frontends.
 - Broader fixture evals with multi-file patches, larger repos, and prompt-injection scenarios.
-- Deeper dependency graphs on top of the baseline repo and symbol indexes.
 - Additional concrete providers beyond OpenAI-compatible APIs.
 - Package metadata, license, changelog, and release checklist.
 - VS Code extension frontend.

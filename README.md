@@ -185,7 +185,7 @@ Patch approvals include a change-set summary before the unified diff, and applie
 
 Web search approval prompts include the provider domains and query. Agent47 blocks localhost, private-network, link-local, reserved, and multicast web targets, and filters unsafe result URLs before returning search results.
 
-Repository content, command output, search results, diffs, web results, repo maps, and ranked context are treated as untrusted data in the model loop. Tool payloads that can contain external or repo-supplied text are marked with `untrusted_content` and a security instruction so prompt-injection text in files or tool output is not promoted into model instructions.
+Repository content, command output, search results, diffs, web results, repo maps, ranked context, symbol indexes, and dependency graphs are treated as untrusted data in the model loop. Tool payloads that can contain external or repo-supplied text are marked with `untrusted_content` and a security instruction so prompt-injection text in files or tool output is not promoted into model instructions.
 
 ## Failure Recovery
 
@@ -211,6 +211,7 @@ The CLI prints status lines while the agent works:
 - `PLANNING updating task plan` when checkpointing durable plan steps and planner metadata.
 - `READING git changes` when inspecting dirty files before editing.
 - `ANALYZING symbol index` when locating functions, classes, and exported declarations.
+- `ANALYZING dependency graph` when mapping imports and internal source/test dependencies.
 - `EDITING` for file writes and edits.
 - `EDITING applying patch` for structured patch edits.
 - `INSTALLING`, `BUILDING`, `TESTING`, or `CHECKING` for recognized shell commands.

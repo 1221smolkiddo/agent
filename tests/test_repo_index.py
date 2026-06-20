@@ -1,6 +1,12 @@
 from pathlib import Path
 
-from code_agent.repo_index import build_repo_map, build_symbol_index, index_repo, rank_context
+from code_agent.repo_index import (
+    build_dependency_graph,
+    build_repo_map,
+    build_symbol_index,
+    index_repo,
+    rank_context,
+)
 
 
 def test_repo_index_ignores_local_state_and_classifies_files(tmp_path: Path) -> None:
@@ -91,3 +97,36 @@ def test_symbol_index_extracts_python_and_javascript_declarations(tmp_path: Path
     assert "- L1 class Panel" in output
     assert "- L2 function render" in output
     assert "- L3 binding localState" in output
+
+
+def test_dependency_graph_extracts_python_and_javascript_imports(tmp_path: Path) -> None:
+    (tmp_path / "src" / "code_agent").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "web").mkdir()
+    (tmp_path / "src" / "code_agent" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "src" / "code_agent" / "tools.py").write_text(
+        "import json\nfrom code_agent.repo_index import build_repo_map\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "code_agent" / "repo_index.py").write_text(
+        "def build_repo_map(): pass\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests" / "test_tools.py").write_text(
+        "from code_agent.tools import ToolRegistry\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "web" / "app.ts").write_text(
+        "import { helper } from './helper';\nimport React from 'react';\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "web" / "helper.ts").write_text("export const helper = 1;\n", encoding="utf-8")
+
+    output = build_dependency_graph(tmp_path)
+
+    assert "Dependency graph:" in output
+    assert "src/code_agent/tools.py -> src/code_agent/repo_index.py (code_agent.repo_index)" in output
+    assert "tests/test_tools.py -> src/code_agent/tools.py (code_agent.tools)" in output
+    assert "web/app.ts -> web/helper.ts (./helper)" in output
+    assert "src/code_agent/tools.py: json" in output
+    assert "web/app.ts: react" in output

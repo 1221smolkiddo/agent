@@ -414,7 +414,7 @@ def builtin_fixture_eval_cases() -> list[FixtureEvalCase]:
         ),
         FixtureEvalCase(
             name="automatic_context_preflight",
-            description="Gather repo map, ranked context, and symbols before a coding task.",
+            description="Gather repo map, ranked context, symbols, and dependency graph before a coding task.",
             task="fix the failing invoice tests in this project",
             files={
                 **python_pytest_project(),
@@ -436,6 +436,7 @@ def builtin_fixture_eval_cases() -> list[FixtureEvalCase]:
                 context_recorded("repo_map", automatic=True),
                 context_recorded("rank_context", automatic=True),
                 context_recorded("symbol_index", automatic=True),
+                context_recorded("dependency_graph", automatic=True),
                 message_not_contains("wrong file"),
             ),
         ),
