@@ -194,7 +194,6 @@ def builtin_fixture_eval_cases() -> list[FixtureEvalCase]:
                     "def test_add():\n"
                     "    assert add(2, 3) == 5\n"
                 ),
-                "uv.lock": "version = 1\nrequires-python = \">=3.9\"\n",
             },
             responses=[
                 (
@@ -252,7 +251,7 @@ def builtin_fixture_eval_cases() -> list[FixtureEvalCase]:
                 file_contains("mathlib.py", "return a * b"),
                 verification_failed("test"),
                 verification_passed("test"),
-                command_ran("uv run pytest"),
+                command_ran("python -m pytest"),
             ),
             max_steps=10,
         ),
@@ -367,12 +366,12 @@ def builtin_fixture_eval_cases() -> list[FixtureEvalCase]:
                     '{"type":"edit_file","path":"app.py",'
                     '"find":"return \\"hello\\"","replace":"return \\"hi\\""}'
                 ),
-                '{"type":"run_shell","command":"uv run pytest"}',
+                '{"type":"run_shell","command":"python -m pytest"}',
                 '{"type":"final","message":"Updated app.py and pytest passes."}',
             ],
             validators=(
                 file_contains("app.py", 'return "hi"'),
-                command_ran("uv run pytest"),
+                command_ran("python -m pytest"),
                 verification_passed("test"),
             ),
         ),
@@ -537,7 +536,6 @@ def python_pytest_project() -> dict[str, str]:
             'testpaths = ["tests"]\n'
             'pythonpath = ["."]\n'
         ),
-        "uv.lock": 'version = 1\nrequires-python = ">=3.9"\n',
     }
 
 

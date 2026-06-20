@@ -76,7 +76,7 @@ def test_cli_evals_command_runs_builtin_evals() -> None:
 
     result = runner.invoke(app, ["evals"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     assert "Agent47 local evals: 20 passed, 0 failed" in result.output
     assert "fixture/create_file" in result.output
 
