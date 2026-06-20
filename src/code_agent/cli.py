@@ -8,7 +8,6 @@ import typer
 
 from .config import Settings
 from .doctor import run_doctor
-from .evals import run_builtin_evals
 from .factory import create_agent
 from .model_profiles import validate_profile_name
 from .permissions import confirm_permission
@@ -108,7 +107,9 @@ def run(
 @app.command("evals")
 def evals_command() -> None:
     """Run local deterministic safety and regression evals."""
-    result = run_builtin_evals()
+    from . import evals as evals_module
+
+    result = evals_module.run_builtin_evals()
     typer.echo(result.format())
     if not result.ok:
         raise typer.Exit(code=1)

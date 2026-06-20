@@ -1,6 +1,6 @@
 from typer.testing import CliRunner
 
-import code_agent.cli as cli
+import code_agent.evals as evals_module
 from code_agent.cli import app
 from code_agent.evals import (
     EvalResult,
@@ -88,7 +88,7 @@ def test_cli_evals_command_exits_nonzero_when_any_eval_fails(monkeypatch) -> Non
             EvalResult(name="broken_case", ok=False, detail="bad"),
         ]
     )
-    monkeypatch.setattr(cli, "run_builtin_evals", lambda: failed_result)
+    monkeypatch.setattr(evals_module, "run_builtin_evals", lambda: failed_result)
 
     result = runner.invoke(app, ["evals"])
 

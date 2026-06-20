@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import tempfile
 import os
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Protocol
@@ -245,12 +247,13 @@ def builtin_fixture_eval_cases() -> list[FixtureEvalCase]:
                     '{"type":"edit_file","path":"mathlib.py",'
                     '"find":"return a - b","replace":"return a * b"}'
                 ),
+                '{"type":"run_shell","command":"python -m pytest"}',
                 '{"type":"final","message":"Fixed mathlib.py and tests pass."}',
             ],
             validators=(
                 file_contains("mathlib.py", "return a * b"),
                 verification_failed("test"),
-                verification_passed("test"),
+                pytest_passes_now(),
                 command_ran("python -m pytest"),
             ),
             max_steps=10,
@@ -615,6 +618,22 @@ def verification_failed(purpose: str) -> FixtureValidator:
             for item in result.verification_results
         )
         return matched, f"no failed {purpose} validation recorded"
+
+    return validate
+
+
+def pytest_passes_now() -> FixtureValidator:
+    def validate(workspace: Path, _agent: CodingAgent, _result: AgentRunResult) -> tuple[bool, str]:
+        completed = subprocess.run(
+            [sys.executable, "-m", "pytest"],
+            cwd=workspace,
+            text=True,
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+        output = "\n".join(part for part in [completed.stdout, completed.stderr] if part).strip()
+        return completed.returncode == 0, f"pytest did not pass after recovery: {output}"
 
     return validate
 
