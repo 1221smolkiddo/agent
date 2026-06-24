@@ -109,7 +109,13 @@ def confirm_permission(action: str, detail: str) -> str:
     text.append(f"{label}\n\n", style="bold")
 
     text.append("Command / Path:\n", style="muted")
-    text.append(f"{format_permission_detail(detail)}\n", style="cyan")
+    text.append(f"{format_permission_detail(detail)}\n\n", style="cyan")
+
+    # Build a short human-readable preview instead of showing raw diffs
+    preview = _format_permission_preview(detail)
+    if preview:
+        text.append("Preview:\n", style="muted")
+        text.append(f"{preview}\n", style="default")
 
     console.print(
         Panel(
@@ -119,13 +125,63 @@ def confirm_permission(action: str, detail: str) -> str:
         )
     )
 
-    response = Prompt.ask(
-        "[y] Approve  [n] Deny  [a] Approve All For Task",
-        choices=["y", "n", "a"],
-        default="n",
-        show_choices=False,
-    )
-    return response
+    # Allow users to view the full diff if they choose
+    while True:
+        response = Prompt.ask(
+            "[y] Approve  [n] Deny  [a] Approve All For Task  [v] View Full Diff",
+            choices=["y", "n", "a", "v"],
+            default="n",
+            show_choices=False,
+        )
+        if response == "v":
+            # show full detail in a secondary panel, then loop back to ask again
+            console.print(
+                Panel(
+                    Text(str(detail)),
+                    title=Text("Full Diff / Detail", style="bold"),
+                    border_style="muted",
+                )
+            )
+            continue
+        return response
+
+
+def _format_permission_preview(detail: str, max_lines: int = 6, max_chars: int = 800) -> str:
+    """Generate a short preview for permission details.
+
+    If `detail` looks like a unified diff, extract added lines (or a small snippet).
+    Otherwise, return the first non-empty lines up to `max_lines`.
+    """
+    if not detail:
+        return ""
+    # Heuristic: detect diff markers
+    diff_markers = ("diff --git", "@@", "--- ", "+++ ")
+    lines = detail.splitlines()
+    if any(m in detail for m in diff_markers):
+        added = []
+        for ln in lines:
+            if ln.startswith("+") and not ln.startswith("+++ "):
+                added.append(ln[1:])
+            if len(added) >= max_lines:
+                break
+        if added:
+            preview = "\n".join(added[:max_lines])
+            if len(preview) > max_chars:
+                preview = preview[:max_chars].rstrip() + "\n..."
+            return preview
+
+    # Fallback: show the first few meaningful lines
+    meaningful = [ln for ln in lines if ln.strip()][:max_lines]
+    if meaningful:
+        preview = "\n".join(meaningful)
+        if len(preview) > max_chars:
+            preview = preview[:max_chars].rstrip() + "\n..."
+        return preview
+    # As last resort, truncate the raw detail
+    truncated = detail[:max_chars]
+    if len(detail) > max_chars:
+        truncated = truncated.rstrip() + "\n..."
+    return truncated
 
 
 def confirm_permission_with_policy(
