@@ -38,6 +38,10 @@ class StatusReporter:
         self._current_detail = ""
         self._is_generating = False
         self._timeline: list[str] = []
+        # Persistent task progress tracking
+        self._task_name: str | None = None
+        # stages: list of tuples (stage_detail, status) where status is 'pending','in-progress','done'
+        self._stages: list[tuple[str, str]] = []
         self._live = Live(console=console, transient=False, refresh_per_second=10)
         self._live.start()
         # remember last workspace summary to avoid reprinting it multiple times
@@ -70,6 +74,26 @@ class StatusReporter:
                 timeline.append(f"{item}\n")
             lines.append(timeline)
 
+        # Persistent progress rendering: show task and stages compactly
+        if self._task_name or self._stages:
+            prog = Text()
+            if self._task_name:
+                prog.append("Task: ", style="muted")
+                prog.append(self._task_name + "\n", style="bold")
+            if self._stages:
+                prog.append("Progress:\n", style="muted")
+                for stage, status in self._stages[-8:]:
+                    if status == "done":
+                        prog.append("✓ ", style="green")
+                        prog.append(f"{stage}\n")
+                    elif status == "in-progress":
+                        prog.append(Text("⠋ ", style="cyan"))
+                        prog.append(f"{stage}\n", style="cyan")
+                    else:
+                        prog.append("  ")
+                        prog.append(f"{stage}\n", style="muted")
+            lines.append(prog)
+
         return Group(*lines)
 
     def _update(self) -> None:
@@ -77,7 +101,12 @@ class StatusReporter:
 
     def _complete_current(self) -> None:
         if self._current_detail:
-            # Append completed details but avoid consecutive duplicates
+            # Mark the corresponding stage as done
+            for idx in range(len(self._stages) - 1, -1, -1):
+                if self._stages[idx][0] == self._current_detail:
+                    self._stages[idx] = (self._stages[idx][0], "done")
+                    break
+            # Append to timeline but avoid consecutive duplicates
             if not self._timeline or self._timeline[-1] != self._current_detail:
                 self._timeline.append(self._current_detail)
                 self._timeline = self._timeline[-6:]
@@ -90,6 +119,12 @@ class StatusReporter:
             return
         self._current_label = "Inspecting Project"
         self._current_detail = "Gathering context"
+        # set task name if not present
+        if not self._task_name:
+            self._task_name = "Task"
+        # add stage
+        if not any(s == self._current_detail for s, _ in self._stages):
+            self._stages.append((self._current_detail, "in-progress"))
         self._update()
 
     def action(self, action: AgentAction) -> None:
@@ -99,6 +134,16 @@ class StatusReporter:
         if stage:
             self._current_label = stage
             self._current_detail = detail
+            # set task name from label if not already set
+            if not self._task_name:
+                self._task_name = stage
+            # add or mark stage as in-progress
+            if self._stages and self._stages[-1][0] == detail:
+                self._stages[-1] = (detail, "in-progress")
+            else:
+                # avoid duplicate consecutive stage descriptions
+                if not any(s == detail for s, _ in self._stages):
+                    self._stages.append((detail, "in-progress"))
             self._update()
 
     def recovery(self, detail: str) -> None:
@@ -107,11 +152,18 @@ class StatusReporter:
             self._complete_current()
             self._current_label = "Recovering"
             self._current_detail = friendly_retry_detail(detail)
+            if not self._task_name:
+                self._task_name = "Recovery"
+            if not any(s == self._current_detail for s, _ in self._stages):
+                self._stages.append((self._current_detail, "in-progress"))
             self._update()
 
     def done(self) -> None:
         self._complete_current()
         self._live.stop()
+        # keep the progress visible but clear current task
+        self._current_label = ""
+        self._current_detail = ""
 
     def model_stream_start(self, step: int) -> None:
         self._is_generating = True
