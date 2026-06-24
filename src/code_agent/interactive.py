@@ -28,6 +28,7 @@ from .terminal_ui import (
     print_panel,
     print_startup_header,
     print_work_report_panel,
+    print_response,
 )
 from rich.text import Text
 from .work_report import should_show_work_report

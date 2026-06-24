@@ -98,7 +98,7 @@ def print_work_report_panel(result: AgentRunResult) -> None:
     task = _single_line(_clean_task_text(result))
     if task:
         text.append("✓ ", style="green")
-        text.append(f"Task Completed\n", style="bold")
+        text.append("Task Completed\n", style="bold")
         text.append(f"{task}\n\n")
         
     modified_paths = []
@@ -138,7 +138,6 @@ def print_work_report_panel(result: AgentRunResult) -> None:
         
     if result.verification_results:
         text.append("Verification:\n", style="muted")
-        all_passed = all(v.get("ok") for v in result.verification_results)
         for v in result.verification_results:
             status = "✓" if v.get("ok") else "✗"
             label = v.get("purpose") or v.get("command") or v.get("name") or "verification"
@@ -153,7 +152,7 @@ def print_work_report_panel(result: AgentRunResult) -> None:
     duration = getattr(result, "duration", None)
     if duration is not None:
         try:
-            text.append(f"Duration:\n", style="muted")
+            text.append("Duration:\n", style="muted")
             text.append(f"{duration}s\n\n")
         except Exception:
             pass
