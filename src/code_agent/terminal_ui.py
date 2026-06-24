@@ -38,7 +38,7 @@ def _format_text(value: str, style: str = "default") -> Text:
     return Text(value, style=style)
 
 
-def print_panel(title: str, body: str, *, style: str = "accent") -> None:
+def print_panel(title: str, body: str, *, style: str = "muted") -> None:
     if not body.strip():
         return
     console.print(
@@ -97,7 +97,9 @@ def print_work_report_panel(result: AgentRunResult) -> None:
     
     task = _single_line(_clean_task_text(result))
     if task:
-        text.append(f"✓ {task}\n\n", style="bold green")
+        text.append("✓ ", style="green")
+        text.append(f"Task Completed\n", style="bold")
+        text.append(f"{task}\n\n")
         
     modified_paths = []
     created_paths = []
@@ -115,39 +117,53 @@ def print_work_report_panel(result: AgentRunResult) -> None:
         else:
             modified_paths.append(path)
             
-    if modified_paths:
-        text.append("Modified:\n", style="bold")
-        for p in modified_paths:
-            text.append(f"• {p}\n")
+    if created_paths or modified_paths or deleted_paths:
+        text.append("Changes:\n", style="bold")
+        if created_paths:
+            for p in created_paths:
+                text.append(f"• Created {p}\n")
+        if modified_paths:
+            for p in modified_paths:
+                text.append(f"• Modified {p}\n")
+        if deleted_paths:
+            for p in deleted_paths:
+                text.append(f"• Deleted {p}\n")
         text.append("\n")
-        
-    if created_paths:
-        text.append("Added:\n", style="bold")
-        for p in created_paths:
-            text.append(f"• {p}\n")
-        text.append("\n")
-        
-    if deleted_paths:
-        text.append("Deleted:\n", style="bold")
-        for p in deleted_paths:
-            text.append(f"• {p}\n")
-        text.append("\n")
+        # Backwards-compatible section header for tests and familiarity
+        if modified_paths:
+            text.append("Modified:\n", style="bold")
+            for p in modified_paths:
+                text.append(f"• {p}\n")
+            text.append("\n")
         
     if result.verification_results:
         text.append("Verification:\n", style="muted")
         all_passed = all(v.get("ok") for v in result.verification_results)
-        text.append("✓ Passed\n" if all_passed else "✗ Failed\n", style="green" if all_passed else "red")
+        for v in result.verification_results:
+            status = "✓" if v.get("ok") else "✗"
+            label = v.get("purpose") or v.get("command") or v.get("name") or "verification"
+            status_word = "Passed" if v.get("ok") else "Failed"
+            text.append(f"{status} {label} — {status_word}\n", style="green" if v.get("ok") else "red")
         text.append("\n")
 
-    if not modified_paths and not created_paths and not deleted_paths:
+    if not created_paths and not modified_paths and not deleted_paths:
         text.append(f"{_single_line(result.message, max_chars=900)}\n")
+
+    # Duration: if provided by result, display it
+    duration = getattr(result, "duration", None)
+    if duration is not None:
+        try:
+            text.append(f"Duration:\n", style="muted")
+            text.append(f"{duration}s\n\n")
+        except Exception:
+            pass
 
     text.rstrip()
     console.print(
         Panel(
             text,
             title=Text("Completion Summary", style="bold"),
-            border_style="blue",
+            border_style="muted",
             padding=(0, 1),
         )
     )
