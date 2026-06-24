@@ -190,3 +190,19 @@ def print_agent_banner(*args, **kwargs) -> None:
 def print_plan_panel(*args, **kwargs) -> None:
     # Plan is now shown via timeline
     pass
+
+
+def print_response(author: str, body: str, *, author_style: str = "bold cyan") -> None:
+    """Print a conversational response inline instead of a bordered panel.
+
+    Use for normal assistant/user messages. Panels remain reserved for
+    permission requests, errors, and detailed reports.
+    """
+    if not body:
+        return
+    header = Text()
+    header.append(f"{author}", style=author_style)
+    header.append(" ")
+    # Render the body as plain text (no markup parsing)
+    body_text = Text(str(body))
+    console.print(header.append(body_text))

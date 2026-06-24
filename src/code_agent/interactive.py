@@ -72,10 +72,10 @@ def main() -> None:
             continue
 
         if is_casual_greeting(user_input):
-            print_panel("Agent47", "Hey! I am ready. Ask me a question, or use /help to see commands.")
+            print_response("Agent47", "Hey! I am ready. Ask me a question, or use /help to see commands.")
             continue
         if is_persona_instruction(user_input):
-            print_panel("Agent47", "Got it. I will use that as guidance for future turns.")
+            print_response("Agent47", "Got it. I will use that as guidance for future turns.")
             continue
 
         if user_input.startswith("/"):
@@ -137,7 +137,7 @@ def main() -> None:
                     ["Check your credentials", "Use /debug for more info"]
                 )
                 continue
-            print_panel("Agent47", response)
+            print_response("Agent47", response)
             transcript.append((user_input, response))
             transcript = transcript[-8:]
             continue
@@ -524,7 +524,7 @@ def run_resume_command(
     result = agent.run_detailed(task)
     print_work_report_panel(result)
     if not should_show_work_report(result):
-        print_panel("Agent47", result.message)
+        print_response("Agent47", result.message)
     if session_state is not None:
         session_state.update(f"resume run {run_id}", result)
 
@@ -649,7 +649,7 @@ def run_interactive_turn(
     result = agent.run_detailed(task)
     print_work_report_panel(result)
     if not should_show_work_report(result):
-        print_panel("Agent47", result.message)
+        print_response("Agent47", result.message)
     session_state.update(user_input, result)
     transcript.append((user_input, result.message))
     return transcript[-8:]
