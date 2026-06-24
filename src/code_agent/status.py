@@ -40,6 +40,8 @@ class StatusReporter:
         self._timeline: list[str] = []
         self._live = Live(console=console, transient=False, refresh_per_second=10)
         self._live.start()
+        # remember last workspace summary to avoid reprinting it multiple times
+        self._last_workspace_summary: str | None = None
 
     def _render(self) -> Group:
         lines = []
@@ -55,7 +57,9 @@ class StatusReporter:
             spinner = Spinner("dots", text=text, style="cyan", speed=0.1)
             lines.append(spinner)
         elif self._timeline:
-            lines.append(Text("Awaiting next action…", style="muted"))
+            # Intentionally avoid a repeated 'Awaiting next action' line to reduce noise;
+            # the timeline will be shown below when present.
+            pass
         else:
             lines.append(Text("Ready for your task. Use /help for commands.", style="muted"))
 
@@ -73,8 +77,10 @@ class StatusReporter:
 
     def _complete_current(self) -> None:
         if self._current_detail:
-            self._timeline.append(self._current_detail)
-            self._timeline = self._timeline[-6:]
+            # Append completed details but avoid consecutive duplicates
+            if not self._timeline or self._timeline[-1] != self._current_detail:
+                self._timeline.append(self._current_detail)
+                self._timeline = self._timeline[-6:]
         self._current_label = ""
         self._current_detail = ""
         self._update()
@@ -120,6 +126,10 @@ class StatusReporter:
         self._update()
 
     def workspace_analysis(self, summary: str) -> None:
+        # Only print the workspace summary if it changed (or first time)
+        if summary == self._last_workspace_summary:
+            return
+        self._last_workspace_summary = summary
         console.print(Text("WORKSPACE", style="bold cyan") + Text("   ") + Text(summary.splitlines()[0], style="default"))
         for line in summary.splitlines()[1:]:
             console.print(Text(line, style="default"))
