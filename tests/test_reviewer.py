@@ -11,7 +11,6 @@ from typing import Any
 import pytest
 
 from code_agent.reviewer import (
-    ReviewerDecision,
     ReviewerPassResult,
     _parse_reviewer_decision,
     reviewer_messages,
