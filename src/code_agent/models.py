@@ -3,14 +3,21 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import replace
-from typing import Any, Protocol
+import re
+from typing import Any, Protocol, TypeVar
 
+import openai
 from openai import OpenAI
 
 from .model_profiles import ModelProfile
 
 
 ChatMessage = dict[str, str]
+T = TypeVar("T")
+
+
+class InsufficientCreditsError(RuntimeError):
+    """Raised when the provider returns 402 and retries with reduced tokens are exhausted."""
 
 
 class ModelClient(Protocol):
@@ -89,57 +96,92 @@ class OpenAICompatibleChatClient:
         )
 
     def complete(self, messages: list[ChatMessage]) -> str:
-        response = self._client.chat.completions.create(
-            model=self.model,
-            messages=messages,  # type: ignore[arg-type]
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-        )
-        content = response.choices[0].message.content
-        if not content:
-            self._record_failure("Model returned an empty response.")
-            raise RuntimeError("Model returned an empty response.")
-        self._record_success(_usage_from_response(response))
-        return content
+        def _make_request(current_max_tokens: int) -> str:
+            response = self._client.chat.completions.create(
+                model=self.model,
+                messages=messages,  # type: ignore[arg-type]
+                temperature=self.temperature,
+                max_tokens=current_max_tokens,
+            )
+            content = response.choices[0].message.content
+            if not content:
+                self._record_failure("Model returned an empty response.")
+                raise RuntimeError("Model returned an empty response.")
+            self._record_success(_usage_from_response(response))
+            return content
+
+        return self._call_with_credit_retry(_make_request)
 
     def stream_complete(
         self,
         messages: list[ChatMessage],
         on_token: Callable[[str], None],
     ) -> str:
-        chunks: list[str] = []
-        stream = self._client.chat.completions.create(
-            model=self.model,
-            messages=messages,  # type: ignore[arg-type]
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            stream=True,
-            stream_options={"include_usage": True},
-        )
-        for event in stream:
-            usage = getattr(event, "usage", None)
-            if usage is not None:
-                self._record_success(_usage_from_object(usage))
-            choices = getattr(event, "choices", []) or []
-            if not choices:
-                continue
-            token = choices[0].delta.content or ""
-            if not token:
-                continue
-            chunks.append(token)
-            on_token(token)
-        content = "".join(chunks)
-        if not content:
-            self._record_failure("Model returned an empty streamed response.")
-            raise RuntimeError("Model returned an empty streamed response.")
-        if not self._usage_records or self._usage_records[-1].ok is not True:
-            self._record_success({})
-        return content
+        def _make_request(current_max_tokens: int) -> str:
+            chunks: list[str] = []
+            stream = self._client.chat.completions.create(
+                model=self.model,
+                messages=messages,  # type: ignore[arg-type]
+                temperature=self.temperature,
+                max_tokens=current_max_tokens,
+                stream=True,
+                stream_options={"include_usage": True},
+            )
+            for event in stream:
+                usage = getattr(event, "usage", None)
+                if usage is not None:
+                    self._record_success(_usage_from_object(usage))
+                choices = getattr(event, "choices", []) or []
+                if not choices:
+                    continue
+                token = choices[0].delta.content or ""
+                if not token:
+                    continue
+                chunks.append(token)
+                on_token(token)
+            content = "".join(chunks)
+            if not content:
+                self._record_failure("Model returned an empty streamed response.")
+                raise RuntimeError("Model returned an empty streamed response.")
+            if not self._usage_records or self._usage_records[-1].ok is not True:
+                self._record_success({})
+            return content
+
+        return self._call_with_credit_retry(_make_request)
 
     def drain_usage_records(self) -> list[ModelUsageRecord]:
         records = self._usage_records
         self._usage_records = []
         return records
+
+    def _call_with_credit_retry(self, make_request: Callable[[int], T]) -> T:
+        current_tokens = self.max_tokens
+        max_retries = 3
+        min_viable_tokens = 64
+
+        for attempt in range(max_retries + 1):
+            try:
+                return make_request(current_tokens)
+            except openai.APIStatusError as exc:
+                if exc.status_code != 402:
+                    raise
+                
+                affordable = _parse_affordable_tokens(str(exc))
+                if affordable is not None:
+                    current_tokens = affordable
+                else:
+                    current_tokens = current_tokens // 2
+                
+                if current_tokens < min_viable_tokens:
+                    raise InsufficientCreditsError(
+                        f"Insufficient credits: the provider cannot afford even "
+                        f"{min_viable_tokens} output tokens. "
+                        f"Visit https://openrouter.ai/settings/credits to add credits."
+                    ) from exc
+                
+                self._record_failure(f"402 Payment Required (retrying with max_tokens={current_tokens})")
+
+        raise InsufficientCreditsError("Exhausted credit retries.")
 
     def _record_success(self, usage: dict[str, int | None]) -> None:
         self._usage_records.append(
@@ -303,6 +345,13 @@ def _usage_from_object(usage: Any) -> dict[str, int | None]:
         "completion_tokens": getattr(usage, "completion_tokens", None),
         "total_tokens": getattr(usage, "total_tokens", None),
     }
+
+
+def _parse_affordable_tokens(error_message: str) -> int | None:
+    match = re.search(r"can only afford (\d+)", error_message)
+    if match:
+        return int(match.group(1))
+    return None
 
 
 OpenAIChatClient = OpenAICompatibleChatClient
