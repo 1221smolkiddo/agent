@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import os
-import sys
-import textwrap
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from rich.console import Console
 from rich.panel import Panel

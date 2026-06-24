@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
-from typing import Any
 
 from rich.console import Group
 from rich.live import Live

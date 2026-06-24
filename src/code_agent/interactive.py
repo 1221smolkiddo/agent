@@ -26,7 +26,6 @@ from .terminal_ui import (
     console,
     format_prompt_footer,
     format_prompt_header,
-    print_agent_banner,
     print_error_card,
     print_key_values,
     print_panel,
