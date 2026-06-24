@@ -85,6 +85,10 @@ This document summarizes the current state of Agent47 for collaborators.
 - Guard against false completion after unverified file deletion claims.
 - Operation status labels such as `THINKING`, `STREAMING`, `READING`, `EDITING`, `SEARCHING`, `TESTING`, `BUILDING`, `RECOVERING`, and `DONE`.
 - Planner status labels such as `PLANNING updating task plan`.
+- Optional reviewer pass that post-reviews successful workspace mutations before finalizing, with structured JSON decisions, fail-open semantics, and bounded model usage tracking.
+- Reviewer pass is enabled by default in factory-created agents via `AGENT_REVIEWER_PASS=true`; scripted eval and test agents remain unaffected.
+- Reviewer decisions are auditable in run history, surfaced in work reports, and included in structured payloads.
+- Configurable `AGENT_REVIEWER_MODEL` lets the reviewer use a dedicated model separate from the primary agent.
 - Centered interactive startup banner with optional terminal colors for panels, prompts, and status labels.
 - Stop controls with `Ctrl+C`, `/stop`, and `/exit`.
 
@@ -135,6 +139,7 @@ Inside `agent47`:
 - Web search is limited to public HTTP/HTTPS targets and filters local/private-network URLs.
 - Tool outputs redact common key/value secrets, bearer tokens, and OpenAI-style secret keys.
 - The agent tracks mutation attempts, verifies them against disk state, and rejects final answers that claim unverified, blocked, skipped, or failed file changes succeeded.
+- Reviewer pass uses fail-open semantics: if the reviewer model fails or returns malformed output, the primary agent's result is not blocked.
 
 ## Collaboration Work Completed
 
@@ -181,6 +186,7 @@ Inside `agent47`:
 - Operation status label formatting.
 - Durable planner action validation, metadata storage, resume summaries, work report sections, and status formatting.
 - Casual greeting handling.
+- Reviewer pass parsing, message construction, run execution, fail-open error handling, and CodingAgent integration.
 
 ## What Still Needs Work
 

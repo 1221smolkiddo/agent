@@ -12,6 +12,7 @@ from pydantic import TypeAdapter, ValidationError
 from .models import ChatMessage, ModelClient
 from .patches import git_style_unified_diff
 from .prompts import system_prompt
+from .reviewer import ReviewerPassResult, run_reviewer_pass
 from .schema import (
     AgentAction,
     DependencyGraphAction,
@@ -46,6 +47,7 @@ class AgentRunResult:
     context_records: list[dict[str, Any]] = field(default_factory=list)
     model_usage_records: list[dict[str, Any]] = field(default_factory=list)
     plan_updates: list[dict[str, Any]] = field(default_factory=list)
+    review_records: list[dict[str, Any]] = field(default_factory=list)
     failed_actions: list[dict[str, Any]] = field(default_factory=list)
     denied_actions: list[dict[str, Any]] = field(default_factory=list)
     blocked: bool = False
@@ -63,6 +65,7 @@ class CodingAgent:
         storage: AgentStorage,
         reporter: StatusReporter | None = None,
         stream_model: bool = True,
+        reviewer_client: ModelClient | None = None,
     ) -> None:
         self.cwd = cwd
         self.dry_run = dry_run
@@ -73,6 +76,7 @@ class CodingAgent:
         self.storage = storage
         self.reporter = reporter
         self.stream_model = stream_model
+        self.reviewer_client = reviewer_client
 
     def run(self, task: str) -> str:
         return self.run_detailed(task).message
@@ -90,6 +94,7 @@ class CodingAgent:
         context_records: list[dict[str, Any]] = []
         model_usage_records: list[dict[str, Any]] = []
         plan_updates: list[dict[str, Any]] = []
+        review_records: list[dict[str, Any]] = []
         mutation_records: list[dict[str, Any]] = []
         failed_actions: list[dict[str, Any]] = []
         denied_actions: list[dict[str, Any]] = []
@@ -136,6 +141,7 @@ class CodingAgent:
                         context_records=context_records,
                         model_usage_records=model_usage_records,
                         plan_updates=plan_updates,
+                        review_records=review_records,
                         failed_actions=failed_actions,
                         denied_actions=denied_actions,
                         blocked=True,
@@ -275,6 +281,7 @@ class CodingAgent:
                                 context_records=context_records,
                                 model_usage_records=model_usage_records,
                                 plan_updates=plan_updates,
+                                review_records=review_records,
                                 failed_actions=failed_actions,
                                 denied_actions=denied_actions,
                                 blocked=True,
@@ -301,6 +308,45 @@ class CodingAgent:
                     messages.append({"role": "assistant", "content": action.model_dump_json()})
                     messages.append({"role": "user", "content": json.dumps(payload)})
                     continue
+                review_rejection = self._review_final_answer(
+                    run_id=run_id,
+                    task=clean_task,
+                    final_message=action.message,
+                    step=step,
+                    changed_paths=self._successful_mutation_paths(mutation_records),
+                    mutation_records=mutation_records,
+                    command_records=command_records,
+                    verification_results=verification_results,
+                    model_usage_records=model_usage_records,
+                    review_records=review_records,
+                )
+                if review_rejection is not None:
+                    consecutive_failures += 1
+                    failed_actions.append(review_rejection)
+                    self._report_recovery("reviewer requested another action")
+                    if consecutive_failures >= self.max_failures:
+                        return self._finalize_run(
+                            AgentRunResult(
+                                message=self._failure_summary(consecutive_failures, review_rejection["output"]),
+                                run_id=run_id,
+                                task=task,
+                                clean_task=clean_task,
+                                changed_paths=self._successful_mutation_paths(mutation_records),
+                                mutation_records=mutation_records,
+                                command_records=command_records,
+                                verification_results=verification_results,
+                                context_records=context_records,
+                                model_usage_records=model_usage_records,
+                                plan_updates=plan_updates,
+                                review_records=review_records,
+                                failed_actions=failed_actions,
+                                denied_actions=denied_actions,
+                                blocked=True,
+                            )
+                        )
+                    messages.append({"role": "assistant", "content": action.model_dump_json()})
+                    messages.append({"role": "user", "content": json.dumps(review_rejection)})
+                    continue
                 self._report_done()
                 return self._finalize_run(
                     AgentRunResult(
@@ -315,6 +361,7 @@ class CodingAgent:
                         context_records=context_records,
                         model_usage_records=model_usage_records,
                         plan_updates=plan_updates,
+                        review_records=review_records,
                         failed_actions=failed_actions,
                         denied_actions=denied_actions,
                         blocked=bool(failed_actions and not mutation_records),
@@ -424,6 +471,7 @@ class CodingAgent:
                         context_records=context_records,
                         model_usage_records=model_usage_records,
                         plan_updates=plan_updates,
+                        review_records=review_records,
                         failed_actions=failed_actions,
                         denied_actions=denied_actions,
                         blocked=True,
@@ -456,6 +504,7 @@ class CodingAgent:
                 context_records=context_records,
                 model_usage_records=model_usage_records,
                 plan_updates=plan_updates,
+                review_records=review_records,
                 failed_actions=failed_actions,
                 denied_actions=denied_actions,
                 blocked=not goals_achieved,
@@ -467,6 +516,54 @@ class CodingAgent:
             payload = build_work_report_payload(result)
             self.storage.save_work_report(result.run_id, payload["body"], payload)
         return result
+
+    def _review_final_answer(
+        self,
+        *,
+        run_id: int,
+        task: str,
+        final_message: str,
+        step: int,
+        changed_paths: list[str],
+        mutation_records: list[dict[str, Any]],
+        command_records: list[dict[str, str | bool]],
+        verification_results: list[dict[str, Any]],
+        model_usage_records: list[dict[str, Any]],
+        review_records: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        if self.reviewer_client is None or not changed_paths:
+            return None
+        review = run_reviewer_pass(
+            self.reviewer_client,
+            task=task,
+            final_message=final_message,
+            changed_paths=changed_paths,
+            mutation_records=mutation_records,
+            command_records=[dict(item) for item in command_records],
+            verification_results=verification_results,
+        )
+        self._drain_model_usage(run_id, model_usage_records, client=self.reviewer_client)
+        record = {
+            "type": "reviewer_pass",
+            "step": step,
+            **review.as_record(),
+        }
+        review_records.append(record)
+        self.storage.add_step(run_id, "tool", record)
+        if review.ok:
+            return None
+        return {
+            "type": "tool_result",
+            "step": step,
+            "kind": "reviewer_rejected_final",
+            "ok": False,
+            "output": self._review_rejection_output(review),
+            "reviewer_pass": record,
+            "recovery_instruction": (
+                "The reviewer found a concrete issue. Take the required action, rerun focused "
+                "verification if code changes, and only then finalize."
+            ),
+        }
 
     def _parse_action(self, raw: str) -> tuple[AgentAction | None, str | None]:
         try:
@@ -518,14 +615,25 @@ class CodingAgent:
         self,
         run_id: int,
         model_usage_records: list[dict[str, Any]],
+        *,
+        client: ModelClient | None = None,
     ) -> None:
-        drain = getattr(self.model_client, "drain_usage_records", None)
+        drain = getattr(client or self.model_client, "drain_usage_records", None)
         if drain is None:
             return
         for record in drain():
             payload = record.as_dict()
             model_usage_records.append(payload)
             self.storage.add_model_usage(run_id, payload)
+
+    @staticmethod
+    def _review_rejection_output(review: ReviewerPassResult) -> str:
+        lines = [review.summary or "Reviewer requested more work before finalizing."]
+        if review.issues:
+            lines.append("Issues: " + "; ".join(review.issues))
+        if review.required_actions:
+            lines.append("Required actions: " + "; ".join(review.required_actions))
+        return "\n".join(lines)
 
     def _report_model_stream_chunk(self, chunk: str) -> None:
         if self.reporter:

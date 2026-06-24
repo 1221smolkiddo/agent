@@ -38,6 +38,7 @@ def build_work_report_payload(result: AgentRunResult) -> dict[str, Any]:
         "model_usage": _model_usage_items(result),
         "commands_executed": _command_items(result),
         "validation_status": _validation_items(result),
+        "reviewer_pass": _reviewer_items(result),
         "modified_files": result.changed_paths,
         "change_summary": _change_items(result),
         "diff_review": _diff_review_lines(result),
@@ -98,6 +99,9 @@ def _meaningful_sections(result: AgentRunResult) -> list[tuple[str, str]]:
     validation = _validation_summary(result)
     if validation:
         sections.append(("Validation", validation))
+    reviewer = _reviewer_summary(result)
+    if reviewer:
+        sections.append(("Reviewer", reviewer))
     blockers = _latest_plan_list(result.plan_updates, "blockers")
     if blockers:
         sections.append(("Blockers", _list_or_empty(blockers)))
@@ -238,6 +242,30 @@ def _validation_items(result: AgentRunResult) -> list[dict[str, str]]:
                 "detail": _verification_detail(item),
             }
         )
+    return items
+
+
+def _reviewer_summary(result: AgentRunResult) -> str:
+    items = _reviewer_items(result)
+    return "\n".join(
+        f"- {item['decision']}: {item['summary']}{item['detail']}" for item in items
+    )
+
+
+def _reviewer_items(result: AgentRunResult) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    for record in result.review_records:
+        decision = "approved" if record.get("ok") is True else "rejected"
+        summary = _single_line(str(record.get("summary", "<no summary>")), max_chars=200)
+        issues = record.get("issues", [])
+        required_actions = record.get("required_actions", [])
+        detail_parts: list[str] = []
+        if issues:
+            detail_parts.append("issues: " + "; ".join(str(i) for i in issues))
+        if required_actions:
+            detail_parts.append("actions: " + "; ".join(str(a) for a in required_actions))
+        detail = " (" + ", ".join(detail_parts) + ")" if detail_parts else ""
+        items.append({"decision": decision, "summary": summary, "detail": detail})
     return items
 
 

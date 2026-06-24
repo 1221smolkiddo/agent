@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     agent_max_failures: int = 3
     agent_db_path: Path = Path(".code-agent/agent.db")
     agent_stream: bool = True
+    agent_reviewer_pass: bool = True
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

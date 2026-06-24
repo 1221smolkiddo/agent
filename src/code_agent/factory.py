@@ -6,7 +6,7 @@ from collections.abc import Callable
 from .agent import CodingAgent
 from .config import Settings
 from .model_profiles import resolve_model_profile
-from .models import ModelProviderConfig, create_fallback_client
+from .models import ModelClient, ModelProviderConfig, create_fallback_client, create_openai_compatible_client
 from .storage import AgentStorage
 from .status import StatusReporter
 from .tools import ToolRegistry
@@ -23,6 +23,7 @@ def create_agent(
     reporter: StatusReporter | None = None,
     stream_model: bool | None = None,
     profile: str | None = None,
+    reviewer_client: ModelClient | None = None,
 ) -> CodingAgent:
     workspace = cwd.resolve()
     selected_profile = resolve_model_profile(
@@ -43,6 +44,21 @@ def create_agent(
     )
     client = create_fallback_client(provider, selected_profile, settings.fallback_model_list)
     storage = AgentStorage(settings.agent_db_path)
+
+    # Build reviewer client when the reviewer pass is enabled and no explicit
+    # client was supplied (e.g. by tests). The reviewer uses its own profile
+    # with a lower temperature and review-focused purpose, but shares the
+    # same provider configuration.
+    resolved_reviewer = reviewer_client
+    if resolved_reviewer is None and settings.agent_reviewer_pass:
+        reviewer_profile = resolve_model_profile(
+            "reviewer",
+            default_model=model or settings.agent_model,
+            max_tokens=settings.agent_max_tokens,
+            reviewer_model=None if model else settings.agent_reviewer_model,
+        )
+        resolved_reviewer = create_openai_compatible_client(provider, reviewer_profile)
+
     return CodingAgent(
         cwd=workspace,
         dry_run=dry_run,
@@ -57,4 +73,5 @@ def create_agent(
         storage=storage,
         reporter=reporter,
         stream_model=settings.agent_stream if stream_model is None else stream_model,
+        reviewer_client=resolved_reviewer,
     )
