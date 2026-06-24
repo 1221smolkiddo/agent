@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -649,9 +650,12 @@ def verification_failed(purpose: str) -> FixtureValidator:
 
 def pytest_passes_now() -> FixtureValidator:
     def validate(workspace: Path, _agent: CodingAgent, _result: AgentRunResult) -> tuple[bool, str]:
+        for cache_dir in workspace.rglob("__pycache__"):
+            shutil.rmtree(cache_dir, ignore_errors=True)
         completed = subprocess.run(
             [sys.executable, "-m", "pytest"],
             cwd=workspace,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
             text=True,
             capture_output=True,
             timeout=60,
