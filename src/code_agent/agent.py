@@ -27,6 +27,7 @@ from .storage import AgentStorage
 from .status import StatusReporter, analyze_workspace
 from .tools import ToolRegistry
 from .verification import select_verification_commands
+from .verification_diagnostics import diagnose_verification_failure
 from .work_report import build_work_report_payload, should_show_work_report
 
 ACTION_ADAPTER = TypeAdapter(AgentAction)
@@ -41,7 +42,7 @@ class AgentRunResult:
     changed_paths: list[str] = field(default_factory=list)
     mutation_records: list[dict[str, Any]] = field(default_factory=list)
     command_records: list[dict[str, str | bool]] = field(default_factory=list)
-    verification_results: list[dict[str, str | bool]] = field(default_factory=list)
+    verification_results: list[dict[str, Any]] = field(default_factory=list)
     context_records: list[dict[str, Any]] = field(default_factory=list)
     model_usage_records: list[dict[str, Any]] = field(default_factory=list)
     plan_updates: list[dict[str, Any]] = field(default_factory=list)
@@ -84,7 +85,7 @@ class CodingAgent:
         previous_tool_failed = False
         previous_failure_allows_final = False
         blocked_mutation_failure = False
-        verification_results: list[dict[str, str | bool]] = []
+        verification_results: list[dict[str, Any]] = []
         command_records: list[dict[str, str | bool]] = []
         context_records: list[dict[str, Any]] = []
         model_usage_records: list[dict[str, Any]] = []
@@ -389,9 +390,11 @@ class CodingAgent:
                         consecutive_failures += 1
                         previous_tool_failed = True
                         previous_failure_allows_final = False
+                        detail = self._diagnostic_recovery_detail(automatic_results)
                         tool_payload["recovery_instruction"] = (
-                            "Automatic verification failed. Inspect the failing output, patch the issue, "
-                            "and rerun focused verification before finalizing."
+                            "Automatic verification failed. "
+                            f"{detail} "
+                            "Patch the issue and rerun focused verification before finalizing."
                         )
                     else:
                         tool_payload["verification_instruction"] = (
@@ -987,7 +990,7 @@ class CodingAgent:
     @staticmethod
     def _final_verification_claim_rejection(
         message: str,
-        verification_results: list[dict[str, str | bool]],
+        verification_results: list[dict[str, Any]],
     ) -> str | None:
         if not verification_results or not CodingAgent._final_claims_verification_success(message):
             return None
@@ -1014,19 +1017,23 @@ class CodingAgent:
     @staticmethod
     def _verification_result_from_action(
         action: AgentAction, result: ToolResult
-    ) -> dict[str, str | bool] | None:
+    ) -> dict[str, Any] | None:
         if action.type != "run_shell":
             return None
         command = getattr(action, "command", "")
         purpose = CodingAgent._verification_purpose(command)
         if purpose is None:
             return None
-        return {
+        item: dict[str, Any] = {
             "purpose": purpose,
             "command": command,
             "ok": result.ok,
             "status": "passed" if result.ok else "failed",
         }
+        diagnostics = CodingAgent._verification_diagnostics(command, result)
+        if diagnostics:
+            item["diagnostics"] = diagnostics
+        return item
 
     @staticmethod
     def _verification_purpose(command: str) -> str | None:
@@ -1111,14 +1118,14 @@ class CodingAgent:
         run_id: int,
         step: int,
         changed_paths: list[str],
-    ) -> list[dict[str, str | bool]]:
+    ) -> list[dict[str, Any]]:
         commands, reason = select_verification_commands(self.cwd, changed_paths)
-        results: list[dict[str, str | bool]] = []
+        results: list[dict[str, Any]] = []
         for command in commands:
             action = RunShellAction(type="run_shell", command=command.command)
             self._report_action(action)
             result = self._run_tool(action)
-            item: dict[str, str | bool] = {
+            item: dict[str, Any] = {
                 "purpose": command.purpose,
                 "command": command.command,
                 "ok": result.ok,
@@ -1127,6 +1134,9 @@ class CodingAgent:
                 "output": result.output,
                 "automatic": True,
             }
+            diagnostics = self._verification_diagnostics(command.command, result)
+            if diagnostics:
+                item["diagnostics"] = diagnostics
             results.append(item)
             self.storage.add_step(
                 run_id,
@@ -1142,8 +1152,24 @@ class CodingAgent:
         return results
 
     @staticmethod
+    def _verification_diagnostics(command: str, result: ToolResult) -> dict[str, object] | None:
+        if result.ok:
+            return None
+        return diagnose_verification_failure(command, result.output)
+
+    @staticmethod
+    def _diagnostic_recovery_detail(verification_results: list[dict[str, Any]]) -> str:
+        for item in verification_results:
+            diagnostics = item.get("diagnostics")
+            if isinstance(diagnostics, dict):
+                summary = diagnostics.get("summary")
+                if isinstance(summary, str) and summary:
+                    return summary
+        return "Inspect the failing output."
+
+    @staticmethod
     def _with_verification_summary(
-        message: str, verification_results: list[dict[str, str | bool]]
+        message: str, verification_results: list[dict[str, Any]]
     ) -> str:
         if not verification_results:
             return message

@@ -35,6 +35,7 @@ def test_builtin_fixture_eval_cases_cover_coding_behaviors() -> None:
         "recover_after_failed_read",
         "recover_after_failed_verification",
         "multi_file_import_fix",
+        "diagnose_pytest_failure_context",
         "denied_delete_no_success_claim",
         "delete_file",
         "apply_patch_create_file",
@@ -50,9 +51,9 @@ def test_run_builtin_evals_passes() -> None:
     result = run_builtin_evals()
 
     assert result.ok
-    assert result.passed == 21
+    assert result.passed == 22
     assert result.failed == 0
-    assert "Agent47 local evals: 21 passed, 0 failed" in result.format()
+    assert "Agent47 local evals: 22 passed, 0 failed" in result.format()
     assert "fixture/fix_test" in result.format()
 
 
@@ -78,7 +79,7 @@ def test_cli_evals_command_runs_builtin_evals() -> None:
     result = runner.invoke(app, ["evals"])
 
     assert result.exit_code == 0, result.output
-    assert "Agent47 local evals: 21 passed, 0 failed" in result.output
+    assert "Agent47 local evals: 22 passed, 0 failed" in result.output
     assert "fixture/create_file" in result.output
 
 

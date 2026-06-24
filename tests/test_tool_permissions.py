@@ -9,6 +9,7 @@ from code_agent.schema import (
     RankContextAction,
     ReadFileAction,
     RepoMapAction,
+    RunShellAction,
     SearchAction,
     WebSearchAction,
     WriteFileAction,
@@ -134,6 +135,34 @@ def test_delete_file_with_permission_succeeds(tmp_path: Path) -> None:
     assert result.ok
     assert "Deleted notes.md." in result.output
     assert not (tmp_path / "notes.md").exists()
+
+
+def test_pytest_shell_command_clears_bytecode_cache_and_disables_new_bytecode(
+    tmp_path: Path, monkeypatch
+) -> None:
+    cache_dir = tmp_path / "__pycache__"
+    cache_dir.mkdir()
+    (cache_dir / "app.cpython-312.pyc").write_bytes(b"stale")
+    captured_env: dict[str, str] = {}
+
+    def fake_run(*_args, **kwargs):
+        captured_env.update(kwargs.get("env", {}))
+        return tools_module.subprocess.CompletedProcess(
+            args=kwargs.get("args", "python -m pytest"),
+            returncode=0,
+            stdout="passed",
+            stderr="",
+        )
+
+    monkeypatch.setattr(tools_module.subprocess, "run", fake_run)
+    tools = ToolRegistry(workspace=tmp_path, dry_run=False, approval_callback=lambda _a, _d: True)
+
+    result = tools.run(RunShellAction(type="run_shell", command="python -m pytest"))
+
+    assert result.ok
+    assert result.output == "passed"
+    assert not cache_dir.exists()
+    assert captured_env["PYTHONDONTWRITEBYTECODE"] == "1"
 
 
 def test_permission_detail_truncates_large_preview() -> None:

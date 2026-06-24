@@ -682,22 +682,31 @@ testpaths = ["tests"]
                 self.calls += 1
                 self.commands.append(action.command)
                 ok = len(self.commands) > 1
-                return ToolResult(ok=ok, output="passed" if ok else "failed tests")
+                failed_output = (
+                    "=========================== short test summary info ===========================\n"
+                    "FAILED tests/test_app.py::test_greeting - assert 'hello' == 'hi'\n"
+                    "E       assert 'hello' == 'hi'\n"
+                )
+                return ToolResult(ok=ok, output="passed" if ok else failed_output)
             return super().run(action)
 
     tools = FailingVerificationTools()
     agent = make_agent(tmp_path, model, tools)
 
-    result = agent.run("update and verify a Python file")
+    result = agent.run_detailed("update and verify a Python file")
 
-    assert result == (
+    assert result.message == (
         "fixed src/app.py\n"
         "Verification outcomes:\n"
         "- test `uv run pytest`: failed.\n"
         "- test `uv run pytest`: passed."
     )
     assert tools.commands == ["uv run pytest", "uv run pytest"]
+    first_diagnostics = result.verification_results[0]["diagnostics"]
+    assert first_diagnostics["failed_tests"] == ["tests/test_app.py::test_greeting"]
+    assert first_diagnostics["summary"] == "tests/test_app.py::test_greeting failed: assert 'hello' == 'hi'"
     assert "Automatic verification failed" in model.messages_seen[1][-1]["content"]
+    assert "tests/test_app.py::test_greeting failed" in model.messages_seen[1][-1]["content"]
 
 
 def test_agent_appends_verification_outcomes_to_final_answer(tmp_path: Path) -> None:

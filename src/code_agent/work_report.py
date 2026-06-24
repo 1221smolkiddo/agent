@@ -223,7 +223,7 @@ def _model_usage_items(result: AgentRunResult) -> list[dict[str, str]]:
 def _validation_summary(result: AgentRunResult) -> str:
     items = _validation_items(result)
     return "\n".join(
-        f"- {item['purpose']} `{item['command']}`: {item['status']}" for item in items
+        f"- {item['purpose']} `{item['command']}`: {item['status']}{item['detail']}" for item in items
     )
 
 
@@ -235,9 +235,18 @@ def _validation_items(result: AgentRunResult) -> list[dict[str, str]]:
                 "purpose": str(item.get("purpose", "check")),
                 "command": str(item.get("command", "<unknown>")),
                 "status": str(item.get("status", "passed" if item.get("ok") else "failed")),
+                "detail": _verification_detail(item),
             }
         )
     return items
+
+
+def _verification_detail(item: dict[str, Any]) -> str:
+    diagnostics = item.get("diagnostics")
+    if not isinstance(diagnostics, dict):
+        return ""
+    summary = _single_line(str(diagnostics.get("summary", "")), max_chars=160)
+    return f" - {summary}" if summary else ""
 
 
 def _change_summary(result: AgentRunResult) -> str:

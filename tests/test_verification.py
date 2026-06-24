@@ -7,6 +7,10 @@ from code_agent.verification import (
     select_verification_commands,
     suggest_verification_commands,
 )
+from code_agent.verification_diagnostics import (
+    diagnose_pytest_failure,
+    diagnose_verification_failure,
+)
 
 
 def test_detect_verification_commands_for_python_project(tmp_path: Path) -> None:
@@ -178,3 +182,33 @@ def test_suggest_verification_tool_returns_focused_commands(tmp_path: Path) -> N
     assert "- lint: npm run lint (package.json)" in result.output
     assert "- test: npm run test (package.json)" in result.output
     assert "- build: npm run build (package.json)" in result.output
+
+
+def test_diagnose_pytest_failure_extracts_compact_failure_context() -> None:
+    output = """
+================================== FAILURES ===================================
+________________________________ test_multiply ________________________________
+
+    def test_multiply():
+>       assert multiply(3, 4) == 12
+E       assert -1 == 12
+E        +  where -1 = multiply(3, 4)
+
+tests/test_mathlib.py:4: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_mathlib.py::test_multiply - assert -1 == 12
+""".strip()
+
+    diagnostics = diagnose_pytest_failure(output)
+
+    assert diagnostics.runner == "pytest"
+    assert diagnostics.failed_tests == ["tests/test_mathlib.py::test_multiply"]
+    assert diagnostics.failed_files == ["tests/test_mathlib.py"]
+    assert diagnostics.assertions == ["assert -1 == 12"]
+    assert diagnostics.suggested_focus == ["tests/test_mathlib.py"]
+    assert diagnostics.summary == "tests/test_mathlib.py::test_multiply failed: assert -1 == 12"
+
+
+def test_diagnose_verification_failure_only_handles_known_runners() -> None:
+    assert diagnose_verification_failure("python -m pytest", "FAILED tests/test_app.py::test_app") is not None
+    assert diagnose_verification_failure("npm run build", "build failed") is None

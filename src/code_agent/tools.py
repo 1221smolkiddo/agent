@@ -6,6 +6,7 @@ import html.parser
 import inspect
 import os
 import re
+import shutil
 import subprocess
 import urllib.parse
 import urllib.request
@@ -299,6 +300,8 @@ class ToolRegistry:
         if not self._approve("run_shell", approval_detail):
             return ToolResult(ok=False, output="Permission denied for run_shell.")
         try:
+            if self._is_python_test_command(command):
+                self._clear_python_bytecode_cache()
             completed = subprocess.run(
                 command,
                 cwd=self.workspace,
@@ -307,7 +310,7 @@ class ToolRegistry:
                 capture_output=True,
                 timeout=policy.timeout_seconds,
                 check=False,
-                env=self._safe_shell_env(),
+                env=self._safe_shell_env(python_no_bytecode=self._is_python_test_command(command)),
             )
         except subprocess.TimeoutExpired as exc:
             output = "\n".join(
@@ -569,14 +572,25 @@ class ToolRegistry:
         return any(part in IGNORED_NAMES for part in relative.parts)
 
     @staticmethod
-    def _safe_shell_env() -> dict[str, str]:
+    def _safe_shell_env(*, python_no_bytecode: bool = False) -> dict[str, str]:
         env: dict[str, str] = {}
         for key, value in os.environ.items():
             upper = key.upper()
             if upper in SAFE_ENV_KEYS:
                 env[key] = value
         env["AGENT47_SANDBOXED_SHELL"] = "1"
+        if python_no_bytecode:
+            env["PYTHONDONTWRITEBYTECODE"] = "1"
         return env
+
+    @staticmethod
+    def _is_python_test_command(command: str) -> bool:
+        lowered = command.lower()
+        return "pytest" in lowered
+
+    def _clear_python_bytecode_cache(self) -> None:
+        for cache_dir in self.workspace.rglob("__pycache__"):
+            shutil.rmtree(cache_dir, ignore_errors=True)
 
     @staticmethod
     def _coerce_process_output(value: str | bytes) -> str:
