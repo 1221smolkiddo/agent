@@ -13,106 +13,97 @@ from code_agent.schema import (
     UpdatePlanAction,
     WebSearchAction,
 )
-from code_agent.status import format_action_status, format_shell_status
+from code_agent.status import _semantic_stage
 from code_agent.interactive import is_casual_greeting, task_with_transcript
 
 
-def test_format_action_status_for_editing() -> None:
-    status = format_action_status(
+def test_semantic_stage_for_editing() -> None:
+    stage, detail = _semantic_stage(
         EditFileAction(type="edit_file", path="src/app.py", find="old", replace="new")
     )
-
-    assert status == "EDITING src/app.py"
-
-
-def test_format_action_status_for_apply_patch() -> None:
-    status = format_action_status(ApplyPatchAction(type="apply_patch", patch="diff"))
-
-    assert status == "EDITING applying patch"
+    assert stage == "Editing Files"
+    assert "src/app.py" in detail
 
 
-def test_format_action_status_for_delete_file() -> None:
-    status = format_action_status(DeleteFileAction(type="delete_file", path="hello_world.py"))
-
-    assert status == "EDITING deleting hello_world.py"
-
-
-def test_format_action_status_for_project_search() -> None:
-    status = format_action_status(SearchAction(type="search", query="TODO"))
-
-    assert status == "SEARCHING project for TODO"
+def test_semantic_stage_for_apply_patch() -> None:
+    stage, detail = _semantic_stage(ApplyPatchAction(type="apply_patch", patch="diff"))
+    assert stage == "Editing Files"
 
 
-def test_format_action_status_for_web_search() -> None:
-    status = format_action_status(WebSearchAction(type="web_search", query="OpenRouter docs"))
-
-    assert status == "SEARCHING WEB for OpenRouter docs"
-
-
-def test_format_action_status_for_detect_verification() -> None:
-    status = format_action_status(DetectVerificationAction(type="detect_verification"))
-
-    assert status == "CHECKING project verification commands"
+def test_semantic_stage_for_delete_file() -> None:
+    stage, detail = _semantic_stage(DeleteFileAction(type="delete_file", path="hello_world.py"))
+    assert stage == "Editing Files"
+    assert "hello_world.py" in detail
 
 
-def test_format_action_status_for_suggest_verification() -> None:
-    status = format_action_status(
+def test_semantic_stage_for_project_search() -> None:
+    stage, detail = _semantic_stage(SearchAction(type="search", query="TODO"))
+    assert stage == "Inspecting Project"
+    assert "TODO" in detail
+
+
+def test_semantic_stage_for_web_search() -> None:
+    stage, detail = _semantic_stage(WebSearchAction(type="web_search", query="OpenRouter docs"))
+    assert stage == "Understanding Request"
+    assert "OpenRouter docs" in detail
+
+
+def test_semantic_stage_for_detect_verification() -> None:
+    stage, detail = _semantic_stage(DetectVerificationAction(type="detect_verification"))
+    assert stage == "Inspecting Project"
+
+
+def test_semantic_stage_for_suggest_verification() -> None:
+    stage, detail = _semantic_stage(
         SuggestVerificationAction(type="suggest_verification", changed_paths=["src/app.py"])
     )
+    assert stage == "Inspecting Project"
 
-    assert status == "CHECKING suggested verification"
 
-
-def test_format_action_status_for_update_plan() -> None:
-    status = format_action_status(
+def test_semantic_stage_for_update_plan() -> None:
+    stage, detail = _semantic_stage(
         UpdatePlanAction(
             type="update_plan",
             steps=[{"step": "Inspect docs", "status": "in_progress"}],
         )
     )
-
-    # Plan updates are suppressed from status line; plan panel handles display.
-    assert status is None
+    assert stage == "Planning Changes"
 
 
-def test_format_action_status_for_repo_map() -> None:
-    assert format_action_status(RepoMapAction(type="repo_map")) == "ANALYZING repository map"
+def test_semantic_stage_for_repo_map() -> None:
+    stage, detail = _semantic_stage(RepoMapAction(type="repo_map"))
+    assert stage == "Inspecting Project"
 
 
-def test_format_action_status_for_rank_context() -> None:
-    status = format_action_status(RankContextAction(type="rank_context", task="fix cli"))
-
-    assert status == "ANALYZING relevant context"
-
-
-def test_format_action_status_for_symbol_index() -> None:
-    status = format_action_status(SymbolIndexAction(type="symbol_index"))
-
-    assert status == "ANALYZING symbol index"
+def test_semantic_stage_for_rank_context() -> None:
+    stage, detail = _semantic_stage(RankContextAction(type="rank_context", task="fix cli"))
+    assert stage == "Inspecting Project"
 
 
-def test_format_action_status_for_dependency_graph() -> None:
-    status = format_action_status(DependencyGraphAction(type="dependency_graph"))
-
-    assert status == "ANALYZING dependency graph"
-
-
-def test_format_shell_status_for_install() -> None:
-    assert format_shell_status("uv add rich") == "INSTALLING packages with uv add rich"
+def test_semantic_stage_for_symbol_index() -> None:
+    stage, detail = _semantic_stage(SymbolIndexAction(type="symbol_index"))
+    assert stage == "Inspecting Project"
 
 
-def test_format_shell_status_for_build() -> None:
-    assert format_shell_status("npm run build") == "BUILDING with npm run build"
+def test_semantic_stage_for_dependency_graph() -> None:
+    stage, detail = _semantic_stage(DependencyGraphAction(type="dependency_graph"))
+    assert stage == "Inspecting Project"
 
 
-def test_format_shell_status_for_test() -> None:
-    assert format_shell_status("uv run pytest") == "TESTING with uv run pytest"
+def test_semantic_stage_for_build() -> None:
+    stage, detail = _semantic_stage(RunShellAction(type="run_shell", command="npm run build"))
+    assert stage == "Applying Fixes"
 
 
-def test_format_shell_status_for_generic_shell() -> None:
+def test_semantic_stage_for_test() -> None:
+    stage, detail = _semantic_stage(RunShellAction(type="run_shell", command="uv run pytest"))
+    assert stage == "Running Verification"
+
+
+def test_semantic_stage_for_generic_shell() -> None:
     action = RunShellAction(type="run_shell", command="git status")
-
-    assert format_action_status(action) == "RUNNING shell command git status"
+    stage, detail = _semantic_stage(action)
+    assert stage == "Applying Fixes"
 
 
 def test_is_casual_greeting() -> None:
@@ -126,7 +117,6 @@ def test_task_with_transcript_includes_recent_turns() -> None:
         "summarize your responses",
         [("hi", "hello"), ("explain recursion", "Recursion is a function calling itself.")],
     )
-
     assert "Recent interactive transcript for reference:" in task
     assert "Turn 1 user: hi" in task
     assert "Turn 2 Agent47: Recursion is a function calling itself." in task
@@ -142,7 +132,6 @@ def test_task_with_transcript_includes_context_for_normal_followup() -> None:
             )
         ],
     )
-
     assert task.startswith("the names are sm and sv")
     assert "Recent interactive transcript for reference:" in task
     assert "create a contributors file" in task

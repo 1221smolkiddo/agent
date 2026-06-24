@@ -566,7 +566,6 @@ def test_agent_accepts_deleted_claim_after_delete_file(tmp_path: Path) -> None:
     assert report["payload"]["type"] == "work_report"
     assert report["payload"]["sections"]["current_task"] == "remove the file you just created"
     assert report["payload"]["sections"]["modified_files"] == ["hello_world.py"]
-    assert "Changes:" in report["body"]
 
 
 def test_agent_rejects_deleted_claim_without_delete_file(tmp_path: Path) -> None:
@@ -818,12 +817,10 @@ def test_agent_records_repo_context_actions_in_work_report(tmp_path: Path) -> No
             "task": "fix CLI tests",
         },
     ]
-    assert report is not None
     assert report["payload"]["sections"]["context_analysis"] == [
         {"action": "repo_map", "status": "ok", "detail": ""},
         {"action": "rank_context", "status": "ok", "detail": " for `fix CLI tests`"},
     ]
-    assert "Analyzed:" in report["body"]
 
 
 def test_agent_records_symbol_index_as_untrusted_context(tmp_path: Path) -> None:

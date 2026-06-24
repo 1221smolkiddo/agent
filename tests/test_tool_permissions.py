@@ -96,9 +96,9 @@ def test_delete_file_requires_permission(tmp_path: Path) -> None:
 def test_auto_approval_modes_keep_subprocess_actions_manual() -> None:
     requested: list[str] = []
 
-    def approve(action: str, _detail: str) -> bool:
+    def approve(action: str, _detail: str) -> str:
         requested.append(action)
-        return action == "read_file"
+        return "a" if action == "read_file" else "n"
 
     policy = PermissionPolicy(approve, ApprovalMode.auto_read)
 

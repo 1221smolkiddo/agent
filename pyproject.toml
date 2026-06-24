@@ -27,6 +27,7 @@ dependencies = [
   "openai>=1.84.0",
   "pydantic-settings>=2.8.0",
   "python-dotenv>=1.0.1",
+  "rich>=15.0.0",
   "typer>=0.15.0",
 ]
 

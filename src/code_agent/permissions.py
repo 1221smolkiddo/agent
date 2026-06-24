@@ -3,7 +3,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from enum import Enum
 
-import typer
+from rich.panel import Panel
+from rich.text import Text
+from rich.prompt import Prompt
+
+from .terminal_ui import console
 
 MAX_PERMISSION_DETAIL_CHARS = 6000
 MAX_PERMISSION_DETAIL_LINES = 120
@@ -43,7 +47,7 @@ class PermissionPolicy:
 
     def __init__(
         self,
-        callback: Callable[[str, str], bool],
+        callback: Callable[[str, str], str],
         mode: ApprovalMode = ApprovalMode.per_action,
     ) -> None:
         self._callback = callback
@@ -60,26 +64,44 @@ class PermissionPolicy:
 
     def approve(self, action: str, detail: str) -> bool:
         if action in MANUAL_APPROVAL_ACTIONS:
-            return self._callback(action, detail)
+            response = self._callback(action, detail)
+            return response in {"y", "a"}  # Even if 'a', it only approves this action because it's high risk
+            
         if self._mode == ApprovalMode.auto_read and action in READ_ONLY_ACTIONS:
             return True
         if self._mode == ApprovalMode.approve_task and self._task_approved:
             return True
-        approved = self._callback(action, detail)
-        if approved and self._mode == ApprovalMode.approve_task:
+            
+        response = self._callback(action, detail)
+        if response == "a":
+            self._mode = ApprovalMode.approve_task
             self._task_approved = True
-        return approved
+            return True
+            
+        return response == "y"
 
     def reset_task(self) -> None:
         """Call between tasks to reset per-task approval state."""
         self._task_approved = False
 
 
-def confirm_permission(action: str, detail: str) -> bool:
-    typer.echo("")
-    typer.echo(f"Permission requested: {action}")
-    typer.echo(format_permission_detail(detail))
-    return typer.confirm("Allow this action?", default=False)
+def confirm_permission(action: str, detail: str) -> str:
+    text = Text()
+    text.append("Action:\n", style="muted")
+    text.append(f"{action}\n\n", style="bold")
+    
+    text.append("Command / Path:\n", style="muted")
+    text.append(f"{format_permission_detail(detail)}\n", style="cyan")
+    
+    console.print(Panel(text, title="[bold yellow]Permission Required[/bold yellow]", border_style="yellow"))
+    
+    response = Prompt.ask(
+        "\[y] Approve  \[n] Deny  \[a] Approve All For Task",
+        choices=["y", "n", "a"],
+        default="n",
+        show_choices=False,
+    )
+    return response
 
 
 def confirm_permission_with_policy(

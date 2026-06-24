@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, TextIO
 
 from .permissions import MANUAL_APPROVAL_ACTIONS
 from .schema import AgentAction
-from .status import format_action_status
+from .status import _semantic_stage
 from .work_report import build_work_report_payload, should_show_work_report
 
 if TYPE_CHECKING:
@@ -54,13 +54,13 @@ class JsonProtocolReporter:
 
     def action(self, action: AgentAction) -> None:
         self._consecutive_retries = 0
-        status = format_action_status(action)
-        if status is None:
+        stage, detail = _semantic_stage(action)
+        if stage is None:
             from .schema import UpdatePlanAction as UP
             if isinstance(action, UP):
                 self._has_plan = True
             return
-        label, _, detail = status.partition(" ")
+        label = stage
         self.emitter.emit(
             "action_started",
             action_type=action.type,

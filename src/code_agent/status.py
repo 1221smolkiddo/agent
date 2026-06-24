@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+from typing import Any
+
+from rich.console import Group
+from rich.live import Live
+from rich.spinner import Spinner
+from rich.text import Text
 
 from .schema import (
     AgentAction,
@@ -23,60 +30,82 @@ from .schema import (
     WebSearchAction,
     WriteFileAction,
 )
-from .terminal_ui import print_status_line, print_stream_end, print_stream_marker, print_stream_start
+from .terminal_ui import console
 
 
 class StatusReporter:
     def __init__(self) -> None:
-        self._stream_chars = 0
-        self._has_plan = False
         self._consecutive_retries = 0
+        self._current_label = ""
+        self._current_detail = ""
+        self._is_generating = False
+        self._live = Live(console=console, transient=False, refresh_per_second=10)
+        self._live.start()
+
+    def _update_spinner(self) -> None:
+        if not self._current_label and not self._is_generating:
+            self._live.update("")
+            return
+
+        group = Group()
+        
+        if self._current_label:
+            group.renderables.append(Spinner("dots", text=Text(self._current_label, style="cyan")))
+        
+        if self._is_generating:
+            group.renderables.append(Spinner("dots", text=Text("Generating...", style="blue")))
+            
+        self._live.update(group)
+
+    def _complete_current(self) -> None:
+        if self._current_detail:
+            console.print(f"[green]✓[/green] {self._current_detail}")
+        self._current_label = ""
+        self._current_detail = ""
 
     def thinking(self, step: int) -> None:
-        if self._has_plan:
-            print_status_line("PLANNING", f"step {step}")
-        else:
-            print_status_line("THINKING", f"step {step}")
+        # Suppress generic thinking
+        pass
 
     def action(self, action: AgentAction) -> None:
         self._consecutive_retries = 0
-        status = format_action_status(action)
-        if status is None:
-            # Suppressed action (e.g. internal plan updates)
-            if isinstance(action, UpdatePlanAction):
-                self._has_plan = True
-            return
-        label, _, detail = status.partition(" ")
-        print_status_line(label, detail)
-        if isinstance(action, UpdatePlanAction):
-            self._has_plan = True
+        
+        self._complete_current()
+        
+        stage, detail = _semantic_stage(action)
+        if stage:
+            self._current_label = stage
+            self._current_detail = detail
+            self._update_spinner()
 
     def recovery(self, detail: str) -> None:
         self._consecutive_retries += 1
-        # Only surface retries on 2nd+ consecutive failure
         if self._consecutive_retries >= 2:
-            print_status_line("RETRYING", friendly_retry_detail(detail))
+            self._complete_current()
+            console.print(f"[yellow]⚠[/yellow] {friendly_retry_detail(detail)}")
+            self._current_label = "Recovering"
+            self._update_spinner()
 
     def done(self) -> None:
-        # Issue #20: The response itself implies completion; suppress DONE line
-        pass
+        self._complete_current()
+        self._live.stop()
 
     def model_stream_start(self, step: int) -> None:
-        self._stream_chars = 0
-        print_stream_start(f"model response for step {step}")
+        self._is_generating = True
+        self._update_spinner()
 
     def model_stream_chunk(self, chunk: str) -> None:
-        self._stream_chars += len(chunk)
-        if self._stream_chars >= 120:
-            print_stream_marker()
-            self._stream_chars = 0
+        pass
 
     def model_stream_end(self) -> None:
-        print_stream_end()
+        self._is_generating = False
+        self._update_spinner()
 
     def workspace_analysis(self, summary: str) -> None:
-        """Report workspace discovery results."""
-        print_status_line("WORKSPACE", summary)
+        console.print(f"[bold cyan]WORKSPACE[/bold cyan]   {summary.splitlines()[0]}")
+        for line in summary.splitlines()[1:]:
+            console.print(line)
+        console.print()
 
     def mutation_preview(
         self,
@@ -84,115 +113,77 @@ class StatusReporter:
         modifies: list[str],
         deletes: list[str],
     ) -> None:
-        """Show file operation preview before execution."""
-        parts: list[str] = []
         if creates:
-            parts.append("create: " + ", ".join(creates))
+            console.print("[yellow]Will Create:[/yellow]")
+            for p in creates:
+                console.print(f"• {p}")
         if modifies:
-            parts.append("modify: " + ", ".join(modifies))
+            console.print("[yellow]Will Modify:[/yellow]")
+            for p in modifies:
+                console.print(f"• {p}")
         if deletes:
-            parts.append("delete: " + ", ".join(deletes))
-        if parts:
-            print_status_line("PREVIEW", "; ".join(parts))
+            console.print("[red]Will Delete:[/red]")
+            for p in deletes:
+                console.print(f"• {p}")
+        if creates or modifies or deletes:
+            console.print()
 
 
-def format_action_status(action: AgentAction) -> str | None:
-    if isinstance(action, ListFilesAction):
-        return f"READING listing {action.path or '.'}"
-    if isinstance(action, ReadFileAction):
-        return f"READING {action.path}"
-    if isinstance(action, WriteFileAction):
-        return f"EDITING writing {action.path}"
-    if isinstance(action, EditFileAction):
-        return f"EDITING {action.path}"
-    if isinstance(action, ApplyPatchAction):
-        return "EDITING applying patch"
-    if isinstance(action, DeleteFileAction):
-        return f"EDITING deleting {action.path}"
-    if isinstance(action, SearchAction):
-        return f"SEARCHING project for {action.query}"
-    if isinstance(action, WebSearchAction):
-        return f"SEARCHING WEB for {action.query}"
-    if isinstance(action, SummarizeCodeAction):
-        return f"ANALYZING code structure in {action.path}"
-    if isinstance(action, DetectVerificationAction):
-        return "CHECKING project verification commands"
-    if isinstance(action, SuggestVerificationAction):
-        return "CHECKING suggested verification"
-    if isinstance(action, InspectGitDiffAction):
-        return "READING git changes"
-    if isinstance(action, RepoMapAction):
-        return "ANALYZING repository map"
-    if isinstance(action, RankContextAction):
-        return "ANALYZING relevant context"
-    if isinstance(action, SymbolIndexAction):
-        return "ANALYZING symbol index"
-    if isinstance(action, DependencyGraphAction):
-        return "ANALYZING dependency graph"
+def _semantic_stage(action: AgentAction) -> tuple[str, str]:
     if isinstance(action, UpdatePlanAction):
-        # Issue #15: Suppress internal plan update status lines;
-        # the plan panel already surfaces plan state.
-        return None
+        return "Planning Changes", "Generated execution plan"
+    if isinstance(action, (WriteFileAction, EditFileAction, ApplyPatchAction)):
+        path = getattr(action, "path", "<file>")
+        return "Editing Files", f"Updated {path}"
+    if isinstance(action, DeleteFileAction):
+        return "Editing Files", f"Deleted {action.path}"
     if isinstance(action, RunShellAction):
-        return format_shell_status(action.command)
-    return f"WORKING {action.type}"
-
-
-def format_shell_status(command: str) -> str:
-    normalized = command.lower()
-    if any(token in normalized for token in [" install", "pip install", "uv add", "npm i", "npm install"]):
-        return f"INSTALLING packages with {command}"
-    if any(token in normalized for token in [" test", "pytest", "npm run test", "cargo test"]):
-        return f"TESTING with {command}"
-    if any(token in normalized for token in [" build", "npm run build", "cargo build", "uv build"]):
-        return f"BUILDING with {command}"
-    if any(token in normalized for token in [" lint", "ruff check", "eslint"]):
-        return f"CHECKING with {command}"
-    return f"RUNNING shell command {command}"
+        if any(w in action.command.lower() for w in ["test", "pytest", "lint", "check"]):
+            return "Running Verification", f"Ran {action.command}"
+        return "Applying Fixes", f"Ran {action.command}"
+    if isinstance(action, (ReadFileAction, ListFilesAction, SummarizeCodeAction, RepoMapAction, RankContextAction, SymbolIndexAction, DependencyGraphAction, SearchAction, InspectGitDiffAction)):
+        path = getattr(action, "path", "") or getattr(action, "query", "") or "project"
+        return "Inspecting Project", f"Inspected {path}"
+    if isinstance(action, WebSearchAction):
+        return "Understanding Request", f"Searched web for {action.query}"
+    if isinstance(action, (DetectVerificationAction, SuggestVerificationAction)):
+        return "Inspecting Project", "Checked verification commands"
+    return "Working", f"Executed {action.type}"
 
 
 def friendly_retry_detail(detail: str) -> str:
     lowered = detail.lower()
     if "invalid model action" in lowered or "parse" in lowered:
-        return "retrying with a cleaner response"
+        return "Retrying with a cleaner response"
     if "non-workspace" in lowered or "blocked workspace tool" in lowered:
-        return "switching back to chat mode"
+        return "Switching back to chat mode"
     if "tool failed" in lowered:
-        return "trying another approach"
+        return "Trying another approach"
     if "model failed" in lowered:
-        return "model call failed"
-    return "trying again"
+        return "Model call failed"
+    return "Trying again"
 
 
 def analyze_workspace(cwd: Path) -> str:
-    """Detect workspace type and produce a human-readable summary."""
     indicators: list[str] = []
 
     if (cwd / "package.json").exists():
-        indicators.append("Node.js project (package.json)")
-    if (cwd / "pyproject.toml").exists():
-        indicators.append("Python project (pyproject.toml)")
-    if (cwd / "Cargo.toml").exists():
-        indicators.append("Rust project (Cargo.toml)")
-    if (cwd / "go.mod").exists():
-        indicators.append("Go project (go.mod)")
-    if (cwd / "Makefile").exists():
-        indicators.append("Makefile found")
-    if (cwd / "Dockerfile").exists():
-        indicators.append("Docker project")
-
-    # Detect key directories
-    key_dirs = ["src", "tests", "test", "lib", "docs", "scripts"]
-    found_dirs = [d for d in key_dirs if (cwd / d).is_dir()]
-    if found_dirs:
-        indicators.append("dirs: " + ", ".join(found_dirs))
-
-    if not indicators:
-        # Check if empty
-        children = list(cwd.iterdir())
-        non_hidden = [c for c in children if not c.name.startswith(".")]
-        if not non_hidden:
-            return "Empty directory"
-        return f"Directory with {len(non_hidden)} items"
-
-    return "; ".join(indicators)
+        indicators.append("Node.js project")
+    elif (cwd / "pyproject.toml").exists():
+        indicators.append("Python Package")
+    elif (cwd / "Cargo.toml").exists():
+        indicators.append("Rust Workspace")
+    elif (cwd / "go.mod").exists():
+        indicators.append("Go project")
+    else:
+        indicators.append("Project")
+        
+    detected = []
+    for f in ["package.json", "pyproject.toml", "Cargo.toml", "src", "tests", "test", "docs"]:
+        if (cwd / f).exists():
+            detected.append(f"{f}/" if (cwd / f).is_dir() else f)
+            
+    summary = indicators[0]
+    if detected:
+        summary += "\nDetected:\n" + "\n".join(f"• {d}" for d in detected)
+    return summary

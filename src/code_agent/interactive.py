@@ -23,11 +23,14 @@ from .storage import AgentStorage
 from .status import StatusReporter, analyze_workspace
 from .terminal_ui import (
     colorize_panel,
+    console,
     format_prompt_footer,
     format_prompt_header,
     print_agent_banner,
+    print_error_card,
     print_key_values,
     print_panel,
+    print_startup_header,
     print_work_report_panel,
 )
 from .work_report import should_show_work_report
@@ -54,17 +57,12 @@ def main() -> None:
     session_state = SessionState()
     permission_policy = PermissionPolicy(confirm_permission, ApprovalMode.auto_read)
 
-    print_agent_banner()
+    print_startup_header(cwd, "write-enabled" if not dry_run else "dry-run", model or settings.agent_model)
     workspace_summary = analyze_workspace(cwd)
-    print_key_values(
-        "Status",
-        [
-            ("Workspace", f"{cwd} ({workspace_summary})"),
-            ("Mode", "dry-run" if dry_run else "write-enabled"),
-            ("Model", model or settings.agent_model),
-            ("Approvals", permission_policy.mode.value),
-        ],
-    )
+    console.print(f"[bold cyan]WORKSPACE[/bold cyan]   {workspace_summary.splitlines()[0]}")
+    for line in workspace_summary.splitlines()[1:]:
+        console.print(line)
+    console.print()
 
     while True:
         try:
@@ -132,6 +130,16 @@ def main() -> None:
             except KeyboardInterrupt:
                 print_panel("System", "STOPPED by user")
                 return
+            except Exception as exc:
+                print_error_card(
+                    "Error",
+                    [
+                        ("Model request could not be completed.", ""),
+                        ("Reason:", str(exc)),
+                    ],
+                    ["Check your credentials", "Use /debug for more info"]
+                )
+                continue
             print_panel("Agent47", response)
             transcript.append((user_input, response))
             transcript = transcript[-8:]
@@ -155,6 +163,17 @@ def main() -> None:
         except KeyboardInterrupt:
             print_panel("System", "STOPPED by user")
             return
+        except Exception as exc:
+            import traceback
+            session_state._last_exc = traceback.format_exc()
+            print_error_card(
+                "Error",
+                [
+                    ("Task execution could not be completed.", ""),
+                    ("Reason:", str(exc)),
+                ],
+                ["Use /debug to see the full stack trace", "Check model configurations"]
+            )
 
 
 class CommandState:
@@ -343,8 +362,22 @@ def handle_command(
         if permission_policy:
             permission_policy.set_mode(ApprovalMode.per_action)
         print_panel("Mode", "Every action requires individual approval.")
+    elif command == "/clear":
+        console.clear()
+    elif command == "/debug":
+        exc_trace = getattr(session_state, "_last_exc", None)
+        if exc_trace:
+            print_panel("Debug Trace", exc_trace, style="red")
+        else:
+            print_panel("Debug", "No recent errors to show.")
+    elif command == "/report":
+        print_panel("Report", "Detailed reports are saved to history. Use /history-show <id> to view.")
+    elif command == "/files":
+        print_panel("Files", f"Current workspace: {cwd}")
+    elif command == "/models":
+        print_panel("Models", f"Current model: {model or settings.agent_model}")
     else:
-        print_panel("Unknown Command", f"{command}\nUse /help to see available commands.")
+        print_panel("Unknown Command", f"{command}\nUse /help to see available commands.", style="red")
 
     return CommandState(
         base_cwd,
@@ -384,6 +417,11 @@ Commands:
   /history-show <id> Show saved steps for one run.
   /resume <id> [msg] Resume a saved run with optional extra instruction.
   /revert <id>       Revert verified file changes from a prior run.
+  /clear             Clear the terminal screen.
+  /report            Information about detailed reports.
+  /files             Show current workspace path.
+  /models            Show current model.
+  /debug             Show stack trace of the last error.
   /stop              Quit.
   /exit              Quit.
 """.strip()

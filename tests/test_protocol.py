@@ -54,7 +54,7 @@ def test_json_protocol_reporter_emits_action_events() -> None:
     ]
     assert events[0]["label"] == "THINKING"
     assert events[1]["action_type"] == "read_file"
-    assert events[1]["label"] == "READING"
+    assert events[1]["label"] == "Inspecting Project"
     assert events[1]["action"] == {"type": "read_file", "path": "README.md"}
 
 

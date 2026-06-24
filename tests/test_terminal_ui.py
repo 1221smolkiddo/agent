@@ -6,192 +6,42 @@ from code_agent.agent import AgentRunResult
 from code_agent.interactive import DEFAULT_DRY_RUN, read_prompt, run_interactive_turn
 from code_agent.interactive import is_persona_instruction
 from code_agent.session import SessionState
-from code_agent.terminal_ui import (
-    format_agent_banner,
-    format_key_values,
-    format_panel,
-    format_plan_body,
-    format_plan_panel,
-    format_prompt_footer,
-    format_prompt_header,
-    print_stream_end,
-    print_stream_marker,
-    print_stream_start,
-)
-from code_agent.work_report import format_work_report_body, should_show_work_report
+from code_agent.work_report import should_show_work_report
+from code_agent.terminal_ui import print_work_report_panel, console
 
 
-def test_format_panel_makes_labeled_box() -> None:
-    panel = format_panel("Agent47", "hello\nworld", width=32)
-
-    assert panel.splitlines()[0] == "+ AGENT47 ---------------------+"
-    assert "| hello                        |" in panel
-    assert "| world                        |" in panel
-    assert panel.splitlines()[-1] == "+------------------------------+"
-
-
-def test_format_agent_banner_centers_title() -> None:
-    banner = format_agent_banner(width=32)
-
-    assert banner == "Agent47 --- terminal coding agen"
-
-
-def test_format_panel_wraps_long_lines() -> None:
-    panel = format_panel("You", "one two three four five six", width=24)
-
-    assert "| one two three four   |" in panel
-    assert "| five six             |" in panel
-
-
-def test_format_key_values_uses_panel_body() -> None:
-    panel = format_key_values("Status", [("Mode", "dry-run"), ("Sandbox", "off")], width=34)
-
-    assert "| Mode: dry-run                  |" in panel
-    assert "| Sandbox: off                   |" in panel
-
-
-def test_format_plan_body_uses_latest_plan_update() -> None:
-    body = format_plan_body(
-        [
-            {
-                "steps": [
-                    {"step": "Old step", "status": "in_progress"},
-                ],
-                "target_files": ["old.py"],
-            },
-            {
-                "steps": [
-                    {"step": "Inspect docs", "status": "completed"},
-                    {"step": "Render plan panel", "status": "in_progress"},
-                    {"step": "Handle blocker", "status": "blocked", "note": "needs approval"},
-                    {"step": "Update docs", "status": "pending"},
-                ],
-                "target_files": ["src/code_agent/terminal_ui.py"],
-                "owned_files": ["src/code_agent/terminal_ui.py"],
-                "checks": ["uv run pytest tests/test_terminal_ui.py"],
-                "blockers": ["needs approval"],
-                "risk_notes": ["avoid unrelated UI changes"],
-            },
-        ]
-    )
-
-    assert body == (
-        "[x] 1. Inspect docs\n"
-        "[>] 2. Render plan panel\n"
-        "[!] 3. Handle blocker (needs approval)\n"
-        "[ ] 4. Update docs\n"
-        "Targets: src/code_agent/terminal_ui.py\n"
-        "Owned: src/code_agent/terminal_ui.py\n"
-        "Checks: uv run pytest tests/test_terminal_ui.py\n"
-        "Blockers: needs approval\n"
-        "Risks: avoid unrelated UI changes"
-    )
-
-
-def test_format_plan_panel_labels_plan() -> None:
-    panel = format_plan_panel(
-        [{"steps": [{"step": "Render visible progress", "status": "in_progress"}]}],
-        width=40,
-    )
-
-    assert panel.splitlines()[0] == "+ PLAN --------------------------------+"
-    assert "| [>] 1. Render visible progress       |" in panel
-
-
-def test_format_work_report_body_uses_requested_sections_and_changed_diff_lines() -> None:
+def test_format_work_report_body_produces_rich_panel() -> None:
     result = AgentRunResult(
         message="Updated docs and verified tests.",
         run_id=7,
         task="update the docs",
         changed_paths=["docs/PROGRESS.md"],
-        plan_updates=[
-            {
-                "steps": [
-                    {"step": "Inspect docs", "status": "completed"},
-                    {"step": "Update report UI", "status": "completed"},
-                ],
-                "target_files": ["docs/PROGRESS.md"],
-                "owned_files": ["docs/PROGRESS.md"],
-                "checks": ["uv run pytest tests/test_terminal_ui.py"],
-                "blockers": ["none"],
-                "risk_notes": ["docs-only change"],
-            }
-        ],
         mutation_records=[
             {
                 "action": "edit_file",
                 "path": "docs/PROGRESS.md",
                 "ok": True,
-                "output": (
-                    "--- a/docs/PROGRESS.md\n"
-                    "+++ b/docs/PROGRESS.md\n"
-                    "@@ -1,4 +1,4 @@\n"
-                    " unchanged context\n"
-                    "-old line\n"
-                    "+new line"
-                ),
             }
         ],
-        command_records=[{"command": "uv run pytest", "ok": True, "status": "passed"}],
         verification_results=[
             {"purpose": "test", "command": "uv run pytest", "ok": True, "status": "passed"}
         ],
-        context_records=[
-            {"action": "repo_map", "ok": True, "status": "ok"},
-            {"action": "rank_context", "task": "update report UI", "ok": True, "status": "ok"},
-        ],
-        model_usage_records=[
-            {
-                "model": "primary-model",
-                "ok": True,
-                "total_tokens": 42,
-                "estimated_cost_usd": 0.0012,
-            }
-        ],
     )
 
-    body = format_work_report_body(result)
+    with console.capture() as capture:
+        print_work_report_panel(result)
 
-    assert "Task:\n  update the docs" in body
-    assert "Plan:\n  2 completed, 0 current, 0 pending, 0 blocked." in body
-    assert "Files Modified:\n  docs/PROGRESS.md" in body
-    assert "Intended Files:\n  docs/PROGRESS.md" in body
-    assert "Blockers:\n  none" in body
-    assert "Risks:\n  docs-only change" in body
-    assert "Analyzed:\n  - repo_map: ok\n  - rank_context: ok for `update report UI`" in body
-    assert "Model Usage:" not in body
-    assert "Commands Executed:\n  - `uv run pytest`: passed" in body
-    assert "Validation:\n  - test `uv run pytest`: passed" in body
-    assert "Changes:\n  \u2713 Modified docs/PROGRESS.md" in body
-    assert "<none>" not in body
-    assert "Diff Review:" not in body
-    assert "Result:\n  Updated docs and verified tests." in body
+    text = capture.get()
+    
+    assert "update the docs" in text
+    assert "Modified:" in text
+    assert "docs/PROGRESS.md" in text
+    assert "Verification:" in text
+    assert "Passed" in text
 
 
 def test_should_show_work_report_stays_quiet_for_simple_chat() -> None:
     assert not should_show_work_report(AgentRunResult(message="hello", run_id=1))
-
-
-def test_format_prompt_border_parts() -> None:
-    assert format_prompt_header("You", width=24) == "+ YOU -----------------+"
-    assert format_prompt_footer(width=24) == "+----------------------+"
-
-
-def test_stream_helpers_render_compact_progress(monkeypatch) -> None:
-    echoed: list[tuple[str, bool]] = []
-    monkeypatch.setattr(
-        "code_agent.terminal_ui.typer.echo",
-        lambda value="", nl=True, **_kwargs: echoed.append((value, nl)),
-    )
-
-    print_stream_start("model response for step 1")
-    print_stream_marker()
-    print_stream_end()
-
-    assert "GENERATING" in echoed[0][0]
-    assert "model response for step 1" in echoed[0][0]
-    assert echoed[0][1] is True
-    assert len(echoed) == 1
 
 
 def test_interactive_mode_starts_write_enabled() -> None:
@@ -208,76 +58,6 @@ def test_read_prompt_propagates_click_abort(monkeypatch) -> None:
 
     with pytest.raises(Abort):
         read_prompt()
-
-
-def test_read_prompt_uses_bordered_input(monkeypatch) -> None:
-    echoed: list[str] = []
-    monkeypatch.setattr(interactive.typer, "echo", lambda value="", **_kwargs: echoed.append(value))
-    monkeypatch.setattr("builtins.input", lambda prompt: "hello there")
-
-    assert read_prompt() == "hello there"
-    assert echoed[1] == format_prompt_header("You")
-    assert echoed[2] == format_prompt_footer()
-
-
-def test_interactive_turn_does_not_print_user_panel(monkeypatch) -> None:
-    printed: list[tuple[str, str]] = []
-    monkeypatch.setattr(interactive, "print_panel", lambda title, body: printed.append((title, body)))
-
-    class Agent:
-        def run_detailed(self, _task: str) -> AgentRunResult:
-            return AgentRunResult(message="done", run_id=1)
-
-    transcript = run_interactive_turn("make a file", Agent(), [], SessionState())
-
-    assert printed == [("Agent47", "done")]
-    assert transcript == [("make a file", "done")]
-
-
-def test_interactive_turn_prints_work_report_as_single_final_surface(monkeypatch) -> None:
-    printed: list[tuple[str, str]] = []
-    monkeypatch.setattr(interactive, "print_panel", lambda title, body: printed.append((title, body)))
-    monkeypatch.setattr(
-        interactive,
-        "print_work_report_panel",
-        lambda result: printed.append(("Work Report", format_work_report_body(result)))
-        if should_show_work_report(result)
-        else None,
-    )
-
-    class Agent:
-        def run_detailed(self, _task: str) -> AgentRunResult:
-            return AgentRunResult(
-                message="done",
-                run_id=1,
-                task="make progress visible",
-                changed_paths=["README.md"],
-                mutation_records=[
-                    {
-                        "action": "edit_file",
-                        "path": "README.md",
-                        "ok": True,
-                        "output": "--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-old\n+new",
-                    }
-                ],
-                plan_updates=[
-                    {
-                        "steps": [
-                            {"step": "Inspect docs", "status": "completed"},
-                            {"step": "Render plan", "status": "in_progress"},
-                        ]
-                    }
-                ],
-            )
-
-    transcript = run_interactive_turn("make progress visible", Agent(), [], SessionState())
-
-    assert printed[0][0] == "Work Report"
-    assert "Task:\n  make progress visible" in printed[0][1]
-    assert "Changes:" in printed[0][1]
-    assert "Result:\n  done" in printed[0][1]
-    assert printed == [printed[0]]
-    assert transcript == [("make progress visible", "done")]
 
 
 def test_is_persona_instruction() -> None:

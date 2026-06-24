@@ -50,6 +50,7 @@ dependencies = [
     { name = "openai" },
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
+    { name = "rich" },
     { name = "typer" },
 ]
 
@@ -69,6 +70,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.8.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.0" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
+    { name = "rich", specifier = ">=15.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.11.0" },
     { name = "tree-sitter", marker = "extra == 'parsing'", specifier = ">=0.24.0" },
     { name = "tree-sitter-language-pack", marker = "extra == 'parsing'", specifier = ">=0.7.0" },
