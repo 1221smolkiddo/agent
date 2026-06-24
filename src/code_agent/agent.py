@@ -235,7 +235,13 @@ class CodingAgent:
 
             if isinstance(action, FinalAction):
                 final_claim_rejection = self._final_claim_rejection(action.message, mutation_records)
+                verification_claim_rejection = self._final_verification_claim_rejection(
+                    action.message,
+                    verification_results,
+                )
                 if final_claim_rejection or (
+                    verification_claim_rejection
+                    or
                     blocked_mutation_failure and self._final_claims_mutation_success(action.message)
                 ):
                     consecutive_failures += 1
@@ -243,6 +249,7 @@ class CodingAgent:
                         step=step,
                         kind="false_completion",
                         output=final_claim_rejection
+                        or verification_claim_rejection
                         or (
                             "A file write/edit/patch was blocked, but the final answer claimed the change was completed. "
                             "Do not claim success. Explain that the file was not created/edited/patched and tell the user "
@@ -252,7 +259,7 @@ class CodingAgent:
                     )
                     self.storage.add_step(run_id, "tool", payload)
                     failed_actions.append(payload)
-                    self._report_recovery("blocked false completion after failed write/edit/patch")
+                    self._report_recovery("blocked false completion claim")
                     if consecutive_failures >= self.max_failures:
                         return self._finalize_run(
                             AgentRunResult(
@@ -978,6 +985,33 @@ class CodingAgent:
         )
 
     @staticmethod
+    def _final_verification_claim_rejection(
+        message: str,
+        verification_results: list[dict[str, str | bool]],
+    ) -> str | None:
+        if not verification_results or not CodingAgent._final_claims_verification_success(message):
+            return None
+
+        latest_by_purpose: dict[str, dict[str, str | bool]] = {}
+        for item in verification_results:
+            latest_by_purpose[str(item.get("purpose", "verification"))] = item
+
+        failed = [item for item in latest_by_purpose.values() if item.get("ok") is False]
+        if not failed:
+            return None
+
+        failed_checks = ", ".join(
+            f"{item.get('purpose', 'verification')} `{item.get('command', '<unknown>')}`"
+            for item in failed
+        )
+        return (
+            "The final answer claimed verification passed, but the latest recorded verification "
+            f"failed for: {failed_checks}. Correct the final answer honestly, mention the failed "
+            "check, and do not say tests, builds, lint, or type checks pass until a later "
+            "verification result records success."
+        )
+
+    @staticmethod
     def _verification_result_from_action(
         action: AgentAction, result: ToolResult
     ) -> dict[str, str | bool] | None:
@@ -1162,6 +1196,42 @@ class CodingAgent:
             "the file",
         ]
         return any(term in lowered for term in success_terms)
+
+    @staticmethod
+    def _final_claims_verification_success(message: str) -> bool:
+        lowered = message.lower()
+        honest_failure_terms = [
+            "could not verify",
+            "couldn't verify",
+            "cannot verify",
+            "can't verify",
+            "did not verify",
+            "didn't verify",
+            "not verified",
+            "not run",
+            "not passing",
+            "does not pass",
+            "do not pass",
+            "failed",
+            "failing",
+            "failure",
+            "blocked",
+        ]
+        if any(term in lowered for term in honest_failure_terms):
+            return False
+
+        success_patterns = [
+            r"\btests?\s+(are\s+)?(pass|passed|passes|passing)\b",
+            r"\bpytest\s+(is\s+)?(pass|passed|passes|passing)\b",
+            r"\bverification\s+(is\s+)?(pass|passed|passes|passing)\b",
+            r"\bchecks?\s+(are\s+)?(pass|passed|passes|passing)\b",
+            r"\blint\s+(is\s+)?(pass|passed|passes|passing)\b",
+            r"\btype\s*checks?\s+(are\s+)?(pass|passed|passes|passing)\b",
+            r"\bbuilds?\s+(are\s+)?(pass|passed|passes|passing|succeeded|successful)\b",
+            r"\ball\s+(tests?|checks?)\s+(are\s+)?(pass|passed|passes|passing)\b",
+            r"\beverything\s+(is\s+)?(pass|passed|passes|passing)\b",
+        ]
+        return any(re.search(pattern, lowered) for pattern in success_patterns)
 
     def _report_thinking(self, step: int) -> None:
         if self.reporter:

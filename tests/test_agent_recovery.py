@@ -722,6 +722,36 @@ def test_agent_appends_verification_outcomes_to_final_answer(tmp_path: Path) -> 
     assert '"purpose": "test"' in tool_payload
 
 
+def test_agent_rejects_final_claim_that_failed_verification_passed(tmp_path: Path) -> None:
+    model = FakeModel(
+        [
+            '{"type":"run_shell","command":"uv run pytest"}',
+            '{"type":"final","message":"Implemented the change and tests pass."}',
+            '{"type":"list_files","path":"."}',
+            '{"type":"final","message":"Implemented the change, but pytest is still failing."}',
+        ]
+    )
+
+    class FailingVerificationTools(RecoveringTools):
+        def run(self, action: AgentAction) -> ToolResult:
+            if isinstance(action, RunShellAction):
+                self.calls += 1
+                return ToolResult(ok=False, output="pytest failed")
+            return super().run(action)
+
+    tools = FailingVerificationTools()
+    agent = make_agent(tmp_path, model, tools)
+
+    result = agent.run("run tests")
+
+    assert result == (
+        "Implemented the change, but pytest is still failing.\n"
+        "Verification outcomes:\n"
+        "- test `uv run pytest`: failed."
+    )
+    assert "claimed verification passed" in model.messages_seen[2][-1]["content"]
+
+
 def test_agent_blocks_workspace_tools_for_non_workspace_question(tmp_path: Path) -> None:
     model = FakeModel(
         [
