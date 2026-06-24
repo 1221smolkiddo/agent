@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol
 
-import typer
+import typer  # noqa: F401
 from typer._click.exceptions import Abort
 
 from .config import Settings
@@ -22,10 +22,7 @@ from .session import SessionState
 from .storage import AgentStorage
 from .status import StatusReporter, analyze_workspace
 from .terminal_ui import (
-    colorize_panel,
     console,
-    format_prompt_footer,
-    format_prompt_header,
     print_error_card,
     print_key_values,
     print_panel,
