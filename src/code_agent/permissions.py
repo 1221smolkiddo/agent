@@ -86,17 +86,35 @@ class PermissionPolicy:
 
 
 def confirm_permission(action: str, detail: str) -> str:
+    action_labels = {
+        "run_shell": "Run shell command",
+        "delete_file": "Delete file",
+        "apply_patch": "Apply patch",
+        "inspect_git_diff": "Inspect git diff",
+        "search": "Search workspace",
+        "list_files": "List files",
+        "read_file": "Read file",
+        "summarize_code": "Summarize code",
+        "repo_map": "Inspect repository map",
+        "rank_context": "Rank context",
+        "symbol_index": "Index symbols",
+        "dependency_graph": "Analyze dependency graph",
+        "detect_verification": "Detect verification commands",
+        "suggest_verification": "Suggest verification",
+    }
+    label = action_labels.get(action, action.replace("_", " ").title())
+
     text = Text()
     text.append("Action:\n", style="muted")
-    text.append(f"{action}\n\n", style="bold")
-    
+    text.append(f"{label}\n\n", style="bold")
+
     text.append("Command / Path:\n", style="muted")
     text.append(f"{format_permission_detail(detail)}\n", style="cyan")
-    
+
     console.print(Panel(text, title="[bold yellow]Permission Required[/bold yellow]", border_style="yellow"))
-    
+
     response = Prompt.ask(
-        "\[y] Approve  \[n] Deny  \[a] Approve All For Task",
+        "[y] Approve  [n] Deny  [a] Approve All For Task",
         choices=["y", "n", "a"],
         default="n",
         show_choices=False,

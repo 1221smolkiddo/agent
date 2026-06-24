@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
@@ -41,17 +42,17 @@ def print_startup_header(cwd: str, mode: str, model: str) -> None:
     """Compact professional header."""
     header = Text()
     header.append("Agent47", style="bold cyan")
-    header.append(" • ", style="muted")
+    header.append(" │ ", style="muted")
+    header.append("Workspace: ", style="muted")
+    header.append(Path(cwd).name, style="cyan")
+    header.append(" │ ", style="muted")
+    header.append("Model: ", style="muted")
     header.append(model, style="cyan")
-    header.append(" • ", style="muted")
-    header.append(mode, style="yellow" if mode != "write-enabled" else "green")
-    
-    workspace = Text()
-    workspace.append("Workspace: ", style="muted")
-    workspace.append(str(cwd), style="default")
+    header.append(" │ ", style="muted")
+    header.append("Write Enabled" if mode == "write-enabled" else "Dry Run", style="green" if mode == "write-enabled" else "yellow")
     
     console.print(header)
-    console.print(workspace)
+    console.print(Text(f"Path: {cwd}", style="muted"))
     console.print()
 
 def print_key_values(title: str, rows: Iterable[tuple[str, object]]) -> None:

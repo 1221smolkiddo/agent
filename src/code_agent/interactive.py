@@ -369,12 +369,24 @@ def handle_command(
             print_panel("Debug Trace", exc_trace, style="red")
         else:
             print_panel("Debug", "No recent errors to show.")
+    elif command == "/diff":
+        print_panel("Diff", "Detailed diffs are available via /history-show <id> or sandbox diff.")
     elif command == "/report":
         print_panel("Report", "Detailed reports are saved to history. Use /history-show <id> to view.")
     elif command == "/files":
         print_panel("Files", f"Current workspace: {cwd}")
     elif command == "/models":
         print_panel("Models", f"Current model: {model or settings.agent_model}")
+    elif command == "/settings":
+        print_key_values(
+            "Settings",
+            [
+                ("Mode", "dry-run" if dry_run else "write-enabled"),
+                ("Approvals", permission_policy.mode.value if permission_policy else "per_action"),
+                ("Streaming", "on" if stream_model else "off"),
+                ("Sandbox", "on" if sandbox_enabled else "off"),
+            ],
+        )
     else:
         print_panel("Unknown Command", f"{command}\nUse /help to see available commands.", style="red")
 
@@ -414,12 +426,14 @@ Commands:
   /per-action        Require individual approval for every action.
   /history           Show recent saved agent runs.
   /history-show <id> Show saved steps for one run.
+  /diff             Show where to find detailed diff output.
   /resume <id> [msg] Resume a saved run with optional extra instruction.
   /revert <id>       Revert verified file changes from a prior run.
   /clear             Clear the terminal screen.
   /report            Information about detailed reports.
   /files             Show current workspace path.
   /models            Show current model.
+  /settings          Show current session settings.
   /debug             Show stack trace of the last error.
   /stop              Quit.
   /exit              Quit.

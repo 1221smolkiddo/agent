@@ -37,52 +37,71 @@ class StatusReporter:
         self._current_label = ""
         self._current_detail = ""
         self._is_generating = False
+        self._timeline: list[str] = []
         self._live = Live(console=console, transient=False, refresh_per_second=10)
         self._live.start()
 
-    def _update_spinner(self) -> None:
-        if not self._current_label and not self._is_generating:
-            self._live.update("")
-            return
+    def _render(self) -> Group:
+        lines = []
 
-        group = Group()
-        
-        if self._current_label:
-            group.renderables.append(Spinner("dots", text=Text(self._current_label, style="cyan")))
-        
-        if self._is_generating:
-            group.renderables.append(Spinner("dots", text=Text("Generating...", style="blue")))
-            
-        self._live.update(group)
+        if self._current_label or self._is_generating:
+            label = self._current_label or "Working"
+            detail = self._current_detail or ""
+            text = Text()
+            text.append(" ")
+            text.append(label, style="bold cyan")
+            if detail:
+                text.append(f" — {detail}", style="default")
+            spinner = Spinner("line", text=text, style="cyan", speed=0.1)
+            lines.append(spinner)
+        elif self._timeline:
+            lines.append(Text("Awaiting next action…", style="muted"))
+        else:
+            lines.append(Text("Ready for your task. Use /help for commands.", style="muted"))
+
+        if self._timeline:
+            timeline = Text()
+            for item in self._timeline[-6:]:
+                timeline.append("✓ ", style="green")
+                timeline.append(f"{item}\n")
+            lines.append(timeline)
+
+        return Group(*lines)
+
+    def _update(self) -> None:
+        self._live.update(self._render())
 
     def _complete_current(self) -> None:
         if self._current_detail:
-            console.print(f"[green]✓[/green] {self._current_detail}")
+            self._timeline.append(self._current_detail)
+            self._timeline = self._timeline[-6:]
         self._current_label = ""
         self._current_detail = ""
+        self._update()
 
     def thinking(self, step: int) -> None:
-        # Suppress generic thinking
-        pass
+        if self._current_label or self._timeline:
+            return
+        self._current_label = "Inspecting Project"
+        self._current_detail = "Gathering context"
+        self._update()
 
     def action(self, action: AgentAction) -> None:
         self._consecutive_retries = 0
-        
         self._complete_current()
-        
         stage, detail = _semantic_stage(action)
         if stage:
             self._current_label = stage
             self._current_detail = detail
-            self._update_spinner()
+            self._update()
 
     def recovery(self, detail: str) -> None:
         self._consecutive_retries += 1
         if self._consecutive_retries >= 2:
             self._complete_current()
-            console.print(f"[yellow]⚠[/yellow] {friendly_retry_detail(detail)}")
             self._current_label = "Recovering"
-            self._update_spinner()
+            self._current_detail = friendly_retry_detail(detail)
+            self._update()
 
     def done(self) -> None:
         self._complete_current()
@@ -90,14 +109,15 @@ class StatusReporter:
 
     def model_stream_start(self, step: int) -> None:
         self._is_generating = True
-        self._update_spinner()
+        self._current_label = "Generating output"
+        self._update()
 
     def model_stream_chunk(self, chunk: str) -> None:
         pass
 
     def model_stream_end(self) -> None:
         self._is_generating = False
-        self._update_spinner()
+        self._update()
 
     def workspace_analysis(self, summary: str) -> None:
         console.print(f"[bold cyan]WORKSPACE[/bold cyan]   {summary.splitlines()[0]}")
