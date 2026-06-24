@@ -32,6 +32,7 @@ from .terminal_ui import (
     print_startup_header,
     print_work_report_panel,
 )
+from rich.text import Text
 from .work_report import should_show_work_report
 
 DEFAULT_DRY_RUN = False
@@ -636,10 +637,8 @@ def is_persona_instruction(user_input: str) -> bool:
 
 
 def read_prompt() -> str:
-    typer.echo("")
-    typer.echo(colorize_panel(format_prompt_header("You"), "You"))
+    console.print(Text("You", style="bold green"), end=" ")
     value = input("| ").strip()
-    typer.echo(colorize_panel(format_prompt_footer(), "You"))
     return value
 
 

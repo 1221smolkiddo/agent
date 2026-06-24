@@ -111,7 +111,13 @@ def confirm_permission(action: str, detail: str) -> str:
     text.append("Command / Path:\n", style="muted")
     text.append(f"{format_permission_detail(detail)}\n", style="cyan")
 
-    console.print(Panel(text, title="[bold yellow]Permission Required[/bold yellow]", border_style="yellow"))
+    console.print(
+        Panel(
+            text,
+            title=Text("Permission Required", style="bold yellow"),
+            border_style="yellow",
+        )
+    )
 
     response = Prompt.ask(
         "[y] Approve  [n] Deny  [a] Approve All For Task",

@@ -52,7 +52,7 @@ class StatusReporter:
             text.append(label, style="bold cyan")
             if detail:
                 text.append(f" — {detail}", style="default")
-            spinner = Spinner("line", text=text, style="cyan", speed=0.1)
+            spinner = Spinner("dots", text=text, style="cyan", speed=0.1)
             lines.append(spinner)
         elif self._timeline:
             lines.append(Text("Awaiting next action…", style="muted"))
@@ -120,9 +120,9 @@ class StatusReporter:
         self._update()
 
     def workspace_analysis(self, summary: str) -> None:
-        console.print(f"[bold cyan]WORKSPACE[/bold cyan]   {summary.splitlines()[0]}")
+        console.print(Text("WORKSPACE", style="bold cyan") + Text("   ") + Text(summary.splitlines()[0], style="default"))
         for line in summary.splitlines()[1:]:
-            console.print(line)
+            console.print(Text(line, style="default"))
         console.print()
 
     def mutation_preview(
@@ -132,15 +132,15 @@ class StatusReporter:
         deletes: list[str],
     ) -> None:
         if creates:
-            console.print("[yellow]Will Create:[/yellow]")
+            console.print(Text("Will Create:", style="yellow"))
             for p in creates:
                 console.print(f"• {p}")
         if modifies:
-            console.print("[yellow]Will Modify:[/yellow]")
+            console.print(Text("Will Modify:", style="yellow"))
             for p in modifies:
                 console.print(f"• {p}")
         if deletes:
-            console.print("[red]Will Delete:[/red]")
+            console.print(Text("Will Delete:", style="red"))
             for p in deletes:
                 console.print(f"• {p}")
         if creates or modifies or deletes:
@@ -183,25 +183,32 @@ def friendly_retry_detail(detail: str) -> str:
 
 
 def analyze_workspace(cwd: Path) -> str:
-    indicators: list[str] = []
-
-    if (cwd / "package.json").exists():
-        indicators.append("Node.js project")
-    elif (cwd / "pyproject.toml").exists():
-        indicators.append("Python Package")
+    if (cwd / "next.config.js").exists() or (cwd / "next.config.mjs").exists():
+        project_type = "Next.js App"
+    elif (cwd / "package.json").exists():
+        if (cwd / "src" / "App.tsx").exists() or (cwd / "src" / "App.jsx").exists():
+            project_type = "React App"
+        elif (cwd / "src" / "main.ts").exists() or (cwd / "src" / "main.js").exists():
+            project_type = "Web App"
+        else:
+            project_type = "Node.js Project"
+    elif (cwd / "pyproject.toml").exists() or (cwd / "requirements.txt").exists() or (cwd / "setup.py").exists():
+        project_type = "Python Package"
     elif (cwd / "Cargo.toml").exists():
-        indicators.append("Rust Workspace")
+        project_type = "Rust Workspace"
     elif (cwd / "go.mod").exists():
-        indicators.append("Go project")
+        project_type = "Go Project"
+    elif (cwd / "index.html").exists():
+        project_type = "Static Website"
     else:
-        indicators.append("Project")
-        
+        project_type = "Project"
+
     detected = []
-    for f in ["package.json", "pyproject.toml", "Cargo.toml", "src", "tests", "test", "docs"]:
+    for f in ["package.json", "pyproject.toml", "Cargo.toml", "go.mod", "index.html", "src", "tests", "test", "docs", "README.md"]:
         if (cwd / f).exists():
             detected.append(f"{f}/" if (cwd / f).is_dir() else f)
-            
-    summary = indicators[0]
+
+    summary = project_type
     if detected:
         summary += "\nDetected:\n" + "\n".join(f"• {d}" for d in detected)
     return summary

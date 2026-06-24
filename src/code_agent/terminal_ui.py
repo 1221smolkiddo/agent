@@ -33,13 +33,26 @@ def should_color() -> bool:
         return True
     return console.is_terminal
 
+
+def _format_text(value: str, style: str = "default") -> Text:
+    return Text(value, style=style)
+
+
 def print_panel(title: str, body: str, *, style: str = "accent") -> None:
     if not body.strip():
         return
-    console.print(Panel(body, title=f"[bold]{title}[/bold]", title_align="left", border_style=style))
+    console.print(
+        Panel(
+            _format_text(body),
+            title=Text(title, style="bold"),
+            title_align="left",
+            border_style=style,
+            padding=(0, 1),
+        )
+    )
+
 
 def print_startup_header(cwd: str, mode: str, model: str) -> None:
-    """Compact professional header."""
     header = Text()
     header.append("Agent47", style="bold cyan")
     header.append(" │ ", style="muted")
@@ -50,9 +63,10 @@ def print_startup_header(cwd: str, mode: str, model: str) -> None:
     header.append(model, style="cyan")
     header.append(" │ ", style="muted")
     header.append("Write Enabled" if mode == "write-enabled" else "Dry Run", style="green" if mode == "write-enabled" else "yellow")
-    
+
     console.print(header)
     console.print(Text(f"Path: {cwd}", style="muted"))
+    console.print(Text("Type a task or /help", style="muted"))
     console.print()
 
 def print_key_values(title: str, rows: Iterable[tuple[str, object]]) -> None:
@@ -63,8 +77,17 @@ def print_key_values(title: str, rows: Iterable[tuple[str, object]]) -> None:
     text = Text()
     for key, value in rendered_rows:
         text.append(f"{key}: ", style="muted")
-        text.append(f"{value}\n", style="default")
-    console.print(Panel(text.rstrip(), title=f"[bold]{title}[/bold]", title_align="left", border_style="cyan"))
+        text.append(str(value), style="default")
+        text.append("\n")
+    console.print(
+        Panel(
+            text.rstrip(),
+            title=Text(title, style="bold"),
+            title_align="left",
+            border_style="cyan",
+            padding=(0, 1),
+        )
+    )
 
 def print_work_report_panel(result: AgentRunResult) -> None:
     if not should_show_work_report(result):
@@ -111,18 +134,23 @@ def print_work_report_panel(result: AgentRunResult) -> None:
         text.append("\n")
         
     if result.verification_results:
-        text.append("Verification:\n", style="bold")
+        text.append("Verification:\n", style="muted")
         all_passed = all(v.get("ok") for v in result.verification_results)
-        if all_passed:
-            text.append("✓ Passed\n\n", style="green")
-        else:
-            text.append("✗ Failed\n\n", style="red")
-            
+        text.append("✓ Passed\n" if all_passed else "✗ Failed\n", style="green" if all_passed else "red")
+        text.append("\n")
+
     if not modified_paths and not created_paths and not deleted_paths:
-        text.append(f"{_single_line(result.message, max_chars=900)}\n\n")
+        text.append(f"{_single_line(result.message, max_chars=900)}\n")
 
     text.rstrip()
-    console.print(Panel(text, title="[bold]Completion Summary[/bold]", border_style="blue"))
+    console.print(
+        Panel(
+            text,
+            title=Text("Completion Summary", style="bold"),
+            border_style="blue",
+            padding=(0, 1),
+        )
+    )
 
 def print_error_card(title: str, lines: list[tuple[str, str]], suggestions: list[str]) -> None:
     text = Text()
@@ -136,7 +164,14 @@ def print_error_card(title: str, lines: list[tuple[str, str]], suggestions: list
         for sug in suggestions:
             text.append(f"• {sug}\n", style="default")
             
-    console.print(Panel(text.rstrip(), title=f"[bold red]{title}[/bold red]", title_align="left", border_style="red"))
+    console.print(
+        Panel(
+            text.rstrip(),
+            title=Text(title, style="bold red"),
+            title_align="left",
+            border_style="red",
+        )
+    )
 
 def format_prompt_header(title: str) -> str:
     return f"[bold green]{title}[/bold green]"
