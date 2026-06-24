@@ -6,11 +6,9 @@ import textwrap
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
-from rich.console import Console, Group
+from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
-from rich.live import Live
-from rich.spinner import Spinner
 from rich.theme import Theme
 
 from .work_report import _clean_task_text, _single_line, _change_items_filtered, should_show_work_report

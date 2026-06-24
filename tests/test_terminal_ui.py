@@ -3,9 +3,8 @@ from typer._click.exceptions import Abort
 
 import code_agent.interactive as interactive
 from code_agent.agent import AgentRunResult
-from code_agent.interactive import DEFAULT_DRY_RUN, read_prompt, run_interactive_turn
+from code_agent.interactive import DEFAULT_DRY_RUN, read_prompt
 from code_agent.interactive import is_persona_instruction
-from code_agent.session import SessionState
 from code_agent.work_report import should_show_work_report
 from code_agent.terminal_ui import print_work_report_panel, console
 
