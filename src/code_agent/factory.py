@@ -6,6 +6,7 @@ from collections.abc import Callable
 from .agent import CodingAgent
 from .config import Settings
 from .model_profiles import resolve_model_profile
+from .model_presets import resolve_model_preset
 from .models import ModelClient, ModelProviderConfig, create_fallback_client, create_openai_compatible_client
 from .storage import AgentStorage
 from .status import StatusReporter
@@ -23,22 +24,27 @@ def create_agent(
     reporter: StatusReporter | None = None,
     stream_model: bool | None = None,
     profile: str | None = None,
+    provider: str | None = None,
+    preset: str | None = None,
     reviewer_client: ModelClient | None = None,
 ) -> CodingAgent:
     workspace = cwd.resolve()
+    selected_preset = resolve_model_preset(preset or settings.agent_model_preset)
+    selected_provider = provider or (selected_preset.provider if selected_preset else None)
+    default_model = model or (selected_preset.model if selected_preset else settings.agent_model)
     selected_profile = resolve_model_profile(
         profile or settings.agent_profile,
-        default_model=model or settings.agent_model,
+        default_model=default_model,
         max_tokens=settings.agent_max_tokens,
-        planner_model=None if model else settings.agent_planner_model,
-        coder_model=None if model else settings.agent_coder_model,
-        reviewer_model=None if model else settings.agent_reviewer_model,
-        fast_model=None if model else settings.agent_fast_model,
+        planner_model=None if model or selected_preset else settings.agent_planner_model,
+        coder_model=None if model or selected_preset else settings.agent_coder_model,
+        reviewer_model=None if model or selected_preset else settings.agent_reviewer_model,
+        fast_model=None if model or selected_preset else settings.agent_fast_model,
     )
     provider = ModelProviderConfig(
-        api_key=settings.model_api_key,
-        base_url=settings.model_base_url,
-        default_headers=settings.model_headers,
+        api_key=settings.model_api_key_for(selected_provider),
+        base_url=settings.model_base_url_for(selected_provider),
+        default_headers=settings.model_headers_for(selected_provider),
         input_cost_per_million=settings.agent_input_cost_per_million,
         output_cost_per_million=settings.agent_output_cost_per_million,
     )
@@ -53,9 +59,9 @@ def create_agent(
     if resolved_reviewer is None and settings.agent_reviewer_pass:
         reviewer_profile = resolve_model_profile(
             "reviewer",
-            default_model=model or settings.agent_model,
+            default_model=default_model,
             max_tokens=settings.agent_max_tokens,
-            reviewer_model=None if model else settings.agent_reviewer_model,
+            reviewer_model=None if model or selected_preset else settings.agent_reviewer_model,
         )
         resolved_reviewer = create_openai_compatible_client(provider, reviewer_profile)
 

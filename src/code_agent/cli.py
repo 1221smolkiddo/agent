@@ -11,6 +11,7 @@ from .debug_bundle import export_debug_bundle
 from .doctor import run_doctor
 from .factory import create_agent
 from .model_profiles import validate_profile_name
+from .model_presets import format_model_presets, resolve_model_preset
 from .permissions import confirm_permission
 from .protocol import (
     JsonEventEmitter,
@@ -53,10 +54,47 @@ def validate_profile_option(value: Optional[str]) -> Optional[str]:
         raise typer.BadParameter(str(exc)) from exc
 
 
+def validate_preset_option(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    try:
+        preset = resolve_model_preset(value)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    return preset.name if preset else None
+
+
+def validate_provider_option(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized in {"openrouter", "openai", "gemini", "deepseek"}:
+        return normalized
+    raise typer.BadParameter("Expected one of: openrouter, openai, gemini, deepseek.")
+
+
+@app.command("models")
+def models_command() -> None:
+    """List available model presets."""
+    typer.echo(format_model_presets())
+
+
 @app.command()
 def run(
     task: str = typer.Argument(..., help="The coding task for the agent."),
     cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    provider: Optional[str] = typer.Option(
+        None,
+        "--provider",
+        callback=validate_provider_option,
+        help="Provider override: openrouter, openai, gemini, or deepseek.",
+    ),
+    preset: Optional[str] = typer.Option(
+        None,
+        "--preset",
+        callback=validate_preset_option,
+        help="Model preset, such as qwen-coder, gemini-flash, gemini-pro, deepseek-flash, or deepseek-pro.",
+    ),
     model: Optional[str] = typer.Option(None, "--model", help="Model override."),
     profile: Optional[str] = typer.Option(
         None,
@@ -94,6 +132,8 @@ def run(
         reporter=StatusReporter(),
         stream_model=stream,
         profile=profile,
+        provider=provider,
+        preset=preset,
     )
     try:
         result = agent.run_detailed(task)
@@ -176,6 +216,18 @@ def sandbox_apply_command(
 def run_json(
     task: str = typer.Argument(..., help="The coding task for the agent."),
     cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    provider: Optional[str] = typer.Option(
+        None,
+        "--provider",
+        callback=validate_provider_option,
+        help="Provider override: openrouter, openai, gemini, or deepseek.",
+    ),
+    preset: Optional[str] = typer.Option(
+        None,
+        "--preset",
+        callback=validate_preset_option,
+        help="Model preset, such as qwen-coder, gemini-flash, gemini-pro, deepseek-flash, or deepseek-pro.",
+    ),
     model: Optional[str] = typer.Option(None, "--model", help="Model override."),
     profile: Optional[str] = typer.Option(
         None,
@@ -228,6 +280,7 @@ def run_json(
             dry_run=dry_run,
             sandbox=sandbox,
             model=model,
+            preset=preset,
             profile=profile,
             max_steps=max_steps,
         )
@@ -246,6 +299,8 @@ def run_json(
             reporter=JsonProtocolReporter(emitter),
             stream_model=stream,
             profile=profile,
+            provider=provider,
+            preset=preset,
         )
         result = agent.run_detailed(task)
     except KeyboardInterrupt:
@@ -264,6 +319,18 @@ def resume(
     run_id: int = typer.Argument(..., help="Run ID to resume."),
     instruction: str = typer.Argument("", help="Optional extra instruction for the resumed run."),
     cwd: Optional[Path] = typer.Option(None, "--cwd", help="Override workspace directory."),
+    provider: Optional[str] = typer.Option(
+        None,
+        "--provider",
+        callback=validate_provider_option,
+        help="Provider override: openrouter, openai, gemini, or deepseek.",
+    ),
+    preset: Optional[str] = typer.Option(
+        None,
+        "--preset",
+        callback=validate_preset_option,
+        help="Model preset, such as qwen-coder, gemini-flash, gemini-pro, deepseek-flash, or deepseek-pro.",
+    ),
     model: Optional[str] = typer.Option(None, "--model", help="Model override."),
     profile: Optional[str] = typer.Option(
         None,
@@ -313,6 +380,8 @@ def resume(
         reporter=StatusReporter(),
         stream_model=stream,
         profile=profile,
+        provider=provider,
+        preset=preset,
     )
     try:
         result = agent.run_detailed(task)

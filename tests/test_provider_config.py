@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import pytest
+from typer.testing import CliRunner
 
+from code_agent.cli import app
 from code_agent.config import Settings
+from code_agent.factory import create_agent
+from code_agent.model_presets import format_model_presets, resolve_model_preset
 
 
 def test_openrouter_is_default_provider() -> None:
@@ -53,3 +57,89 @@ def test_unknown_provider_is_rejected() -> None:
 
     with pytest.raises(RuntimeError, match="AGENT_PROVIDER"):
         _ = settings.provider_name
+
+
+def test_model_preset_resolves_provider_and_model() -> None:
+    preset = resolve_model_preset("gemini-flash")
+
+    assert preset is not None
+    assert preset.provider == "gemini"
+    assert preset.model == "gemini-3.5-flash"
+    assert "gemini-flash" in format_model_presets()
+
+
+def test_unknown_model_preset_is_rejected() -> None:
+    with pytest.raises(ValueError, match="Unknown model preset"):
+        resolve_model_preset("not-real")
+
+
+def test_create_agent_uses_preset_provider_and_model(tmp_path) -> None:
+    settings = Settings(
+        _env_file=None,
+        agent_model_preset="deepseek-pro",
+        deepseek_api_key="deepseek-key",
+        agent_reviewer_pass=False,
+        agent_db_path=tmp_path / "agent.db",
+    )
+
+    agent = create_agent(
+        settings=settings,
+        cwd=tmp_path,
+        model=None,
+        profile=None,
+        dry_run=True,
+        max_steps=1,
+    )
+
+    assert agent.model_client.model == "deepseek-v4-pro"
+
+
+def test_model_override_keeps_preset_provider(tmp_path) -> None:
+    settings = Settings(
+        _env_file=None,
+        gemini_api_key="gemini-key",
+        agent_reviewer_pass=False,
+        agent_db_path=tmp_path / "agent.db",
+    )
+
+    agent = create_agent(
+        settings=settings,
+        cwd=tmp_path,
+        model="gemini-custom",
+        preset="gemini-flash",
+        profile=None,
+        dry_run=True,
+        max_steps=1,
+    )
+
+    assert agent.model_client.model == "gemini-custom"
+
+
+def test_preset_missing_key_has_targeted_error(tmp_path) -> None:
+    settings = Settings(
+        _env_file=None,
+        openrouter_api_key="router-key",
+        agent_reviewer_pass=False,
+        agent_db_path=tmp_path / "agent.db",
+    )
+
+    with pytest.raises(RuntimeError, match="GEMINI_API_KEY is required"):
+        create_agent(
+            settings=settings,
+            cwd=tmp_path,
+            model=None,
+            preset="gemini-pro",
+            profile=None,
+            dry_run=True,
+            max_steps=1,
+        )
+
+
+def test_cli_models_lists_presets() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["models"])
+
+    assert result.exit_code == 0
+    assert "gemini-flash" in result.output
+    assert "deepseek-pro" in result.output

@@ -229,6 +229,7 @@ def emit_run_started(
     dry_run: bool,
     sandbox: bool,
     model: str | None,
+    preset: str | None = None,
     profile: str | None,
     max_steps: int,
 ) -> None:
@@ -239,6 +240,7 @@ def emit_run_started(
         dry_run=dry_run,
         sandbox=sandbox,
         model=model,
+        preset=preset,
         profile=profile,
         max_steps=max_steps,
     )

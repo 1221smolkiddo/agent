@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Literal
 
 from .config import Settings
+from .model_presets import resolve_model_preset
 from .storage import AgentStorage
 
 
@@ -196,13 +197,21 @@ def _check_command(command: str, *, required: bool, hint: str) -> DoctorCheck:
 
 def _check_api_key(settings: Settings) -> DoctorCheck:
     try:
-        provider = settings.provider_name
+        preset = resolve_model_preset(settings.agent_model_preset)
+        provider = settings.provider_name_for(preset.provider if preset else None)
     except RuntimeError as exc:
         return DoctorCheck(
             "api-key",
             "fail",
             str(exc),
             "Set AGENT_PROVIDER to openrouter, openai, gemini, or deepseek.",
+        )
+    except ValueError as exc:
+        return DoctorCheck(
+            "api-key",
+            "fail",
+            str(exc),
+            "Set AGENT_MODEL_PRESET to a known preset or leave it empty.",
         )
     env_by_provider = {
         "openrouter": "OPENROUTER_API_KEY",

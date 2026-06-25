@@ -147,6 +147,7 @@ To-do:
 - Add named provider selection: `openrouter`, `openai`, `gemini`, `deepseek`. Status: done.
 - Add provider-specific API keys and base URLs. Status: done.
 - Add provider/model profile routing.
+- Add Cline-style model preset switching. Status: done with `AGENT_MODEL_PRESET`, `--preset`, and `code-agent models`.
 - Add provider-aware usage records.
 - Add config examples for Gemini and DeepSeek. Status: done.
 

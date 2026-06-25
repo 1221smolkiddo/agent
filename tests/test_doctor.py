@@ -44,6 +44,21 @@ def test_run_doctor_reports_selected_provider_key(tmp_path: Path) -> None:
     assert "deepseek-test-key" not in api_key.detail
 
 
+def test_run_doctor_reports_preset_provider_key(tmp_path: Path) -> None:
+    settings = Settings(
+        agent_model_preset="gemini-pro",
+        gemini_api_key="gemini-test-key",
+        agent_db_path=tmp_path / ".agent.db",
+    )
+
+    report = run_doctor(cwd=tmp_path, settings=settings)
+    api_key = next(check for check in report.checks if check.name == "api-key")
+
+    assert api_key.status == "pass"
+    assert "provider gemini" in api_key.detail
+    assert "gemini-test-key" not in api_key.detail
+
+
 def test_doctor_json_is_machine_readable() -> None:
     report = DoctorReport(
         platform="Linux",

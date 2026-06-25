@@ -58,6 +58,8 @@ uv run code-agent run "Create a README section describing this project"
 ```bash
 code-agent doctor
 code-agent run "Fix the failing pytest"
+code-agent run --preset gemini-flash "Fix the failing pytest"
+code-agent run --provider deepseek --model deepseek-v4-pro "Fix the failing pytest"
 code-agent run --cwd ../some-project --model qwen/qwen3-coder "Add tests for the parser"
 code-agent run --profile coder "Implement the next roadmap item"
 code-agent run --profile reviewer "Review the latest changes for regressions"
@@ -66,6 +68,7 @@ code-agent run --sandbox "Try a risky refactor in an isolated copy"
 code-agent run --no-stream "Run without compact model streaming progress"
 code-agent run --max-failures 5 "Fix the issue and recover from failed attempts"
 code-agent run-json --dry-run "Inspect this project and emit JSON protocol events"
+code-agent models
 code-agent evals
 code-agent history
 code-agent history show 12
@@ -149,6 +152,7 @@ agent47: /exit
 
 - `OPENROUTER_API_KEY` is required.
 - `AGENT_PROVIDER` is optional and defaults to `openrouter`. Supported values are `openrouter`, `openai`, `gemini`, and `deepseek`.
+- `AGENT_MODEL_PRESET` is optional. Supported presets are `qwen-coder`, `gemini-flash`, `gemini-pro`, `deepseek-flash`, and `deepseek-pro`.
 - `AGENT_MODEL` is optional. The CLI also accepts `--model`.
 - `AGENT_PROFILE` is optional and defaults to `default`. Supported profiles are `default`, `planner`, `coder`, `reviewer`, and `fast`.
 - `AGENT_PLANNER_MODEL`, `AGENT_CODER_MODEL`, `AGENT_REVIEWER_MODEL`, and `AGENT_FAST_MODEL` are optional per-profile model overrides.
@@ -167,6 +171,20 @@ agent47: /exit
 - `OPENAI_API_KEY` and `OPENAI_BASE_URL` are still accepted as a temporary fallback.
 
 `--model` always wins over profile-specific model environment variables for that run. Profiles still control temperature and token defaults.
+
+Model switching:
+
+```bash
+uv run code-agent models
+uv run code-agent run --preset gemini-flash "Fix the failing test"
+uv run code-agent run --preset deepseek-pro "Refactor the parser"
+uv run code-agent run --provider gemini --model gemini-3.5-flash "Inspect this repo"
+```
+
+Preset selection chooses both provider and model. `--model` can still override the model string
+while keeping the preset provider, and `--provider` can override the provider for advanced cases.
+If a preset needs a missing key, Agent47 fails with a targeted message such as
+`GEMINI_API_KEY is required for AGENT_PROVIDER=gemini`.
 
 Gemini and DeepSeek can be used either through OpenRouter model slugs or through their direct
 OpenAI-compatible endpoints:

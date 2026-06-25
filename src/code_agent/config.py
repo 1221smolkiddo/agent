@@ -10,6 +10,7 @@ load_dotenv()
 
 class Settings(BaseSettings):
     agent_provider: str = "openrouter"
+    agent_model_preset: str | None = None
 
     openrouter_api_key: str | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
@@ -45,7 +46,10 @@ class Settings(BaseSettings):
 
     @property
     def provider_name(self) -> str:
-        provider = self.agent_provider.strip().lower()
+        return self.provider_name_for(None)
+
+    def provider_name_for(self, provider_override: str | None) -> str:
+        provider = (provider_override or self.agent_provider).strip().lower()
         if provider == "openrouter" and not self.openrouter_api_key and self.openai_api_key:
             return "openai"
         if provider in {"openrouter", "openai", "gemini", "deepseek"}:
@@ -56,7 +60,10 @@ class Settings(BaseSettings):
 
     @property
     def model_api_key(self) -> str:
-        provider = self.provider_name
+        return self.model_api_key_for(None)
+
+    def model_api_key_for(self, provider_override: str | None) -> str:
+        provider = self.provider_name_for(provider_override)
         key_by_provider = {
             "openrouter": self.openrouter_api_key,
             "openai": self.openai_api_key,
@@ -78,7 +85,10 @@ class Settings(BaseSettings):
 
     @property
     def model_base_url(self) -> str:
-        provider = self.provider_name
+        return self.model_base_url_for(None)
+
+    def model_base_url_for(self, provider_override: str | None) -> str:
+        provider = self.provider_name_for(provider_override)
         if provider == "openrouter":
             return self.openrouter_base_url
         if provider == "openai":
@@ -93,8 +103,11 @@ class Settings(BaseSettings):
 
     @property
     def model_headers(self) -> dict[str, str]:
+        return self.model_headers_for(None)
+
+    def model_headers_for(self, provider_override: str | None) -> dict[str, str]:
         headers: dict[str, str] = {}
-        if self.provider_name != "openrouter":
+        if self.provider_name_for(provider_override) != "openrouter":
             return headers
         if self.openrouter_site_url:
             headers["HTTP-Referer"] = self.openrouter_site_url

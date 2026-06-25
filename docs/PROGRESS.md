@@ -14,13 +14,14 @@ This file should be updated whenever a meaningful Agent47 capability is added. K
 
 ## Enabled CLI Commands
 
-There are currently **12 user-facing CLI command entries**:
+There are currently **13 user-facing CLI command entries**:
 
 | Command | Purpose |
 | --- | --- |
 | `code-agent run "task"` | Run the agent on a coding task. |
 | `code-agent run-json "task"` | Run the agent and emit versioned NDJSON protocol events for frontends. |
 | `code-agent doctor` | Check local install, platform, tools, storage, and configuration. |
+| `code-agent models` | List built-in model presets for easy provider/model switching. |
 | `code-agent history` | Show recent saved agent runs from SQLite. |
 | `code-agent history show <run-id>` | Show saved steps for one agent run. |
 | `code-agent history export <run-id>` | Export a redacted debug bundle for one agent run. |
@@ -35,6 +36,9 @@ Common examples:
 
 ```powershell
 uv run code-agent run "Inspect this project and suggest next steps"
+uv run code-agent models
+uv run code-agent run --preset gemini-flash "Fix the failing test"
+uv run code-agent run --preset deepseek-pro "Refactor the parser"
 uv run code-agent doctor
 uv run code-agent run-json --dry-run "Inspect this project and emit JSON events"
 uv run code-agent run --dry-run "Find risky areas in the codebase"
@@ -110,6 +114,7 @@ There are currently **19 model-requestable actions**:
 | CLI framework: Typer | Enabled |
 | Model API: OpenRouter via OpenAI-compatible chat completions | Enabled |
 | Model profiles: default/planner/coder/reviewer/fast | Enabled |
+| Model presets: qwen, Gemini, and DeepSeek switching | Enabled |
 | Provider config boundary for OpenAI-compatible clients | Enabled |
 | Model fallback: `AGENT_FALLBACK_MODELS` | Enabled |
 | Model token usage tracking | Enabled |
