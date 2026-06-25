@@ -4,11 +4,13 @@ from pathlib import Path
 from typing import Protocol
 
 import typer  # noqa: F401
+from rich.prompt import Prompt
 from typer._click.exceptions import Abort
 
 from .config import Settings
 from .factory import create_agent
 from .model_profiles import validate_profile_name
+from .model_presets import MODEL_PRESETS, resolve_model_preset
 from .permissions import ApprovalMode, PermissionPolicy, confirm_permission
 from .resume import build_resume_task, format_run_detail
 from .revert import apply_revert_plan, build_revert_plan, format_revert_preview
@@ -127,8 +129,8 @@ def main() -> None:
             try:
                 response = agent.run(user_input)
             except KeyboardInterrupt:
-                print_panel("System", "STOPPED by user")
-                return
+                print_panel("Stopped", "Current action stopped. Interactive session is still open.")
+                continue
             except Exception as exc:
                 print_error_card(
                     "Error",
@@ -160,8 +162,8 @@ def main() -> None:
         try:
             transcript = run_interactive_turn(user_input, agent, transcript, session_state)
         except KeyboardInterrupt:
-            print_panel("System", "STOPPED by user")
-            return
+            print_panel("Stopped", "Current action stopped. Interactive session is still open.")
+            continue
         except Exception as exc:
             import traceback
             session_state._last_exc = traceback.format_exc()
@@ -293,7 +295,12 @@ def handle_command(
     elif command == "/model":
         if value:
             model = value
-        print_panel("Model", model or settings.agent_model)
+            print_panel("Model", model or settings.agent_model)
+        else:
+            selected_model = prompt_model_selection(current_model=model or settings.agent_model)
+            if selected_model:
+                model = selected_model
+            print_panel("Model", model or settings.agent_model)
     elif command == "/profile":
         if value:
             try:
@@ -335,8 +342,8 @@ def handle_command(
             max_failures=max_failures,
             session_state=session_state,
         )
-    elif command == "/revert":
-        run_revert_command(settings, value)
+    elif command in {"/revert", "/restore"}:
+        run_revert_command(settings, value, session_state=session_state)
     elif command == "/history-show":
         print_history_detail(settings, value)
     elif command == "/status":
@@ -376,7 +383,10 @@ def handle_command(
     elif command == "/files":
         print_panel("Files", f"Current workspace: {cwd}")
     elif command == "/models":
-        print_panel("Models", f"Current model: {model or settings.agent_model}")
+        selected_model = prompt_model_selection(current_model=model or settings.agent_model)
+        if selected_model:
+            model = selected_model
+        print_panel("Model", model or settings.agent_model)
     elif command == "/settings":
         print_key_values(
             "Settings",
@@ -418,6 +428,7 @@ Commands:
   /sandbox diff      Show changes between the sandbox and base workspace.
   /sandbox apply     Promote sandbox changes back to the base workspace.
   /model <name>      Change model for this session.
+  /model             Pick a built-in model preset interactively.
   /profile <name>    Change model profile: default, planner, coder, reviewer, or fast.
   /max-steps <n>     Change max agent loop steps.
   /max-failures <n>  Change consecutive failure recovery budget.
@@ -428,11 +439,12 @@ Commands:
   /history-show <id> Show saved steps for one run.
   /diff             Show where to find detailed diff output.
   /resume <id> [msg] Resume a saved run with optional extra instruction.
-  /revert <id>       Revert verified file changes from a prior run.
+  /revert <id|last>  Revert verified file changes from a prior run.
+  /restore <id|last> Alias for /revert.
   /clear             Clear the terminal screen.
   /report            Information about detailed reports.
   /files             Show current workspace path.
-  /models            Show current model.
+  /models            Preview model presets and select one.
   /settings          Show current session settings.
   /debug             Show stack trace of the last error.
   /stop              Quit.
@@ -531,25 +543,81 @@ def run_resume_command(
         session_state.update(f"resume run {run_id}", result)
 
 
-def run_revert_command(settings: Settings, value: str) -> None:
+def run_revert_command(
+    settings: Settings,
+    value: str,
+    *,
+    session_state: SessionState | None = None,
+) -> None:
     if not value:
-        print_panel("Revert", "Usage: /revert <run-id>")
-        return
-    try:
-        run_id = int(value)
-    except ValueError:
-        print_panel("Revert", f"Invalid run id: {value}")
+        value = "last"
+    if value.lower() == "last":
+        if session_state is None or session_state.last_run_id is None:
+            print_panel("Restore", "No last run is available. Use /history, then /restore <run-id>.")
+            return
+        run_id = session_state.last_run_id
+    else:
+        try:
+            run_id = int(value)
+        except ValueError:
+            print_panel("Restore", f"Invalid run id: {value}")
+            return
+    if run_id is None:
+        print_panel("Restore", "Usage: /restore <run-id|last>")
         return
     storage = AgentStorage(settings.agent_db_path)
     try:
         plan = build_revert_plan(storage, run_id)
     except ValueError as exc:
-        print_panel("Revert", str(exc))
+        print_panel("Restore", str(exc))
         return
-    print_panel("Revert Preview", format_revert_preview(plan))
+    print_panel("Restore Preview", format_revert_preview(plan))
     result = apply_revert_plan(storage, plan, approval_callback=confirm_permission)
     body = result.output + f"\nRevert run id: {result.run_id}"
-    print_panel("Revert", body)
+    print_panel("Restore", body)
+
+
+def prompt_model_selection(current_model: str) -> str | None:
+    print_panel("Models", format_model_selection_preview(current_model))
+    choice = Prompt.ask(
+        "Select model preset by number/name, enter a custom model id, or press Enter to keep current",
+        default="",
+        show_default=False,
+    ).strip()
+    if not choice:
+        return None
+    if choice.isdigit():
+        index = int(choice) - 1
+        presets = list(MODEL_PRESETS.values())
+        if 0 <= index < len(presets):
+            return presets[index].model
+        print_panel("Model", f"Invalid selection: {choice}", style="red")
+        return None
+    try:
+        preset = resolve_model_preset(choice)
+    except ValueError:
+        return choice
+    return preset.model if preset else None
+
+
+def format_model_selection_preview(current_model: str) -> str:
+    lines = [
+        f"Current model: {current_model}",
+        "",
+        "Built-in presets:",
+    ]
+    for index, preset in enumerate(MODEL_PRESETS.values(), start=1):
+        lines.append(f"{index}. {preset.name}  provider={preset.provider}  model={preset.model}")
+        lines.append(f"   {preset.description}")
+    lines.extend(
+        [
+            "",
+            "Tip: /model <id> accepts any provider model id.",
+            "Shortcut note: most terminals encode Ctrl+M exactly like Enter; "
+            "use /models when your terminal cannot distinguish it.",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def is_casual_greeting(user_input: str) -> bool:
@@ -637,7 +705,7 @@ def is_persona_instruction(user_input: str) -> bool:
 
 def read_prompt() -> str:
     console.print(Text("You", style="bold green"), end=" ")
-    value = input("(/help /history /report /diff) | ").strip()
+    value = input("(/help /models /restore /stop) | ").strip()
     return value
 
 

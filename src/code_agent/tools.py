@@ -493,8 +493,14 @@ class ToolRegistry:
         if self.approval_callback is None:
             return False
         if metadata is not None and self._callback_accepts_metadata():
-            return self.approval_callback(action, detail, metadata)
-        return self.approval_callback(action, detail)
+            return self._approval_result_to_bool(self.approval_callback(action, detail, metadata))
+        return self._approval_result_to_bool(self.approval_callback(action, detail))
+
+    @staticmethod
+    def _approval_result_to_bool(value: Any) -> bool:
+        if isinstance(value, str):
+            return value.strip().lower() in {"y", "yes", "a", "approve", "approved"}
+        return bool(value)
 
     def _callback_accepts_metadata(self) -> bool:
         if self.approval_callback is None:

@@ -4,7 +4,7 @@ from typer._click.exceptions import Abort
 import code_agent.interactive as interactive
 from code_agent.agent import AgentRunResult
 from code_agent.interactive import DEFAULT_DRY_RUN, read_prompt
-from code_agent.interactive import is_persona_instruction
+from code_agent.interactive import format_model_selection_preview, is_persona_instruction
 from code_agent.work_report import should_show_work_report
 from code_agent.terminal_ui import print_work_report_panel, console
 
@@ -58,6 +58,31 @@ def test_read_prompt_propagates_click_abort(monkeypatch) -> None:
 
     with pytest.raises(Abort):
         read_prompt()
+
+
+def test_model_selection_preview_lists_presets_and_shortcut_note() -> None:
+    preview = format_model_selection_preview("current-model")
+
+    assert "Current model: current-model" in preview
+    assert "qwen-coder" in preview
+    assert "gemini-flash" in preview
+    assert "Ctrl+M" in preview
+
+
+def test_prompt_model_selection_accepts_number(monkeypatch) -> None:
+    monkeypatch.setattr(interactive.Prompt, "ask", lambda *_args, **_kwargs: "2")
+
+    selected = interactive.prompt_model_selection("current-model")
+
+    assert selected == "gemini-3.5-flash"
+
+
+def test_prompt_model_selection_accepts_preset_name(monkeypatch) -> None:
+    monkeypatch.setattr(interactive.Prompt, "ask", lambda *_args, **_kwargs: "deepseek-pro")
+
+    selected = interactive.prompt_model_selection("current-model")
+
+    assert selected == "deepseek-v4-pro"
 
 
 def test_is_persona_instruction() -> None:

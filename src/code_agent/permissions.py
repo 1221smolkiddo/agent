@@ -123,7 +123,7 @@ def confirm_permission(action: str, detail: str) -> str:
     # Keep the default prompt compact; full raw detail is explicit via "v".
     while True:
         response = Prompt.ask(
-            "[y] Approve  [n] Deny  [a] Approve All For Task  [v] View Full Detail",
+            r"\[y] Approve  \[n] Deny  \[a] Approve All For Task  \[v] View Full Detail",
             choices=["y", "n", "a", "v"],
             default="n",
             show_choices=False,

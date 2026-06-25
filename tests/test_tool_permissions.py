@@ -1,10 +1,12 @@
 from pathlib import Path
 
 import code_agent.tools as tools_module
+import code_agent.permissions as permissions_module
 from code_agent.permissions import (
     ApprovalMode,
     PermissionPolicy,
     _format_permission_preview,
+    confirm_permission,
     format_permission_detail,
 )
 from code_agent.schema import (
@@ -131,6 +133,16 @@ def test_read_file_with_permission_succeeds(tmp_path: Path) -> None:
     assert result.output == "hello"
 
 
+def test_string_permission_denial_is_not_treated_as_truthy(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("hello", encoding="utf-8")
+    tools = ToolRegistry(workspace=tmp_path, dry_run=True, approval_callback=lambda _a, _d: "n")
+
+    result = tools.run(ReadFileAction(type="read_file", path="README.md"))
+
+    assert not result.ok
+    assert result.output == "Permission denied for read_file."
+
+
 def test_delete_file_with_permission_succeeds(tmp_path: Path) -> None:
     (tmp_path / "notes.md").write_text("delete me", encoding="utf-8")
     tools = ToolRegistry(workspace=tmp_path, dry_run=False, approval_callback=lambda _a, _d: True)
@@ -226,6 +238,20 @@ def test_permission_preview_uses_patch_summary_before_hidden_diff() -> None:
     assert "Patch preview:" in rendered
     assert "- app.py: update, +1 -1" in rendered
     assert "new_value = 2" not in rendered
+
+
+def test_permission_prompt_renders_visible_choice_labels(monkeypatch) -> None:
+    captured: dict[str, str] = {}
+
+    def fake_ask(prompt: str, **_kwargs) -> str:
+        captured["prompt"] = prompt
+        return "n"
+
+    monkeypatch.setattr(permissions_module.Prompt, "ask", fake_ask)
+
+    assert confirm_permission("read_file", "README.md") == "n"
+    assert r"\[y] Approve" in captured["prompt"]
+    assert r"\[n] Deny" in captured["prompt"]
 
 
 def test_write_file_returns_truncated_large_diff_to_model(tmp_path: Path) -> None:
