@@ -10,7 +10,7 @@ from rich.panel import Panel
 from rich.text import Text
 from rich.theme import Theme
 
-from .work_report import _clean_task_text, _single_line, _change_items_filtered, should_show_work_report
+from .work_report import _single_line, _change_items_filtered, should_show_work_report
 
 if TYPE_CHECKING:
     from .agent import AgentRunResult
