@@ -6,7 +6,11 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 from rich.console import Console
+from rich.console import Group
+from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.table import Table
+from rich.table import box
 from rich.text import Text
 from rich.theme import Theme
 
@@ -38,65 +42,70 @@ def _format_text(value: str, style: str = "default") -> Text:
     return Text(value, style=style)
 
 
-def print_panel(title: str, body: str, *, style: str = "muted") -> None:
+def print_panel(title: str, body: str, *, style: str = "muted", markup: bool = False) -> None:
     if not body.strip():
         return
+    renderable = Markdown(body) if markup else _format_text(_normalize_panel_body(body), style="default")
+    console.print()
     console.print(
         Panel(
-            _format_text(body),
+            renderable,
             title=Text(title, style="bold"),
             title_align="left",
             border_style=style,
-            padding=(0, 1),
+            box=box.ROUNDED,
+            padding=(1, 2),
         )
     )
+    console.print()
+
+
+def print_renderable_panel(title: str, renderable: object, *, style: str = "muted") -> None:
+    console.print()
+    console.print(
+        Panel(
+            renderable,
+            title=Text(title, style="bold"),
+            title_align="left",
+            border_style=style,
+            box=box.ROUNDED,
+            padding=(1, 2),
+        )
+    )
+    console.print()
 
 
 def print_startup_header(cwd: str, mode: str, model: str) -> None:
-    header = Text()
-    header.append("Agent47", style="bold cyan")
-    header.append(" │ ", style="muted")
-    header.append(str(Path(cwd)), style="cyan")
-    header.append(" │ ", style="muted")
-    header.append("Model: ", style="muted")
-    header.append(model, style="cyan")
-    header.append(" │ ", style="muted")
-    header.append("Write Enabled" if mode == "write-enabled" else "Dry Run", style="green" if mode == "write-enabled" else "yellow")
-
-    console.print(header)
-    console.print()
+    grid = Table.grid(expand=True)
+    grid.add_column(ratio=1)
+    grid.add_column(justify="right")
+    title = Text("Agent47", style="bold cyan")
+    title.append("  coding agent", style="muted")
+    mode_text = Text("Write Enabled" if mode == "write-enabled" else "Dry Run")
+    mode_text.stylize("green" if mode == "write-enabled" else "yellow")
+    grid.add_row(title, mode_text)
+    grid.add_row(Text(str(Path(cwd)), style="muted"), Text(f"Model: {model}", style="cyan"))
+    print_renderable_panel("Session", grid, style="cyan")
 
 def print_key_values(title: str, rows: Iterable[tuple[str, object]]) -> None:
     """Compact key-values."""
     rendered_rows = list(rows)
     if not rendered_rows:
         return
-    text = Text()
+    table = Table.grid(expand=True, padding=(0, 3))
+    table.add_column(style="muted", no_wrap=True)
+    table.add_column()
     for key, value in rendered_rows:
-        text.append(f"{key}: ", style="muted")
-        text.append(str(value), style="default")
-        text.append("\n")
-    console.print(
-        Panel(
-            text.rstrip(),
-            title=Text(title, style="bold"),
-            title_align="left",
-            border_style="cyan",
-            padding=(0, 1),
-        )
-    )
+        table.add_row(Text(str(key), style="bold"), Text(str(value), style="default"))
+    print_renderable_panel(title, table, style="cyan")
 
 def print_work_report_panel(result: AgentRunResult) -> None:
     if not should_show_work_report(result):
         return
-        
-    text = Text()
-    
-    text.append("Done\n", style="bold green")
-        
-    modified_paths = []
-    created_paths = []
-    deleted_paths = []
+
+    modified_paths: list[str] = []
+    created_paths: list[str] = []
+    deleted_paths: list[str] = []
     
     for item in _change_items_filtered(result):
         if item["status"] != "ok":
@@ -109,50 +118,47 @@ def print_work_report_panel(result: AgentRunResult) -> None:
             deleted_paths.append(path)
         else:
             modified_paths.append(path)
-            
-    if created_paths or modified_paths or deleted_paths:
-        text.append("Changes:\n", style="bold")
-        if created_paths:
-            for p in created_paths:
-                text.append(f"• Created {p}\n")
-        if modified_paths:
-            for p in modified_paths:
-                text.append(f"• Modified {p}\n")
-        if deleted_paths:
-            for p in deleted_paths:
-                text.append(f"• Deleted {p}\n")
-        text.append("\n")
-        
-    if result.verification_results:
-        text.append("Verification:\n", style="muted")
-        for v in result.verification_results:
-            status = "✓" if v.get("ok") else "✗"
-            label = v.get("purpose") or v.get("command") or v.get("name") or "verification"
-            status_word = "Passed" if v.get("ok") else "Failed"
-            text.append(f"{status} {label} — {status_word}\n", style="green" if v.get("ok") else "red")
-        text.append("\n")
 
-    if not created_paths and not modified_paths and not deleted_paths and not result.verification_results:
-        text.append(f"{_single_line(result.message, max_chars=900)}\n")
-
-    # Duration: if provided by result, display it
+    sections: list[object] = []
+    summary = Table.grid(expand=True)
+    summary.add_column(ratio=1)
+    summary.add_column(justify="right", no_wrap=True)
+    summary.add_row(Text("Finished Work", style="bold green"), Text(f"Run #{result.run_id}", style="muted"))
+    if result.message:
+        summary.add_row(Text(_single_line(result.message, max_chars=120), style="default"), Text(""))
     duration = getattr(result, "duration", None)
     if duration is not None:
-        try:
-            text.append("Duration:\n", style="muted")
-            text.append(f"{duration}s\n\n")
-        except Exception:
-            pass
+        summary.add_row(Text(f"Duration: {duration}s", style="muted"), Text(""))
+    sections.append(summary)
 
-    text.rstrip()
-    console.print(
-        Panel(
-            text,
-            title=Text("Completion Summary", style="bold"),
-            border_style="muted",
-            padding=(0, 1),
-        )
-    )
+    if created_paths or modified_paths or deleted_paths:
+        changes = Table(show_header=True, header_style="bold cyan", box=box.SIMPLE, padding=(0, 2), expand=True)
+        changes.add_column("Action", style="muted", no_wrap=True)
+        changes.add_column("Path", overflow="fold")
+        for path in created_paths:
+            changes.add_row("Created", str(path))
+        for path in modified_paths:
+            changes.add_row("Modified", str(path))
+        for path in deleted_paths:
+            changes.add_row("Deleted", str(path))
+        sections.extend([Text("Changes", style="bold underline"), changes])
+
+    if result.verification_results:
+        verification = Table(show_header=True, header_style="bold cyan", box=box.SIMPLE, padding=(0, 2), expand=True)
+        verification.add_column("Check", overflow="fold")
+        verification.add_column("Status", no_wrap=True)
+        verification.add_column("Command", overflow="fold")
+        for v in result.verification_results:
+            label = v.get("purpose") or v.get("command") or v.get("name") or "verification"
+            status_word = "Passed" if v.get("ok") else "Failed"
+            status_text = Text(status_word, style="green" if v.get("ok") else "red")
+            verification.add_row(str(label), status_text, str(v.get("command") or ""))
+        sections.extend([Text("Verification", style="bold underline"), verification])
+
+    if not created_paths and not modified_paths and not deleted_paths and not result.verification_results:
+        sections.append(Text(_single_line(result.message, max_chars=900), style="default"))
+
+    print_renderable_panel("Finished Work", Group(*_with_spacers(sections)), style="green")
 
 def print_error_card(title: str, lines: list[tuple[str, str]], suggestions: list[str]) -> None:
     text = Text()
@@ -162,18 +168,11 @@ def print_error_card(title: str, lines: list[tuple[str, str]], suggestions: list
         text.append(f"{detail}\n\n", style="danger" if label == "Reason:" else "default")
     
     if suggestions:
-        text.append("Suggested Actions:\n", style="muted")
+        text.append("Suggested actions:\n", style="muted")
         for sug in suggestions:
-            text.append(f"• {sug}\n", style="default")
-            
-    console.print(
-        Panel(
-            text.rstrip(),
-            title=Text(title, style="bold red"),
-            title_align="left",
-            border_style="red",
-        )
-    )
+            text.append(f"- {sug}\n", style="default")
+
+    print_renderable_panel(title, text.rstrip(), style="red")
 
 def format_prompt_header(title: str) -> str:
     return f"[bold green]{title}[/bold green]"
@@ -202,9 +201,30 @@ def print_response(author: str, body: str, *, author_style: str = "bold cyan") -
     """
     if not body:
         return
-    header = Text()
-    header.append(f"{author}", style=author_style)
-    header.append(" ")
-    # Render the body as plain text (no markup parsing)
-    body_text = Text(str(body))
-    console.print(header.append(body_text))
+    console.print()
+    console.print(Text(author, style=author_style))
+    console.print(Text(_normalize_panel_body(str(body)), style="default"))
+    console.print()
+
+
+def _normalize_panel_body(body: str) -> str:
+    lines = [line.rstrip() for line in body.strip().splitlines()]
+    collapsed: list[str] = []
+    previous_blank = False
+    for line in lines:
+        blank = not line.strip()
+        if blank and previous_blank:
+            continue
+        collapsed.append(line)
+        previous_blank = blank
+    normalized = "\n".join(collapsed)
+    return normalized
+
+
+def _with_spacers(items: list[object]) -> list[object]:
+    spaced: list[object] = []
+    for item in items:
+        if spaced:
+            spaced.append(Text(""))
+        spaced.append(item)
+    return spaced
