@@ -135,12 +135,17 @@ agent47: /exit
 ## Environment
 
 - `OPENROUTER_API_KEY` is required.
+- `AGENT_PROVIDER` is optional and defaults to `openrouter`. Supported values are `openrouter`, `openai`, `gemini`, and `deepseek`.
 - `AGENT_MODEL` is optional. The CLI also accepts `--model`.
 - `AGENT_PROFILE` is optional and defaults to `default`. Supported profiles are `default`, `planner`, `coder`, `reviewer`, and `fast`.
 - `AGENT_PLANNER_MODEL`, `AGENT_CODER_MODEL`, `AGENT_REVIEWER_MODEL`, and `AGENT_FAST_MODEL` are optional per-profile model overrides.
 - `AGENT_FALLBACK_MODELS` is optional. Use a comma-separated list of models to try if the primary model/provider call fails.
 - `OPENROUTER_BASE_URL` is optional and defaults to `https://openrouter.ai/api/v1`.
 - `OPENROUTER_SITE_URL` and `OPENROUTER_APP_NAME` are optional OpenRouter metadata headers.
+- `GEMINI_API_KEY` is required when `AGENT_PROVIDER=gemini`.
+- `GEMINI_BASE_URL` is optional and defaults to `https://generativelanguage.googleapis.com/v1beta/openai/`.
+- `DEEPSEEK_API_KEY` is required when `AGENT_PROVIDER=deepseek`.
+- `DEEPSEEK_BASE_URL` is optional and defaults to `https://api.deepseek.com`.
 - `AGENT_MAX_TOKENS` is optional and defaults to `4096`.
 - `AGENT_MAX_FAILURES` is optional and defaults to `3`.
 - `AGENT_INPUT_COST_PER_MILLION` and `AGENT_OUTPUT_COST_PER_MILLION` are optional. When both are set, Agent47 estimates per-run model cost from provider token usage.
@@ -149,6 +154,23 @@ agent47: /exit
 - `OPENAI_API_KEY` and `OPENAI_BASE_URL` are still accepted as a temporary fallback.
 
 `--model` always wins over profile-specific model environment variables for that run. Profiles still control temperature and token defaults.
+
+Gemini and DeepSeek can be used either through OpenRouter model slugs or through their direct
+OpenAI-compatible endpoints:
+
+```bash
+AGENT_PROVIDER=gemini
+GEMINI_API_KEY=...
+AGENT_MODEL=gemini-3.5-flash
+```
+
+```bash
+AGENT_PROVIDER=deepseek
+DEEPSEEK_API_KEY=...
+AGENT_MODEL=deepseek-v4-pro
+```
+
+Check the provider docs for current model IDs before pinning production profiles.
 
 For platform-specific setup, see [docs/INSTALL.md](docs/INSTALL.md). To check a local installation without making network calls, run:
 

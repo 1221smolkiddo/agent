@@ -2,6 +2,9 @@
 
 This is the build map for turning Agent47 from a promising CLI agent into an industry-standard AI coding agent.
 
+For the prioritized implementation checklist and provider expansion plan, see
+[INDUSTRY_AGENT_PLAN.md](INDUSTRY_AGENT_PLAN.md).
+
 ## Current Position
 
 Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRouter/OpenAI-compatible model access, typed tool actions, durable plan checkpoints with visible plan snapshots, non-workspace intent routing, local file/search/shell/web tools with general web-search fallback, structured patch application, git-diff awareness, verification command detection/suggestion/automatic execution/outcome summaries, permission prompts, dry-run mode, local sandbox copies, SQLite run history with detail views and resume support, operation status labels, cleaner bordered terminal panels with short transcript context and structured session state, failure recovery, repo/symbol/dependency indexing, optional tree-sitter summaries, and an Agent47 engineering protocol in the system prompt.

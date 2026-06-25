@@ -29,6 +29,21 @@ def test_run_doctor_reports_core_install_checks(tmp_path: Path, monkeypatch) -> 
     assert not any("test-key" in check.detail for check in report.checks)
 
 
+def test_run_doctor_reports_selected_provider_key(tmp_path: Path) -> None:
+    settings = Settings(
+        agent_provider="deepseek",
+        deepseek_api_key="deepseek-test-key",
+        agent_db_path=tmp_path / ".agent.db",
+    )
+
+    report = run_doctor(cwd=tmp_path, settings=settings)
+    api_key = next(check for check in report.checks if check.name == "api-key")
+
+    assert api_key.status == "pass"
+    assert "provider deepseek" in api_key.detail
+    assert "deepseek-test-key" not in api_key.detail
+
+
 def test_doctor_json_is_machine_readable() -> None:
     report = DoctorReport(
         platform="Linux",

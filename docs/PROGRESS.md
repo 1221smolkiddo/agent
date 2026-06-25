@@ -168,6 +168,7 @@ There are currently **19 model-requestable actions**:
 These are the remaining capability areas needed for Agent47 to feel like a fully fledged, industry-standard AI coding agent.
 
 For the complete team issue breakdown, see [TEAM_BUILD_PLAN.md](TEAM_BUILD_PLAN.md).
+For the next implementation to-do list, see [INDUSTRY_AGENT_PLAN.md](INDUSTRY_AGENT_PLAN.md).
 
 | Priority | Capability | Why it matters | Status |
 | --- | --- | --- | --- |

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import platform
 import shutil
 import sqlite3
@@ -90,7 +89,7 @@ def run_doctor(cwd: Path | None = None, settings: Settings | None = None) -> Doc
             required=False,
             hint="Install ripgrep for faster project search; Agent47 has a slower Python fallback.",
         ),
-        _check_api_key(),
+        _check_api_key(config),
         _check_env_file(workspace),
     ]
     return DoctorReport(
@@ -189,14 +188,36 @@ def _check_command(command: str, *, required: bool, hint: str) -> DoctorCheck:
     )
 
 
-def _check_api_key() -> DoctorCheck:
-    if os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY"):
-        return DoctorCheck("api-key", "pass", "configured")
+def _check_api_key(settings: Settings) -> DoctorCheck:
+    try:
+        provider = settings.provider_name
+    except RuntimeError as exc:
+        return DoctorCheck(
+            "api-key",
+            "fail",
+            str(exc),
+            "Set AGENT_PROVIDER to openrouter, openai, gemini, or deepseek.",
+        )
+    env_by_provider = {
+        "openrouter": "OPENROUTER_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+    }
+    key_by_provider = {
+        "openrouter": settings.openrouter_api_key,
+        "openai": settings.openai_api_key,
+        "gemini": settings.gemini_api_key,
+        "deepseek": settings.deepseek_api_key,
+    }
+    env_name = env_by_provider[provider]
+    if key_by_provider[provider]:
+        return DoctorCheck("api-key", "pass", f"configured for provider {provider}")
     return DoctorCheck(
         "api-key",
         "warn",
-        "not configured",
-        "Set OPENROUTER_API_KEY before running live model tasks.",
+        f"not configured for provider {provider}",
+        f"Set {env_name} before running live model tasks.",
     )
 
 
