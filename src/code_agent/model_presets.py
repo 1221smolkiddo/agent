@@ -75,6 +75,6 @@ def format_model_presets() -> str:
     for preset in MODEL_PRESETS.values():
         lines.append(
             f"- {preset.name}: provider={preset.provider}, model={preset.model}, "
-            f"key={preset.required_key}, {preset.description}"
+            f"{preset.description}"
         )
     return "\n".join(lines)

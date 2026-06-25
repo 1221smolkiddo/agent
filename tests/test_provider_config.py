@@ -66,6 +66,7 @@ def test_model_preset_resolves_provider_and_model() -> None:
     assert preset.provider == "gemini"
     assert preset.model == "gemini-3.5-flash"
     assert "gemini-flash" in format_model_presets()
+    assert "key=" not in format_model_presets()
 
 
 def test_unknown_model_preset_is_rejected() -> None:
@@ -143,3 +144,4 @@ def test_cli_models_lists_presets() -> None:
     assert result.exit_code == 0
     assert "gemini-flash" in result.output
     assert "deepseek-pro" in result.output
+    assert "key=" not in result.output
