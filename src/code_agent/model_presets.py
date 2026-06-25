@@ -71,10 +71,9 @@ def resolve_model_preset(name: str | None) -> ModelPreset | None:
 
 
 def format_model_presets() -> str:
-    lines = ["Available model presets:"]
+    lines = ["Available model presets:", ""]
     for preset in MODEL_PRESETS.values():
-        lines.append(
-            f"- {preset.name}: provider={preset.provider}, model={preset.model}, "
-            f"{preset.description}"
-        )
-    return "\n".join(lines)
+        lines.append(f"- {preset.name}: provider={preset.provider}, model={preset.model}")
+        lines.append(f"{preset.description}")
+        lines.append("")
+    return "\n".join(lines).rstrip()

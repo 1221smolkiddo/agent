@@ -145,3 +145,4 @@ def test_cli_models_lists_presets() -> None:
     assert "gemini-flash" in result.output
     assert "deepseek-pro" in result.output
     assert "key=" not in result.output
+    assert "Available model presets:\n\n- qwen-coder: provider=openrouter, model=qwen/qwen3-coder\nDefault OpenRouter coding model." in result.output
