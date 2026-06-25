@@ -105,13 +105,8 @@ def confirm_permission(action: str, detail: str) -> str:
     label = action_labels.get(action, action.replace("_", " ").title())
 
     text = Text()
-    text.append("Action:\n", style="muted")
     text.append(f"{label}\n\n", style="bold")
 
-    text.append("Command / Path:\n", style="muted")
-    text.append(f"{format_permission_detail(detail)}\n\n", style="cyan")
-
-    # Build a short human-readable preview instead of showing raw diffs
     preview = _format_permission_preview(detail)
     if preview:
         text.append("Preview:\n", style="muted")
@@ -125,20 +120,19 @@ def confirm_permission(action: str, detail: str) -> str:
         )
     )
 
-    # Allow users to view the full diff if they choose
+    # Keep the default prompt compact; full raw detail is explicit via "v".
     while True:
         response = Prompt.ask(
-            "[y] Approve  [n] Deny  [a] Approve All For Task  [v] View Full Diff",
+            "[y] Approve  [n] Deny  [a] Approve All For Task  [v] View Full Detail",
             choices=["y", "n", "a", "v"],
             default="n",
             show_choices=False,
         )
         if response == "v":
-            # show full detail in a secondary panel, then loop back to ask again
             console.print(
                 Panel(
-                    Text(str(detail)),
-                    title=Text("Full Diff / Detail", style="bold"),
+                    Text(format_permission_detail(detail)),
+                    title=Text("Full Detail", style="bold"),
                     border_style="muted",
                 )
             )
@@ -157,18 +151,12 @@ def _format_permission_preview(detail: str, max_lines: int = 6, max_chars: int =
     # Heuristic: detect diff markers
     diff_markers = ("diff --git", "@@", "--- ", "+++ ")
     lines = detail.splitlines()
-    if any(m in detail for m in diff_markers):
-        added = []
-        for ln in lines:
-            if ln.startswith("+") and not ln.startswith("+++ "):
-                added.append(ln[1:])
-            if len(added) >= max_lines:
-                break
-        if added:
-            preview = "\n".join(added[:max_lines])
-            if len(preview) > max_chars:
-                preview = preview[:max_chars].rstrip() + "\n..."
-            return preview
+    if "Unified diff:" in lines:
+        lines = lines[: lines.index("Unified diff:")]
+    if any(any(marker in line for marker in diff_markers) for line in lines):
+        summary = _format_diff_summary(lines)
+        if summary:
+            return summary
 
     # Fallback: show the first few meaningful lines
     meaningful = [ln for ln in lines if ln.strip()][:max_lines]
@@ -182,6 +170,30 @@ def _format_permission_preview(detail: str, max_lines: int = 6, max_chars: int =
     if len(detail) > max_chars:
         truncated = truncated.rstrip() + "\n..."
     return truncated
+
+
+def _format_diff_summary(lines: list[str]) -> str:
+    paths: list[str] = []
+    additions = 0
+    deletions = 0
+    for line in lines:
+        if line.startswith("+++ "):
+            path = line[4:].strip()
+            if path != "/dev/null":
+                paths.append(path.removeprefix("b/"))
+        elif line.startswith("+") and not line.startswith("+++"):
+            additions += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            deletions += 1
+
+    parts: list[str] = []
+    if paths:
+        unique_paths = list(dict.fromkeys(paths))
+        parts.append("Files: " + ", ".join(unique_paths[:6]))
+        if len(unique_paths) > 6:
+            parts.append(f"...and {len(unique_paths) - 6} more")
+    parts.append(f"Changes: +{additions} -{deletions}")
+    return "\n".join(parts)
 
 
 def confirm_permission_with_policy(

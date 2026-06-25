@@ -57,6 +57,7 @@ def main() -> None:
 
     print_startup_header(cwd, "write-enabled" if not dry_run else "dry-run", model or settings.agent_model)
     workspace_summary = analyze_workspace(cwd)
+    StatusReporter.mark_workspace_seen(workspace_summary)
     console.print(f"[bold cyan]WORKSPACE[/bold cyan]   {workspace_summary.splitlines()[0]}")
     for line in workspace_summary.splitlines()[1:]:
         console.print(line)
@@ -636,7 +637,7 @@ def is_persona_instruction(user_input: str) -> bool:
 
 def read_prompt() -> str:
     console.print(Text("You", style="bold green"), end=" ")
-    value = input("| ").strip()
+    value = input("(/help /history /report /diff) | ").strip()
     return value
 
 

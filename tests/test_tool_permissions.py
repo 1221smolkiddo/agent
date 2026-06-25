@@ -1,7 +1,12 @@
 from pathlib import Path
 
 import code_agent.tools as tools_module
-from code_agent.permissions import ApprovalMode, PermissionPolicy, format_permission_detail
+from code_agent.permissions import (
+    ApprovalMode,
+    PermissionPolicy,
+    _format_permission_preview,
+    format_permission_detail,
+)
 from code_agent.schema import (
     DeleteFileAction,
     DependencyGraphAction,
@@ -174,6 +179,49 @@ def test_permission_detail_truncates_large_preview() -> None:
     assert "line 19" in rendered
     assert "line 20" not in rendered
     assert "<preview truncated:" in rendered
+
+
+def test_permission_preview_summarizes_diff_without_raw_hunks() -> None:
+    detail = "\n".join(
+        [
+            "--- a/app.py",
+            "+++ b/app.py",
+            "@@ -1 +1 @@",
+            "-old_value = 1",
+            "+new_value = 2",
+        ]
+    )
+
+    rendered = _format_permission_preview(detail)
+
+    assert "Files: app.py" in rendered
+    assert "Changes: +1 -1" in rendered
+    assert "new_value = 2" not in rendered
+    assert "@@" not in rendered
+
+
+def test_permission_preview_uses_patch_summary_before_hidden_diff() -> None:
+    detail = "\n".join(
+        [
+            "Patch preview:",
+            "Files: 1",
+            "Total changes: +1 -1",
+            "- app.py: update, +1 -1",
+            "",
+            "Unified diff:",
+            "--- a/app.py",
+            "+++ b/app.py",
+            "@@ -1 +1 @@",
+            "-old_value = 1",
+            "+new_value = 2",
+        ]
+    )
+
+    rendered = _format_permission_preview(detail)
+
+    assert "Patch preview:" in rendered
+    assert "- app.py: update, +1 -1" in rendered
+    assert "new_value = 2" not in rendered
 
 
 def test_write_file_returns_truncated_large_diff_to_model(tmp_path: Path) -> None:

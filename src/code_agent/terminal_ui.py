@@ -56,8 +56,7 @@ def print_startup_header(cwd: str, mode: str, model: str) -> None:
     header = Text()
     header.append("Agent47", style="bold cyan")
     header.append(" │ ", style="muted")
-    header.append("Workspace: ", style="muted")
-    header.append(Path(cwd).name, style="cyan")
+    header.append(str(Path(cwd)), style="cyan")
     header.append(" │ ", style="muted")
     header.append("Model: ", style="muted")
     header.append(model, style="cyan")
@@ -65,8 +64,6 @@ def print_startup_header(cwd: str, mode: str, model: str) -> None:
     header.append("Write Enabled" if mode == "write-enabled" else "Dry Run", style="green" if mode == "write-enabled" else "yellow")
 
     console.print(header)
-    console.print(Text(f"Path: {cwd}", style="muted"))
-    console.print(Text("Type a task or /help", style="muted"))
     console.print()
 
 def print_key_values(title: str, rows: Iterable[tuple[str, object]]) -> None:
@@ -95,11 +92,7 @@ def print_work_report_panel(result: AgentRunResult) -> None:
         
     text = Text()
     
-    task = _single_line(_clean_task_text(result))
-    if task:
-        text.append("✓ ", style="green")
-        text.append("Task Completed\n", style="bold")
-        text.append(f"{task}\n\n")
+    text.append("Done\n", style="bold green")
         
     modified_paths = []
     created_paths = []
@@ -129,12 +122,6 @@ def print_work_report_panel(result: AgentRunResult) -> None:
             for p in deleted_paths:
                 text.append(f"• Deleted {p}\n")
         text.append("\n")
-        # Backwards-compatible section header for tests and familiarity
-        if modified_paths:
-            text.append("Modified:\n", style="bold")
-            for p in modified_paths:
-                text.append(f"• {p}\n")
-            text.append("\n")
         
     if result.verification_results:
         text.append("Verification:\n", style="muted")
@@ -145,7 +132,7 @@ def print_work_report_panel(result: AgentRunResult) -> None:
             text.append(f"{status} {label} — {status_word}\n", style="green" if v.get("ok") else "red")
         text.append("\n")
 
-    if not created_paths and not modified_paths and not deleted_paths:
+    if not created_paths and not modified_paths and not deleted_paths and not result.verification_results:
         text.append(f"{_single_line(result.message, max_chars=900)}\n")
 
     # Duration: if provided by result, display it

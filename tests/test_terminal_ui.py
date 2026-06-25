@@ -32,8 +32,9 @@ def test_format_work_report_body_produces_rich_panel() -> None:
 
     text = capture.get()
     
-    assert "update the docs" in text
-    assert "Modified:" in text
+    assert "Done" in text
+    assert "update the docs" not in text
+    assert "Modified:" not in text
     assert "docs/PROGRESS.md" in text
     assert "Verification:" in text
     assert "Passed" in text

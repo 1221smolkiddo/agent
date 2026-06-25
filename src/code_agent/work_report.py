@@ -66,17 +66,12 @@ def format_work_report_body(result: AgentRunResult) -> str:
 
 def _meaningful_sections(result: AgentRunResult) -> list[tuple[str, str]]:
     sections: list[tuple[str, str]] = []
-    task = _single_line(_clean_task_text(result))
-    if task:
-        sections.append(("Task", task))
     progress = _progress_summary(result)
     if progress:
         sections.append(("Plan", progress))
     targets = _latest_plan_list(result.plan_updates, "target_files")
     if targets:
         sections.append(("Intended Files", _list_or_empty(targets)))
-    if result.changed_paths:
-        sections.append(("Files Modified", _list_or_empty(result.changed_paths)))
     # Reconcile intended vs actual
     if targets and result.changed_paths:
         intended_set = set(targets)
@@ -182,9 +177,14 @@ def _context_items(result: AgentRunResult) -> list[dict[str, str]]:
 def _command_items(result: AgentRunResult) -> list[dict[str, str]]:
     commands: list[dict[str, str]] = []
     seen: set[str] = set()
-    for item in [*result.command_records, *result.verification_results]:
+    verification_commands = {
+        str(item.get("command", "")).strip()
+        for item in result.verification_results
+        if str(item.get("command", "")).strip()
+    }
+    for item in result.command_records:
         command = str(item.get("command", "")).strip()
-        if not command or command in seen:
+        if not command or command in seen or command in verification_commands:
             continue
         seen.add(command)
         status = str(item.get("status", "passed" if item.get("ok") else "failed"))
