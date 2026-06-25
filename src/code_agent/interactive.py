@@ -5,6 +5,7 @@ from typing import Protocol
 
 import typer  # noqa: F401
 from rich.prompt import Prompt
+from rich.table import Table
 from typer._click.exceptions import Abort
 
 from .config import Settings
@@ -28,6 +29,7 @@ from .terminal_ui import (
     print_error_card,
     print_key_values,
     print_panel,
+    print_renderable_panel,
     print_startup_header,
     print_work_report_panel,
     print_response,
@@ -414,43 +416,39 @@ def handle_command(
 
 
 def print_help() -> None:
-    print_panel(
-        "Help",
-        """
-Commands:
-  /help              Show this help.
-  /status            Show current workspace, model, mode, and approvals.
-  /dry-run           Inspect only; skip writes and shell commands.
-  /write             Allow writes and shell commands.
-  /stream [off]      Turn compact model streaming progress on or off.
-  /cwd <path>        Change workspace.
-  /sandbox [off]     Create and use a sandbox copy, or turn it off.
-  /sandbox diff      Show changes between the sandbox and base workspace.
-  /sandbox apply     Promote sandbox changes back to the base workspace.
-  /model <name>      Change model for this session.
-  /model             Pick a built-in model preset interactively.
-  /profile <name>    Change model profile: default, planner, coder, reviewer, or fast.
-  /max-steps <n>     Change max agent loop steps.
-  /max-failures <n>  Change consecutive failure recovery budget.
-  /approve-all       Approve all actions for each task after first approval.
-  /auto-read         Auto-approve read-only operations.
-  /per-action        Require individual approval for every action.
-  /history           Show recent saved agent runs.
-  /history-show <id> Show saved steps for one run.
-  /diff             Show where to find detailed diff output.
-  /resume <id> [msg] Resume a saved run with optional extra instruction.
-  /revert <id|last>  Revert verified file changes from a prior run.
-  /restore <id|last> Alias for /revert.
-  /clear             Clear the terminal screen.
-  /report            Information about detailed reports.
-  /files             Show current workspace path.
-  /models            Preview model presets and select one.
-  /settings          Show current session settings.
-  /debug             Show stack trace of the last error.
-  /stop              Quit.
-  /exit              Quit.
-""".strip()
-    )
+    table = Table(show_header=True, header_style="bold cyan", box=None, padding=(0, 2))
+    table.add_column("Command", style="cyan", no_wrap=True)
+    table.add_column("Use", overflow="fold")
+    for command, description in [
+        ("/help", "Show this help."),
+        ("/status", "Show workspace, model, mode, and approvals."),
+        ("/models", "Preview model presets and select one."),
+        ("/model <name>", "Change model for this session."),
+        ("/profile <name>", "Change model profile: default, planner, coder, reviewer, or fast."),
+        ("/dry-run", "Inspect only; skip writes and shell commands."),
+        ("/write", "Allow writes and shell commands."),
+        ("/stream [off]", "Turn compact model streaming progress on or off."),
+        ("/cwd <path>", "Change workspace."),
+        ("/sandbox [off]", "Create and use a sandbox copy, or turn it off."),
+        ("/sandbox diff", "Show changes between the sandbox and base workspace."),
+        ("/sandbox apply", "Promote sandbox changes back to the base workspace."),
+        ("/approve-all", "Approve all actions for each task after first approval."),
+        ("/auto-read", "Auto-approve read-only operations."),
+        ("/per-action", "Require individual approval for every action."),
+        ("/history", "Show recent saved agent runs."),
+        ("/history-show <id>", "Show saved steps for one run."),
+        ("/resume <id> [msg]", "Resume a saved run with optional extra instruction."),
+        ("/restore <id|last>", "Restore verified file changes from a prior run."),
+        ("/revert <id|last>", "Alias for restore."),
+        ("/diff", "Show where to find detailed diff output."),
+        ("/report", "Show where detailed reports are saved."),
+        ("/files", "Show current workspace path."),
+        ("/settings", "Show current session settings."),
+        ("/debug", "Show stack trace of the last error."),
+        ("/stop", "Quit interactive mode."),
+    ]:
+        table.add_row(command, description)
+    print_renderable_panel("Help", table, style="cyan")
 
 
 def print_history(settings: Settings) -> None:
@@ -459,10 +457,14 @@ def print_history(settings: Settings) -> None:
     if not rows:
         print_panel("History", "No runs recorded yet.")
         return
-    print_panel(
-        "History",
-        "\n".join(f"{row['id']} | {row['created_at']} | {row['model']} | {row['task']}" for row in rows),
-    )
+    table = Table(show_header=True, header_style="bold cyan", box=None, padding=(0, 2))
+    table.add_column("Run", style="cyan", no_wrap=True)
+    table.add_column("Created", style="muted", no_wrap=True)
+    table.add_column("Model", overflow="fold")
+    table.add_column("Task", overflow="fold")
+    for row in rows:
+        table.add_row(str(row["id"]), str(row["created_at"]), str(row["model"]), str(row["task"]))
+    print_renderable_panel("History", table, style="cyan")
 
 
 def print_history_detail(settings: Settings, value: str) -> None:
@@ -578,7 +580,7 @@ def run_revert_command(
 
 
 def prompt_model_selection(current_model: str) -> str | None:
-    print_panel("Models", format_model_selection_preview(current_model))
+    print_renderable_panel("Models", build_model_selection_table(current_model), style="cyan")
     choice = Prompt.ask(
         "Select model preset by number/name, enter a custom model id, or press Enter to keep current",
         default="",
@@ -618,6 +620,35 @@ def format_model_selection_preview(current_model: str) -> str:
         ]
     )
     return "\n".join(lines)
+
+
+def build_model_selection_table(current_model: str) -> Table:
+    table = Table(
+        show_header=True,
+        header_style="bold cyan",
+        box=None,
+        padding=(0, 2),
+        title=Text(f"Current model: {current_model}", style="muted"),
+        title_justify="left",
+    )
+    table.add_column("#", justify="right", style="cyan", no_wrap=True)
+    table.add_column("Preset", style="bold")
+    table.add_column("Provider", style="muted", no_wrap=True)
+    table.add_column("Model", style="cyan", overflow="fold")
+    table.add_column("Best for", overflow="fold")
+    for index, preset in enumerate(MODEL_PRESETS.values(), start=1):
+        table.add_row(
+            str(index),
+            preset.name,
+            preset.provider,
+            preset.model,
+            preset.description,
+        )
+    table.caption = (
+        "Select by number/name, or enter any provider model id. "
+        "Most terminals encode Ctrl+M as Enter; use /models for the picker."
+    )
+    return table
 
 
 def is_casual_greeting(user_input: str) -> bool:
