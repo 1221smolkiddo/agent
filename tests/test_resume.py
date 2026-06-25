@@ -1,7 +1,10 @@
 from pathlib import Path
+import sqlite3
+import json
 
 from code_agent.resume import build_resume_task, compact_run_context, format_run_detail
-from code_agent.storage import AgentStorage
+from code_agent.storage import CURRENT_SCHEMA_VERSION, AgentStorage
+from code_agent.debug_bundle import export_debug_bundle
 
 
 def test_storage_returns_run_and_decoded_steps(tmp_path: Path) -> None:
@@ -26,6 +29,77 @@ def test_storage_returns_run_and_decoded_steps(tmp_path: Path) -> None:
     assert steps[0]["role"] == "assistant"
     assert steps[0]["payload"] == {"type": "read_file", "path": "src/parser.py"}
     assert steps[1]["payload"]["output"] == "parser source"
+    assert storage.schema_version == CURRENT_SCHEMA_VERSION
+
+
+def test_storage_migrates_legacy_database_and_creates_backup(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            create table runs (
+                id integer primary key autoincrement,
+                created_at text not null default current_timestamp,
+                task text not null,
+                model text not null,
+                cwd text not null
+            );
+            create table steps (
+                id integer primary key autoincrement,
+                run_id integer not null references runs(id),
+                created_at text not null default current_timestamp,
+                role text not null,
+                payload text not null
+            );
+            create table work_reports (
+                id integer primary key autoincrement,
+                run_id integer not null unique references runs(id),
+                created_at text not null default current_timestamp,
+                body text not null,
+                payload text not null
+            );
+            create table model_usage (
+                id integer primary key autoincrement,
+                run_id integer not null references runs(id),
+                created_at text not null default current_timestamp,
+                provider text,
+                model text not null,
+                ok integer not null,
+                prompt_tokens integer,
+                completion_tokens integer,
+                total_tokens integer,
+                fallback_from text,
+                error text,
+                payload text not null
+            );
+            """
+        )
+
+    storage = AgentStorage(db_path)
+
+    assert storage.schema_version == CURRENT_SCHEMA_VERSION
+    assert list(tmp_path.glob("agent.db.bak-*"))
+    with sqlite3.connect(db_path) as conn:
+        columns = {row[1] for row in conn.execute("pragma table_info(model_usage)").fetchall()}
+    assert "estimated_cost_usd" in columns
+
+
+def test_debug_bundle_export_redacts_saved_payloads(tmp_path: Path) -> None:
+    storage = AgentStorage(tmp_path / "agent.db")
+    run_id = storage.create_run("debug TOKEN=super-secret-token", "fake-model", tmp_path)
+    storage.add_step(
+        run_id,
+        "tool",
+        {"type": "tool_result", "ok": False, "output": "API_KEY=super-secret-token"},
+    )
+
+    path = export_debug_bundle(storage, run_id, tmp_path / "bundles")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["type"] == "agent47_debug_bundle"
+    assert payload["run"]["id"] == run_id
+    assert "super-secret-token" not in path.read_text(encoding="utf-8")
+    assert payload["summary"]["failed_tool_step_count"] == 1
 
 
 def test_storage_saves_and_updates_work_report(tmp_path: Path) -> None:

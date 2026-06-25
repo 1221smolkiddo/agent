@@ -7,6 +7,7 @@ import inspect
 import os
 import re
 import shutil
+import signal
 import subprocess
 import urllib.parse
 import urllib.request
@@ -299,31 +300,38 @@ class ToolRegistry:
         )
         if not self._approve("run_shell", approval_detail):
             return ToolResult(ok=False, output="Permission denied for run_shell.")
-        try:
-            if self._is_python_test_command(command):
-                self._clear_python_bytecode_cache()
-            completed = subprocess.run(
-                command,
-                cwd=self.workspace,
-                shell=True,
-                text=True,
-                capture_output=True,
-                timeout=policy.timeout_seconds,
-                check=False,
-                env=self._safe_shell_env(python_no_bytecode=self._is_python_test_command(command)),
-            )
-        except subprocess.TimeoutExpired as exc:
-            output = "\n".join(
-                self._coerce_process_output(part) for part in [exc.stdout, exc.stderr] if part
-            ).strip()
+        if self._is_python_test_command(command):
+            self._clear_python_bytecode_cache()
+        completed, timed_out, timeout_output = self._run_shell_process(
+            command,
+            timeout_seconds=policy.timeout_seconds,
+            env=self._safe_shell_env(python_no_bytecode=self._is_python_test_command(command)),
+        )
+        if timed_out:
+            output = timeout_output.strip()
             detail = f"Shell command timed out after {policy.timeout_seconds}s."
             if output:
                 detail += "\n" + output
-            return ToolResult(ok=False, output=redact_secrets(self._truncate(detail, MAX_SHELL_OUTPUT_CHARS)))
+            return ToolResult(
+                ok=False,
+                output=redact_secrets(self._truncate(detail, MAX_SHELL_OUTPUT_CHARS)),
+                metadata={
+                    "category": policy.category,
+                    "risk": policy.risk,
+                    "timeout_seconds": policy.timeout_seconds,
+                    "process_tree_cleanup": True,
+                },
+            )
         output = "\n".join(part for part in [completed.stdout, completed.stderr] if part).strip()
         return ToolResult(
             ok=completed.returncode == 0,
             output=redact_secrets(self._truncate(output, MAX_SHELL_OUTPUT_CHARS)) or "<no output>",
+            metadata={
+                "category": policy.category,
+                "risk": policy.risk,
+                "timeout_seconds": policy.timeout_seconds,
+                "process_tree_cleanup": True,
+            },
         )
 
     def _search(self, query: str, requested_path: str | None) -> ToolResult:
@@ -582,6 +590,72 @@ class ToolRegistry:
         if python_no_bytecode:
             env["PYTHONDONTWRITEBYTECODE"] = "1"
         return env
+
+    def _run_shell_process(
+        self,
+        command: str,
+        *,
+        timeout_seconds: int,
+        env: dict[str, str],
+    ) -> tuple[subprocess.CompletedProcess[str], bool, str]:
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+        start_new_session = os.name != "nt"
+        process = subprocess.Popen(
+            command,
+            cwd=self.workspace,
+            shell=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+            creationflags=creationflags,
+            start_new_session=start_new_session,
+        )
+        try:
+            stdout, stderr = process.communicate(timeout=timeout_seconds)
+            return (
+                subprocess.CompletedProcess(command, process.returncode, stdout, stderr),
+                False,
+                "",
+            )
+        except subprocess.TimeoutExpired as exc:
+            self._terminate_process_tree(process)
+            stdout, stderr = process.communicate()
+            output = "\n".join(
+                self._coerce_process_output(part)
+                for part in [exc.stdout, exc.stderr, stdout, stderr]
+                if part
+            )
+            return (
+                subprocess.CompletedProcess(command, process.returncode, stdout, stderr),
+                True,
+                output,
+            )
+
+    @staticmethod
+    def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
+        if process.poll() is not None:
+            return
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                text=True,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+            return
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except OSError:
+            process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except OSError:
+                process.kill()
 
     @staticmethod
     def _is_python_test_command(command: str) -> bool:

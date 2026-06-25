@@ -69,6 +69,7 @@ code-agent run-json --dry-run "Inspect this project and emit JSON protocol event
 code-agent evals
 code-agent history
 code-agent history show 12
+code-agent history export 12
 code-agent resume 12 "Continue from the failed verification"
 code-agent revert 12
 code-agent sandbox diff .code-agent/sandboxes/sandbox-20260619-120000
@@ -93,9 +94,21 @@ Local evals:
 
 ```bash
 uv run code-agent evals
+uv run code-agent evals --json
 ```
 
-The eval suite runs deterministic safety regressions plus fixture coding tasks for file creation, file editing, test fixing, and failed-read recovery.
+The eval suite runs deterministic safety regressions plus fixture coding tasks for file creation,
+file editing, test fixing, failed-read recovery, dirty-worktree awareness, and patch-conflict
+recovery. `--json` emits benchmark-style metrics and per-case results for trend tracking.
+
+Debug bundles:
+
+```bash
+uv run code-agent history export 12
+```
+
+The export command writes a redacted JSON bundle with the saved run, steps, work report, model
+usage, and summary metrics under `.code-agent/debug-bundles/` by default.
 
 Interactive mode:
 

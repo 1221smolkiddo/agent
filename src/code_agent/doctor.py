@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Literal
 
 from .config import Settings
+from .storage import AgentStorage
 
 
 DoctorStatus = Literal["pass", "warn", "fail"]
@@ -145,6 +146,7 @@ def _check_storage(db_path: Path) -> DoctorCheck:
         if not target.is_absolute():
             target = Path.cwd() / target
         target.parent.mkdir(parents=True, exist_ok=True)
+        storage = AgentStorage(target)
         with sqlite3.connect(target) as conn:
             conn.execute("select 1")
     except sqlite3.Error as exc:
@@ -161,7 +163,11 @@ def _check_storage(db_path: Path) -> DoctorCheck:
             str(exc),
             "Set AGENT_DB_PATH to a writable SQLite location.",
         )
-    return DoctorCheck("sqlite-storage", "pass", str(target))
+    return DoctorCheck(
+        "sqlite-storage",
+        "pass",
+        f"{target} (schema v{storage.schema_version})",
+    )
 
 
 def _check_console_scripts() -> DoctorCheck:

@@ -40,11 +40,11 @@ Goal: make saved run history safe across public releases.
 
 To-do:
 
-- Add a schema version table.
-- Move ad hoc schema updates into explicit migrations.
-- Add migration tests from old database shapes.
-- Add doctor output for current DB version.
-- Add backup-before-migrate behavior for non-empty databases.
+- Add a schema version table. Status: done.
+- Move ad hoc schema updates into explicit migrations. Status: done.
+- Add migration tests from old database shapes. Status: done.
+- Add doctor output for current DB version. Status: done.
+- Add backup-before-migrate behavior for non-empty databases. Status: done.
 
 Implementation plan:
 
@@ -66,8 +66,8 @@ Goal: measure real coding-agent ability, not just deterministic tool behavior.
 
 To-do:
 
-- Add fixture repos for larger tasks.
-- Track solve rate, verification rate, recovery rate, and false-success prevention.
+- Add fixture repos for larger tasks. Status: partial, with dirty-worktree and patch-conflict fixtures.
+- Track solve rate, verification rate, recovery rate, and false-success prevention. Status: partial, with JSON metrics and category pass rates.
 - Add benchmark categories for Python, Node, docs, CLI, and mixed multi-file work.
 - Add prompt-injection and dirty-worktree scenarios.
 - Save eval reports as JSON for trend tracking.
@@ -95,8 +95,8 @@ To-do:
 - Track tool timing.
 - Track model latency.
 - Track retry counts and failure categories.
-- Export a debug bundle for one run.
-- Include redacted prompts, actions, tool results, diffs, verification output, and model usage.
+- Export a debug bundle for one run. Status: done with `code-agent history export`.
+- Include redacted prompts, actions, tool results, diffs, verification output, and model usage. Status: done for saved run payloads, work reports, and model usage.
 
 Implementation plan:
 
@@ -117,10 +117,10 @@ Goal: make shell execution safer for real projects.
 
 To-do:
 
-- Add timeout tiers by command risk.
+- Add timeout tiers by command risk. Status: done through shell policy enforcement.
 - Add cancellation for running shell commands.
 - Add optional network-deny mode.
-- Add process tree cleanup on timeout or stop.
+- Add process tree cleanup on timeout or stop. Status: partial, with timeout process-tree cleanup.
 - Research platform-specific isolation options for Windows, macOS, and Linux.
 
 Implementation plan:

@@ -1172,7 +1172,13 @@ class CodingAgent:
 
     @staticmethod
     def _context_record_from_action(action: AgentAction, result: ToolResult) -> dict[str, Any] | None:
-        if action.type not in {"repo_map", "rank_context", "symbol_index", "dependency_graph"}:
+        if action.type not in {
+            "inspect_git_diff",
+            "repo_map",
+            "rank_context",
+            "symbol_index",
+            "dependency_graph",
+        }:
             return None
         item: dict[str, Any] = {
             "action": action.type,

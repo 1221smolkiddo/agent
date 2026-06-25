@@ -152,15 +152,19 @@ def test_pytest_shell_command_clears_bytecode_cache_and_disables_new_bytecode(
 
     def fake_run(*_args, **kwargs):
         captured_env.update(kwargs.get("env", {}))
-        return tools_module.subprocess.CompletedProcess(
-            args=kwargs.get("args", "python -m pytest"),
-            returncode=0,
-            stdout="passed",
-            stderr="",
+        return (
+            tools_module.subprocess.CompletedProcess(
+                args="python -m pytest",
+                returncode=0,
+                stdout="passed",
+                stderr="",
+            ),
+            False,
+            "",
         )
 
-    monkeypatch.setattr(tools_module.subprocess, "run", fake_run)
     tools = ToolRegistry(workspace=tmp_path, dry_run=False, approval_callback=lambda _a, _d: True)
+    monkeypatch.setattr(tools, "_run_shell_process", fake_run)
 
     result = tools.run(RunShellAction(type="run_shell", command="python -m pytest"))
 

@@ -14,7 +14,7 @@ This file should be updated whenever a meaningful Agent47 capability is added. K
 
 ## Enabled CLI Commands
 
-There are currently **11 user-facing CLI command entries**:
+There are currently **12 user-facing CLI command entries**:
 
 | Command | Purpose |
 | --- | --- |
@@ -23,6 +23,7 @@ There are currently **11 user-facing CLI command entries**:
 | `code-agent doctor` | Check local install, platform, tools, storage, and configuration. |
 | `code-agent history` | Show recent saved agent runs from SQLite. |
 | `code-agent history show <run-id>` | Show saved steps for one agent run. |
+| `code-agent history export <run-id>` | Export a redacted debug bundle for one agent run. |
 | `code-agent resume <run-id>` | Resume a saved run with compact prior context. |
 | `code-agent revert <run-id>` | Revert verified file changes from a prior run. |
 | `code-agent sandbox diff <sandbox-path>` | Show changed files and unified diffs between a sandbox and base workspace. |
@@ -41,11 +42,13 @@ uv run code-agent run --sandbox "Try a risky change in an isolated copy"
 uv run code-agent run --max-failures 5 "Recover from failed tool attempts"
 uv run code-agent history
 uv run code-agent history show 12
+uv run code-agent history export 12
 uv run code-agent resume 12 "Continue after the failed check"
 uv run code-agent revert 12
 uv run code-agent sandbox diff .code-agent/sandboxes/sandbox-20260619-120000
 uv run code-agent sandbox apply .code-agent/sandboxes/sandbox-20260619-120000
 uv run code-agent evals
+uv run code-agent evals --json
 agent47
 ```
 
@@ -153,12 +156,15 @@ There are currently **19 model-requestable actions**:
 | Stop shortcut: `Ctrl+C` and `/stop` | Enabled |
 | Code parsing: tree-sitter | Enabled as optional parsing extra |
 | Storage: SQLite | Enabled |
+| Storage migrations: schema versioning and legacy backup | Enabled |
 | Testing: pytest | Enabled |
 | Local deterministic evals | Enabled |
+| Eval metrics: JSON output and category pass rates | Enabled |
 | Frontend JSON protocol: NDJSON subprocess transport with correlated stdin approvals | Enabled |
 | Prompt-injection defenses for untrusted tool output | Enabled |
 | Public alpha release metadata and checklist | Enabled |
 | Install diagnostics: `code-agent doctor` | Enabled |
+| Debug bundles: redacted `history export` run artifacts | Enabled |
 | Default model: Qwen via OpenRouter | Enabled |
 | Packaging: uv | Enabled |
 | Collaboration: GitHub docs/templates/CI | Enabled |
@@ -231,7 +237,7 @@ For the next implementation to-do list, see [INDUSTRY_AGENT_PLAN.md](INDUSTRY_AG
 - `inspect_git_diff` shows dirty files and optional bounded diff hunks so Agent47 can avoid overwriting existing user changes.
 - `repo_map`, `rank_context`, `symbol_index`, and `dependency_graph` give Agent47 a lightweight repository index, task-aware file ranking, compact declaration map, and import impact map before broad reads.
 - Repo-map, ranking, symbol-index, and dependency-graph actions are stored in run history and summarized in structured work reports as context analysis.
-- `code-agent evals` runs offline deterministic checks for greeting routing, blocked-write honesty, denied-read non-leakage, sandbox isolation, file creation, file editing, test fixing, and failed-read recovery.
+- `code-agent evals` runs offline deterministic checks for greeting routing, blocked-write honesty, denied-read non-leakage, sandbox isolation, file creation, file editing, test fixing, failed-read recovery, dirty-worktree awareness, and patch-conflict recovery. `--json` emits metrics and per-case results for trend tracking.
 - `code-agent run-json` emits versioned NDJSON events, fails closed on approvals by default, supports `--approval-stdin` request/response approvals with matching request IDs for parent editor processes, includes approval metadata for frontend UIs, and keeps `--approve-all` only for trusted automation.
 - `code-agent doctor` checks Python version, platform, workspace writability, SQLite storage, console scripts, Git, ripgrep, API-key presence, and `.env` setup without exposing secrets.
 - `docs/INSTALL.md` documents Windows, macOS, Linux, uv, editable pip, and pipx installation paths.

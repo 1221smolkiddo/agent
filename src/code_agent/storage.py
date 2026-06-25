@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+
+CURRENT_SCHEMA_VERSION = 2
 
 
 class AgentStorage:
@@ -71,6 +76,11 @@ class AgentStorage:
             }
             for row in rows
         ]
+
+    @property
+    def schema_version(self) -> int:
+        with self._connect() as conn:
+            return self._current_schema_version(conn)
 
     def save_work_report(
         self,
@@ -169,50 +179,121 @@ class AgentStorage:
 
     def _init_db(self) -> None:
         with self._connect() as conn:
-            conn.executescript(
-                """
-                create table if not exists runs (
-                    id integer primary key autoincrement,
-                    created_at text not null default current_timestamp,
-                    task text not null,
-                    model text not null,
-                    cwd text not null
-                );
+            self._migrate(conn)
 
-                create table if not exists steps (
-                    id integer primary key autoincrement,
-                    run_id integer not null references runs(id),
-                    created_at text not null default current_timestamp,
-                    role text not null,
-                    payload text not null
-                );
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        legacy_database = self._has_user_tables(conn) and not self._table_exists(
+            conn, "schema_migrations"
+        )
+        if legacy_database:
+            self._backup_before_migration()
+            self._create_migration_table(conn)
+            self._record_migration(conn, 1)
+        else:
+            self._create_migration_table(conn)
 
-                create table if not exists work_reports (
-                    id integer primary key autoincrement,
-                    run_id integer not null unique references runs(id),
-                    created_at text not null default current_timestamp,
-                    body text not null,
-                    payload text not null
-                );
+        version = self._current_schema_version(conn)
+        if version < 1:
+            self._migration_001_initial(conn)
+            self._record_migration(conn, 1)
+            version = 1
+        if version < 2:
+            self._migration_002_model_usage_cost(conn)
+            self._record_migration(conn, 2)
 
-                create table if not exists model_usage (
-                    id integer primary key autoincrement,
-                    run_id integer not null references runs(id),
-                    created_at text not null default current_timestamp,
-                    provider text,
-                    model text not null,
-                    ok integer not null,
-                    prompt_tokens integer,
-                    completion_tokens integer,
-                    total_tokens integer,
-                    estimated_cost_usd real,
-                    fallback_from text,
-                    error text,
-                    payload text not null
-                );
-                """
+    def _migration_001_initial(self, conn: sqlite3.Connection) -> None:
+        conn.executescript(
+            """
+            create table if not exists runs (
+                id integer primary key autoincrement,
+                created_at text not null default current_timestamp,
+                task text not null,
+                model text not null,
+                cwd text not null
+            );
+
+            create table if not exists steps (
+                id integer primary key autoincrement,
+                run_id integer not null references runs(id),
+                created_at text not null default current_timestamp,
+                role text not null,
+                payload text not null
+            );
+
+            create table if not exists work_reports (
+                id integer primary key autoincrement,
+                run_id integer not null unique references runs(id),
+                created_at text not null default current_timestamp,
+                body text not null,
+                payload text not null
+            );
+
+            create table if not exists model_usage (
+                id integer primary key autoincrement,
+                run_id integer not null references runs(id),
+                created_at text not null default current_timestamp,
+                provider text,
+                model text not null,
+                ok integer not null,
+                prompt_tokens integer,
+                completion_tokens integer,
+                total_tokens integer,
+                fallback_from text,
+                error text,
+                payload text not null
+            );
+            """
+        )
+
+    def _migration_002_model_usage_cost(self, conn: sqlite3.Connection) -> None:
+        self._ensure_column(conn, "model_usage", "estimated_cost_usd", "real")
+
+    def _create_migration_table(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            create table if not exists schema_migrations (
+                version integer primary key,
+                applied_at text not null default current_timestamp
             )
-            self._ensure_column(conn, "model_usage", "estimated_cost_usd", "real")
+            """
+        )
+
+    def _record_migration(self, conn: sqlite3.Connection, version: int) -> None:
+        conn.execute(
+            "insert or ignore into schema_migrations (version) values (?)",
+            (version,),
+        )
+
+    def _current_schema_version(self, conn: sqlite3.Connection) -> int:
+        if not self._table_exists(conn, "schema_migrations"):
+            return 0
+        row = conn.execute("select max(version) as version from schema_migrations").fetchone()
+        return int(row["version"] or 0)
+
+    def _backup_before_migration(self) -> None:
+        if not self.db_path.exists():
+            return
+        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        backup_path = self.db_path.with_name(f"{self.db_path.name}.bak-{stamp}")
+        shutil.copy2(self.db_path, backup_path)
+
+    @staticmethod
+    def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+        row = conn.execute(
+            "select name from sqlite_master where type = 'table' and name = ?",
+            (table,),
+        ).fetchone()
+        return row is not None
+
+    @staticmethod
+    def _has_user_tables(conn: sqlite3.Connection) -> bool:
+        rows = conn.execute(
+            """
+            select name from sqlite_master
+            where type = 'table' and name not like 'sqlite_%'
+            """
+        ).fetchall()
+        return bool(rows)
 
     @staticmethod
     def _ensure_column(

@@ -171,15 +171,19 @@ def test_run_shell_blocks_compound_command_without_prompt(tmp_path: Path) -> Non
 
 def test_run_shell_redacts_secret_output(tmp_path: Path, monkeypatch) -> None:
     def fake_run(*_args, **_kwargs):
-        return subprocess.CompletedProcess(
+        return (
+            subprocess.CompletedProcess(
             args=["pwsh"],
             returncode=0,
             stdout="TOKEN=super-secret-token\n",
             stderr="",
+            ),
+            False,
+            "",
         )
 
-    monkeypatch.setattr(tools_module.subprocess, "run", fake_run)
     tools = ToolRegistry(workspace=tmp_path, dry_run=False, approval_callback=lambda _a, _d: True)
+    monkeypatch.setattr(tools, "_run_shell_process", fake_run)
 
     result = tools.run(RunShellAction(type="run_shell", command="uv run pytest"))
 
@@ -194,15 +198,15 @@ def test_run_shell_uses_scrubbed_environment_and_policy_timeout(tmp_path: Path, 
 
     def fake_run(*_args, **kwargs):
         captured.update(kwargs)
-        return subprocess.CompletedProcess(args=["uv"], returncode=0, stdout="ok", stderr="")
+        return subprocess.CompletedProcess(args=["uv"], returncode=0, stdout="ok", stderr=""), False, ""
 
-    monkeypatch.setattr(tools_module.subprocess, "run", fake_run)
     tools = ToolRegistry(workspace=tmp_path, dry_run=False, approval_callback=lambda _a, _d: True)
+    monkeypatch.setattr(tools, "_run_shell_process", fake_run)
 
     result = tools.run(RunShellAction(type="run_shell", command="uv run pytest"))
 
     assert result.ok
-    assert captured["timeout"] == 120
+    assert captured["timeout_seconds"] == 120
     env = captured["env"]
     assert isinstance(env, dict)
     assert env["AGENT47_SANDBOXED_SHELL"] == "1"
@@ -211,15 +215,14 @@ def test_run_shell_uses_scrubbed_environment_and_policy_timeout(tmp_path: Path, 
 
 def test_run_shell_reports_timeout_with_capped_redacted_output(tmp_path: Path, monkeypatch) -> None:
     def timeout_run(*_args, **_kwargs):
-        raise subprocess.TimeoutExpired(
-            cmd="uv run pytest",
-            timeout=120,
-            output="TOKEN=super-secret-token\n",
-            stderr="x" * 30000,
+        return (
+            subprocess.CompletedProcess(args=["uv"], returncode=-9, stdout="", stderr=""),
+            True,
+            "TOKEN=super-secret-token\n" + "x" * 30000,
         )
 
-    monkeypatch.setattr(tools_module.subprocess, "run", timeout_run)
     tools = ToolRegistry(workspace=tmp_path, dry_run=False, approval_callback=lambda _a, _d: True)
+    monkeypatch.setattr(tools, "_run_shell_process", timeout_run)
 
     result = tools.run(RunShellAction(type="run_shell", command="uv run pytest"))
 
@@ -227,6 +230,7 @@ def test_run_shell_reports_timeout_with_capped_redacted_output(tmp_path: Path, m
     assert "timed out after 120s" in result.output
     assert "super-secret-token" not in result.output
     assert "<truncated" in result.output
+    assert result.metadata["process_tree_cleanup"] is True
 
 
 def test_search_redacts_secret_matches_when_fallback_runs(tmp_path: Path, monkeypatch) -> None:

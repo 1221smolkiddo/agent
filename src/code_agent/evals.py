@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Protocol
@@ -71,8 +72,51 @@ class EvalSuiteResult:
     def failed(self) -> int:
         return sum(1 for result in self.results if not result.ok)
 
+    @property
+    def metrics(self) -> dict[str, Any]:
+        by_category: dict[str, dict[str, int | float]] = {}
+        for result in self.results:
+            item = by_category.setdefault(result.category, {"total": 0, "passed": 0, "failed": 0})
+            item["total"] = int(item["total"]) + 1
+            if result.ok:
+                item["passed"] = int(item["passed"]) + 1
+            else:
+                item["failed"] = int(item["failed"]) + 1
+        for item in by_category.values():
+            total = int(item["total"])
+            item["pass_rate"] = round(int(item["passed"]) / total, 4) if total else 0.0
+        return {
+            "total": len(self.results),
+            "passed": self.passed,
+            "failed": self.failed,
+            "pass_rate": round(self.passed / len(self.results), 4) if self.results else 0.0,
+            "categories": by_category,
+        }
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "ok": self.ok,
+            "metrics": self.metrics,
+            "results": [
+                {
+                    "name": result.name,
+                    "ok": result.ok,
+                    "detail": result.detail,
+                    "category": result.category,
+                }
+                for result in self.results
+            ],
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.as_dict(), ensure_ascii=False, sort_keys=True)
+
     def format(self) -> str:
-        lines = [f"Agent47 local evals: {self.passed} passed, {self.failed} failed"]
+        metrics = self.metrics
+        lines = [
+            f"Agent47 local evals: {self.passed} passed, {self.failed} failed",
+            f"Metrics: pass_rate={metrics['pass_rate']:.2%}, total={metrics['total']}",
+        ]
         for result in self.results:
             marker = "PASS" if result.ok else "FAIL"
             lines.append(f"- {marker} {result.category}/{result.name}: {result.detail}")
@@ -91,6 +135,7 @@ class FixtureEvalCase:
     responses: list[str]
     validators: tuple[FixtureValidator, ...]
     approval_policy: ApprovalPolicy = lambda _action, _detail: True
+    dirty_files: dict[str, str] | None = None
     max_steps: int = 8
     max_failures: int = 3
 
@@ -509,6 +554,47 @@ def builtin_fixture_eval_cases() -> list[FixtureEvalCase]:
                 message_not_contains("wrong file"),
             ),
         ),
+        FixtureEvalCase(
+            name="dirty_worktree_awareness",
+            description="Inspect existing git changes before reporting on a dirty project.",
+            task="inspect git diff in this project before suggesting code edits",
+            files={
+                "README.md": "# Fixture\n",
+                "app.py": "VALUE = 1\n",
+            },
+            dirty_files={"app.py": "VALUE = 2\n"},
+            responses=[
+                '{"type":"inspect_git_diff","include_diff":true,"max_chars":4000}',
+                '{"type":"final","message":"I inspected the dirty worktree before suggesting edits."}',
+            ],
+            validators=(
+                context_recorded("inspect_git_diff"),
+                message_contains("dirty worktree"),
+            ),
+        ),
+        FixtureEvalCase(
+            name="patch_conflict_recovery",
+            description="Recover when a patch cannot apply, then make a safe exact edit.",
+            task="update the app mode from old to new",
+            files={"app.py": 'MODE = "old"\n'},
+            responses=[
+                (
+                    '{"type":"apply_patch","patch":"--- a/app.py\\n+++ b/app.py\\n'
+                    '@@ -1 +1 @@\\n-MODE = \\"missing\\"\\n+MODE = \\"new\\"\\n"}'
+                ),
+                (
+                    '{"type":"edit_file","path":"app.py",'
+                    '"find":"MODE = \\"old\\"","replace":"MODE = \\"new\\""}'
+                ),
+                '{"type":"final","message":"Updated app.py after recovering from the patch conflict."}',
+            ],
+            validators=(
+                mutation_failed("apply_patch", "app.py"),
+                mutation_succeeded("edit_file", "app.py"),
+                file_contains("app.py", 'MODE = "new"'),
+            ),
+            max_steps=8,
+        ),
     ]
 
 
@@ -570,6 +656,9 @@ def run_fixture_eval(case: FixtureEvalCase) -> tuple[bool, str]:
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw_workspace:
         workspace = Path(raw_workspace)
         _write_fixture_files(workspace, case.files)
+        _init_git_repo(workspace)
+        if case.dirty_files:
+            _write_fixture_files(workspace, case.dirty_files)
         model = ScriptedModel(list(case.responses))
         tools = ToolRegistry(
             workspace=workspace,
@@ -614,6 +703,18 @@ def _write_fixture_files(workspace: Path, files: dict[str, str]) -> None:
         path = workspace / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
+
+
+def _init_git_repo(workspace: Path) -> None:
+    subprocess.run(["git", "init"], cwd=workspace, capture_output=True, text=True, check=False)
+    subprocess.run(["git", "add", "."], cwd=workspace, capture_output=True, text=True, check=False)
+    subprocess.run(
+        ["git", "-c", "user.email=eval@example.com", "-c", "user.name=Eval", "commit", "-m", "init"],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def file_equals(relative_path: str, expected: str) -> FixtureValidator:

@@ -7,6 +7,7 @@ from typing import Optional
 import typer
 
 from .config import Settings
+from .debug_bundle import export_debug_bundle
 from .doctor import run_doctor
 from .factory import create_agent
 from .model_profiles import validate_profile_name
@@ -105,12 +106,14 @@ def run(
 
 
 @app.command("evals")
-def evals_command() -> None:
+def evals_command(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable eval results."),
+) -> None:
     """Run local deterministic safety and regression evals."""
     from . import evals as evals_module
 
     result = evals_module.run_builtin_evals()
-    typer.echo(result.format())
+    typer.echo(result.to_json() if json_output else result.format())
     if not result.ok:
         raise typer.Exit(code=1)
 
@@ -377,6 +380,21 @@ def history_show(run_id: int = typer.Argument(..., help="Run ID to inspect.")) -
             storage.get_work_report(run_id),
         )
     )
+
+
+@history_app.command("export")
+def history_export(
+    run_id: int = typer.Argument(..., help="Run ID to export."),
+    output_dir: Optional[Path] = typer.Option(None, "--output-dir", help="Directory for the debug bundle."),
+) -> None:
+    """Export a redacted debug bundle for one run."""
+    storage = AgentStorage(Settings().agent_db_path)
+    try:
+        path = export_debug_bundle(storage, run_id, output_dir)
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1)
+    typer.echo(f"Debug bundle exported: {path}")
 
 
 def main() -> None:

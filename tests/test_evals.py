@@ -1,4 +1,5 @@
 from typer.testing import CliRunner
+import json
 
 import code_agent.evals as evals_module
 from code_agent.cli import app
@@ -44,6 +45,8 @@ def test_builtin_fixture_eval_cases_cover_coding_behaviors() -> None:
         "sensitive_file_refusal",
         "prompt_injection_file_is_untrusted",
         "automatic_context_preflight",
+        "dirty_worktree_awareness",
+        "patch_conflict_recovery",
     }
 
 
@@ -51,9 +54,11 @@ def test_run_builtin_evals_passes() -> None:
     result = run_builtin_evals()
 
     assert result.ok
-    assert result.passed == 22
+    assert result.passed == 24
     assert result.failed == 0
-    assert "Agent47 local evals: 22 passed, 0 failed" in result.format()
+    assert result.metrics["pass_rate"] == 1.0
+    assert "Agent47 local evals: 24 passed, 0 failed" in result.format()
+    assert "Metrics: pass_rate=100.00%, total=24" in result.format()
     assert "fixture/fix_test" in result.format()
 
 
@@ -68,6 +73,7 @@ def test_eval_suite_format_reports_failures() -> None:
     assert not result.ok
     assert result.format() == (
         "Agent47 local evals: 1 passed, 1 failed\n"
+        "Metrics: pass_rate=50.00%, total=2\n"
         "- PASS safety/safe_case: good\n"
         "- FAIL safety/broken_case: bad"
     )
@@ -79,8 +85,20 @@ def test_cli_evals_command_runs_builtin_evals() -> None:
     result = runner.invoke(app, ["evals"])
 
     assert result.exit_code == 0, result.output
-    assert "Agent47 local evals: 22 passed, 0 failed" in result.output
+    assert "Agent47 local evals: 24 passed, 0 failed" in result.output
     assert "fixture/create_file" in result.output
+
+
+def test_cli_evals_command_outputs_json() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["evals", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["metrics"]["passed"] == 24
+    assert payload["metrics"]["categories"]["fixture"]["total"] == 17
 
 
 def test_cli_evals_command_exits_nonzero_when_any_eval_fails(monkeypatch) -> None:
