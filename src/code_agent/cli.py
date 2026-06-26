@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sys
 from typing import Optional
@@ -9,6 +10,7 @@ import typer
 from .config import Settings
 from .debug_bundle import export_debug_bundle
 from .doctor import run_doctor
+from .eval_reports import DEFAULT_REPORT_DIR, format_eval_report_index, list_eval_reports, save_eval_report
 from .factory import create_agent
 from .model_profiles import validate_profile_name
 from .model_presets import format_model_presets, resolve_model_preset
@@ -170,6 +172,8 @@ def evals_command(
         callback=validate_profile_option,
         help="Model profile for live evals.",
     ),
+    save_report: bool = typer.Option(False, "--save-report", help="Save a JSON eval report."),
+    report_dir: Path = typer.Option(DEFAULT_REPORT_DIR, "--report-dir", help="Eval report directory."),
 ) -> None:
     """Run deterministic evals, or explicit live-model benchmark evals."""
     from . import evals as evals_module
@@ -185,9 +189,26 @@ def evals_command(
         if live
         else evals_module.run_builtin_evals()
     )
+    if save_report:
+        path = save_eval_report(result, report_dir=report_dir, label="live-evals" if live else "evals")
+        typer.echo(f"Eval report saved: {path}")
     typer.echo(result.to_json() if json_output else result.format())
     if not result.ok:
         raise typer.Exit(code=1)
+
+
+@app.command("eval-reports")
+def eval_reports_command(
+    report_dir: Path = typer.Option(DEFAULT_REPORT_DIR, "--report-dir", help="Eval report directory."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """List saved eval reports."""
+    reports = list_eval_reports(report_dir)
+    typer.echo(
+        json.dumps(reports, ensure_ascii=False, sort_keys=True)
+        if json_output
+        else format_eval_report_index(reports)
+    )
 
 
 @app.command("release-smoke")

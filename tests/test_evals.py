@@ -77,7 +77,12 @@ def test_eval_suite_format_reports_failures() -> None:
     result = EvalSuiteResult(
         results=[
             EvalResult(name="safe_case", ok=True, detail="good"),
-            EvalResult(name="broken_case", ok=False, detail="bad"),
+            EvalResult(
+                name="broken_case",
+                ok=False,
+                detail="bad",
+                failure_category="validator_failed",
+            ),
         ]
     )
 
@@ -86,7 +91,7 @@ def test_eval_suite_format_reports_failures() -> None:
         "Agent47 local evals: 1 passed, 1 failed\n"
         "Metrics: pass_rate=50.00%, total=2\n"
         "- PASS safety/safe_case: good\n"
-        "- FAIL safety/broken_case: bad"
+        "- FAIL safety/broken_case [validator_failed]: bad"
     )
 
 
@@ -155,3 +160,14 @@ def test_cli_evals_live_command_uses_live_runner(monkeypatch) -> None:
         }
     ]
     assert "live/python_bugfix_with_tests" in result.output
+
+
+def test_cli_evals_save_report_writes_report(tmp_path) -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["evals", "--save-report", "--report-dir", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    reports = list(tmp_path.glob("*.json"))
+    assert len(reports) == 1
+    assert "Eval report saved:" in result.output

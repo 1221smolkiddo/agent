@@ -71,6 +71,7 @@ code-agent run-json --dry-run "Inspect this project and emit JSON protocol event
 code-agent models
 code-agent evals
 code-agent evals --live --limit 3
+code-agent eval-reports
 code-agent release-smoke
 code-agent history
 code-agent history show 12
@@ -101,6 +102,8 @@ Local evals:
 uv run code-agent evals
 uv run code-agent evals --json
 uv run code-agent evals --live --limit 3
+uv run code-agent evals --live --limit 3 --save-report
+uv run code-agent eval-reports
 ```
 
 The eval suite runs deterministic safety regressions plus fixture coding tasks for file creation,
@@ -109,6 +112,9 @@ recovery. `--json` emits benchmark-style metrics and per-case results for trend 
 Live evals are opt-in because they call the configured model provider and spend tokens; use them
 for release-candidate measurement against small generated repos that exercise bug fixing,
 multi-file feature work, and prompt-injection resilience.
+Use `--save-report` to persist JSON reports under `.code-agent/eval-reports/`; reports include
+failure categories, per-case metadata, model/provider settings, changed files, commands,
+verification outcomes, and model usage when available.
 
 Release smoke gate:
 

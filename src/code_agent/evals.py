@@ -54,11 +54,14 @@ class EvalResult:
     ok: bool
     detail: str
     category: str = "safety"
+    failure_category: str | None = None
+    metadata: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
 class EvalSuiteResult:
     results: list[EvalResult]
+    metadata: dict[str, Any] | None = None
 
     @property
     def ok(self) -> bool:
@@ -103,9 +106,12 @@ class EvalSuiteResult:
                     "ok": result.ok,
                     "detail": result.detail,
                     "category": result.category,
+                    "failure_category": result.failure_category,
+                    "metadata": result.metadata or {},
                 }
                 for result in self.results
             ],
+            "metadata": self.metadata or {},
         }
 
     def to_json(self) -> str:
@@ -119,7 +125,8 @@ class EvalSuiteResult:
         ]
         for result in self.results:
             marker = "PASS" if result.ok else "FAIL"
-            lines.append(f"- {marker} {result.category}/{result.name}: {result.detail}")
+            failure = f" [{result.failure_category}]" if result.failure_category else ""
+            lines.append(f"- {marker} {result.category}/{result.name}{failure}: {result.detail}")
         return "\n".join(lines)
 
 
@@ -156,7 +163,7 @@ def run_builtin_evals() -> EvalSuiteResult:
         *[_run_case(case) for case in builtin_eval_cases()],
         *[_run_fixture_case(case) for case in builtin_fixture_eval_cases()],
     ]
-    return EvalSuiteResult(results=results)
+    return EvalSuiteResult(results=results, metadata={"mode": "offline", "case_count": len(results)})
 
 
 def live_eval_cases() -> list[LiveEvalCase]:
@@ -263,7 +270,16 @@ def run_live_evals(
                 profile=profile,
             )
             for case in cases
-        ]
+        ],
+        metadata={
+            "mode": "live",
+            "model": model or "",
+            "provider": provider or "",
+            "preset": preset or "",
+            "profile": profile or "",
+            "limit": limit,
+            "case_count": len(cases),
+        },
     )
 
 
@@ -747,7 +763,7 @@ def _run_live_fixture_case(
     profile: str | None,
 ) -> EvalResult:
     try:
-        ok, detail = run_live_fixture_eval(
+        ok, detail, metadata = run_live_fixture_eval(
             case,
             model=model,
             provider=provider,
@@ -760,8 +776,16 @@ def _run_live_fixture_case(
             ok=False,
             detail=f"raised {type(exc).__name__}: {exc}",
             category="live",
+            failure_category=_failure_category(f"{type(exc).__name__}: {exc}"),
         )
-    return EvalResult(name=case.name, ok=ok, detail=detail, category="live")
+    return EvalResult(
+        name=case.name,
+        ok=ok,
+        detail=detail,
+        category="live",
+        failure_category=None if ok else _failure_category(detail),
+        metadata=metadata,
+    )
 
 
 def _make_agent(workspace: Path, model: ScriptedModel, tools: EvalTools, *, dry_run: bool) -> CodingAgent:
@@ -835,7 +859,7 @@ def run_live_fixture_eval(
     provider: str | None,
     preset: str | None,
     profile: str | None,
-) -> tuple[bool, str]:
+) -> tuple[bool, str, dict[str, Any]]:
     from .config import Settings
     from .factory import create_agent
 
@@ -859,14 +883,29 @@ def run_live_fixture_eval(
 
         result = agent.run_detailed(case.task)
         results = [validator(workspace, agent, result) for validator in case.validators]
+        metadata = {
+            "task": case.task,
+            "changed_paths": result.changed_paths,
+            "commands": result.command_records,
+            "verification": result.verification_results,
+            "model_usage": result.model_usage_records,
+            "final_message": result.message,
+            "blocked": result.blocked,
+            "failed_actions": result.failed_actions,
+            "denied_actions": result.denied_actions,
+            "provider": provider or "",
+            "model": model or "",
+            "preset": preset or "",
+            "profile": profile or "",
+        }
 
     failures = [detail for ok, detail in results if not ok]
     if failures:
         summary = f"{case.description} failed: {'; '.join(failures)}"
         if result.message:
             summary += f" message={result.message!r}"
-        return False, summary
-    return True, f"{case.description} message={result.message!r}"
+        return False, summary, metadata
+    return True, f"{case.description} message={result.message!r}", metadata
 
 
 def python_pytest_project() -> dict[str, str]:
@@ -1050,6 +1089,23 @@ def command_not_ran(command_fragment: str) -> FixtureValidator:
         return not matched, f"unexpected command was recorded: {command_fragment}"
 
     return validate
+
+
+def _failure_category(detail: str) -> str:
+    text = detail.lower()
+    if "insufficientcreditserror" in text or "model failure" in text:
+        return "model_error"
+    if "pytest did not pass" in text or "verification" in text or "assertionerror" in text:
+        return "verification_failed"
+    if "command fragment was not recorded" in text or "command was not recorded" in text:
+        return "verification_missing"
+    if "missing" in text or "did not contain" in text:
+        return "validator_failed"
+    if "permission was denied" in text or "unsafe" in text or "blocked" in text:
+        return "safety_blocked"
+    if "timeout" in text or "timed out" in text:
+        return "timeout"
+    return "unknown"
 
 
 def mutation_succeeded(action_type: str, relative_path: str) -> FixtureValidator:
