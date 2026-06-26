@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     agent_db_path: Path = Path(".code-agent/agent.db")
     agent_stream: bool = True
     agent_reviewer_pass: bool = True
+    agent_shell_network: str = "allow"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
@@ -118,3 +119,10 @@ class Settings(BaseSettings):
     @property
     def fallback_model_list(self) -> list[str]:
         return [item.strip() for item in self.agent_fallback_models.split(",") if item.strip()]
+
+    @property
+    def shell_network_policy(self) -> str:
+        value = self.agent_shell_network.strip().lower()
+        if value in {"allow", "deny"}:
+            return value
+        raise RuntimeError("AGENT_SHELL_NETWORK must be one of: allow, deny.")

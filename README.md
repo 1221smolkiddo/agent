@@ -73,6 +73,7 @@ code-agent run --profile coder "Implement the next roadmap item"
 code-agent run --profile reviewer "Review the latest changes for regressions"
 code-agent run --dry-run "Refactor the CLI argument parser"
 code-agent run --sandbox "Try a risky refactor in an isolated copy"
+code-agent run --deny-network-shell "Run checks without install/network shell commands"
 code-agent run --no-stream "Run without compact model streaming progress"
 code-agent run --max-failures 5 "Fix the issue and recover from failed attempts"
 code-agent run-json --dry-run "Inspect this project and emit JSON protocol events"
@@ -200,6 +201,7 @@ agent47: /exit
 - `AGENT_INPUT_COST_PER_MILLION` and `AGENT_OUTPUT_COST_PER_MILLION` are optional. When both are set, Agent47 estimates per-run model cost from provider token usage.
 - `AGENT_DB_PATH` is optional and defaults to `.code-agent/agent.db`.
 - `AGENT_STREAM` is optional and defaults to `true`. It enables compact model streaming progress without printing raw JSON action tokens.
+- `AGENT_SHELL_NETWORK` is optional and defaults to `allow`. Set it to `deny` to block shell commands classified as install/network; the CLI also supports `--deny-network-shell`.
 - `OPENAI_API_KEY` and `OPENAI_BASE_URL` are still accepted as a temporary fallback.
 
 `--model` always wins over profile-specific model environment variables for that run. Profiles still control temperature and token defaults.
@@ -263,6 +265,10 @@ All file access remains workspace-guarded. Sensitive local credential files such
 Project search uses `ripgrep` when available and falls back to a built-in Python search when `ripgrep` is missing from the agent process PATH. Search skips local state and secret files such as `.env`, `.git`, `.code-agent`, caches, and virtual environments.
 
 Shell commands are classified before approval. Destructive commands such as `git reset --hard`, recursive force deletes, and aggressive `git clean` forms are blocked by policy; install/network commands are labeled high risk; verification and read-only commands get lower-risk labels. Tool outputs are redacted for common secret patterns before they are returned to the model or stored. Large approval previews and mutation diffs are bounded so long generated files do not flood the terminal or model context.
+
+Set `AGENT_SHELL_NETWORK=deny` or pass `--deny-network-shell` to block shell commands classified
+as install/network before approval. This does not create an OS firewall; it is an Agent47 command
+policy that prevents approved shell execution from starting known install/network command classes.
 
 File mutations are verified against disk state before Agent47 trusts them in final answers. Writes must leave the requested content on disk, edits and patches must change content, and deletes must remove a file that existed before the action.
 

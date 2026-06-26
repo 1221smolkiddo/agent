@@ -91,10 +91,14 @@ class ToolRegistry:
         workspace: Path,
         dry_run: bool,
         approval_callback: Callable[[str, str], bool] | None = None,
+        shell_network_policy: str = "allow",
     ) -> None:
         self.workspace = workspace.resolve()
         self.dry_run = dry_run
         self.approval_callback = approval_callback
+        self.shell_network_policy = shell_network_policy.strip().lower()
+        if self.shell_network_policy not in {"allow", "deny"}:
+            raise ValueError("shell_network_policy must be one of: allow, deny")
 
     def run(self, action: AgentAction) -> ToolResult:
         if isinstance(action, ListFilesAction):
@@ -288,12 +292,27 @@ class ToolRegistry:
                     f"{policy.reason}"
                 ),
             )
+        if self.shell_network_policy == "deny" and policy.may_network:
+            return ToolResult(
+                ok=False,
+                output=(
+                    "Blocked install/network shell command because shell network access is denied "
+                    "for this run. Use AGENT_SHELL_NETWORK=allow or omit --deny-network-shell only "
+                    "when network access is intentional."
+                ),
+                metadata={
+                    "category": policy.category,
+                    "risk": policy.risk,
+                    "shell_network_policy": self.shell_network_policy,
+                },
+            )
         approval_detail = (
             f"Risk: {policy.risk}\n"
             f"Category: {policy.category}\n"
             f"Reason: {policy.reason}\n"
             f"May write files: {'yes' if policy.may_write else 'no'}\n"
             f"May access network: {'yes' if policy.may_network else 'no'}\n"
+            f"Shell network policy: {self.shell_network_policy}\n"
             f"Arbitrary code: {'yes' if policy.arbitrary_code else 'no'}\n"
             f"Timeout: {policy.timeout_seconds}s\n"
             f"Command: {command}"
@@ -320,6 +339,7 @@ class ToolRegistry:
                     "risk": policy.risk,
                     "timeout_seconds": policy.timeout_seconds,
                     "process_tree_cleanup": True,
+                    "shell_network_policy": self.shell_network_policy,
                 },
             )
         output = "\n".join(part for part in [completed.stdout, completed.stderr] if part).strip()
@@ -331,6 +351,7 @@ class ToolRegistry:
                 "risk": policy.risk,
                 "timeout_seconds": policy.timeout_seconds,
                 "process_tree_cleanup": True,
+                "shell_network_policy": self.shell_network_policy,
             },
         )
 
@@ -637,19 +658,25 @@ class ToolRegistry:
                 True,
                 output,
             )
+        except KeyboardInterrupt:
+            self._terminate_process_tree(process)
+            raise
 
     @staticmethod
     def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
         if process.poll() is not None:
             return
         if os.name == "nt":
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
-                text=True,
-                capture_output=True,
-                timeout=10,
-                check=False,
-            )
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                    text=True,
+                    capture_output=True,
+                    timeout=10,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                process.kill()
             return
         try:
             os.killpg(process.pid, signal.SIGTERM)

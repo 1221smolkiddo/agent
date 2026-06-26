@@ -59,6 +59,18 @@ def test_unknown_provider_is_rejected() -> None:
         _ = settings.provider_name
 
 
+def test_shell_network_policy_accepts_allow_and_deny() -> None:
+    assert Settings(_env_file=None, agent_shell_network="allow").shell_network_policy == "allow"
+    assert Settings(_env_file=None, agent_shell_network="deny").shell_network_policy == "deny"
+
+
+def test_shell_network_policy_rejects_unknown_values() -> None:
+    settings = Settings(_env_file=None, agent_shell_network="maybe")
+
+    with pytest.raises(RuntimeError, match="AGENT_SHELL_NETWORK"):
+        _ = settings.shell_network_policy
+
+
 def test_model_preset_resolves_provider_and_model() -> None:
     preset = resolve_model_preset("gemini-flash")
 
@@ -93,6 +105,27 @@ def test_create_agent_uses_preset_provider_and_model(tmp_path) -> None:
     )
 
     assert agent.model_client.model == "deepseek-v4-pro"
+
+
+def test_create_agent_passes_shell_network_policy_to_tools(tmp_path) -> None:
+    settings = Settings(
+        _env_file=None,
+        openrouter_api_key="router-key",
+        agent_shell_network="deny",
+        agent_reviewer_pass=False,
+        agent_db_path=tmp_path / "agent.db",
+    )
+
+    agent = create_agent(
+        settings=settings,
+        cwd=tmp_path,
+        model=None,
+        profile=None,
+        dry_run=True,
+        max_steps=1,
+    )
+
+    assert agent.tools.shell_network_policy == "deny"
 
 
 def test_model_override_keeps_preset_provider(tmp_path) -> None:

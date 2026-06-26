@@ -7,6 +7,7 @@ from code_agent.sandbox import (
     create_sandbox_workspace,
     diff_sandbox_workspace,
     format_sandbox_diff,
+    format_sandbox_limits,
     promote_sandbox_changes,
 )
 
@@ -110,3 +111,12 @@ def test_sandbox_diff_cli_outputs_patch(tmp_path: Path) -> None:
     assert "Sandbox diff:" in result.output
     assert "-base" in result.output
     assert "+sandbox" in result.output
+
+
+def test_format_sandbox_limits_describes_process_and_network_boundaries() -> None:
+    output = format_sandbox_limits()
+
+    assert "not OS-level process isolation" in output
+    assert "shell commands still run as local processes" in output
+    assert "--deny-network-shell" in output
+    assert "explicit sandbox apply promotion" in output

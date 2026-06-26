@@ -17,7 +17,7 @@ Agent47 is a credible alpha CLI coding agent, not a finished industry product.
 - Live benchmark quality depends on configured provider credits and model capability.
 - The sandbox is a copied workspace, not OS-level isolation.
 - Shell commands can still execute local project code after approval.
-- Network-deny mode for shell commands is not yet implemented.
+- Shell network-deny mode blocks commands classified as install/network, but it is not an OS firewall.
 - Cancellation and process isolation are basic.
 - Per-repo memory for stable project conventions is not implemented yet.
 - Editor integration is intentionally deferred while Agent47 remains CLI-first.

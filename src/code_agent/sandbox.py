@@ -152,6 +152,19 @@ def format_sandbox_diff(diff: SandboxDiff) -> str:
     return "\n".join(lines)
 
 
+def format_sandbox_limits() -> str:
+    return "\n".join(
+        [
+            "Sandbox limits:",
+            "- uses a copied workspace, not OS-level process isolation",
+            "- excludes local state such as .env, .git, .venv, caches, node_modules, and .code-agent",
+            "- shell commands still run as local processes inside the sandbox path",
+            "- network access follows normal shell policy unless --deny-network-shell or AGENT_SHELL_NETWORK=deny is used",
+            "- base workspace files change only after explicit sandbox apply promotion",
+        ]
+    )
+
+
 def promote_sandbox_changes(
     base: Path,
     sandbox: Path,
@@ -264,4 +277,3 @@ def _verify_promoted_files(diff: SandboxDiff) -> str | None:
         if base_content != sandbox_content:
             return f"Sandbox promotion verification failed for {relative}: content mismatch."
     return None
-

@@ -134,9 +134,45 @@ def test_run_shell_permission_detail_includes_risk_label(tmp_path: Path) -> None
     assert "Category: install/network" in approval_details[0]
     assert "May write files: yes" in approval_details[0]
     assert "May access network: yes" in approval_details[0]
+    assert "Shell network policy: allow" in approval_details[0]
     assert "Arbitrary code: no" in approval_details[0]
     assert "Timeout: 180s" in approval_details[0]
     assert "Command: npm install" in approval_details[0]
+
+
+def test_run_shell_network_deny_blocks_install_network_without_prompt(tmp_path: Path) -> None:
+    approvals: list[str] = []
+    tools = ToolRegistry(
+        workspace=tmp_path,
+        dry_run=False,
+        approval_callback=lambda action, _detail: approvals.append(action) or True,
+        shell_network_policy="deny",
+    )
+
+    result = tools.run(RunShellAction(type="run_shell", command="npm install"))
+
+    assert not result.ok
+    assert "shell network access is denied" in result.output
+    assert result.metadata["shell_network_policy"] == "deny"
+    assert approvals == []
+
+
+def test_run_shell_network_deny_allows_verification_commands(tmp_path: Path, monkeypatch) -> None:
+    def fake_run(*_args, **_kwargs):
+        return subprocess.CompletedProcess(args=["uv"], returncode=0, stdout="ok", stderr=""), False, ""
+
+    tools = ToolRegistry(
+        workspace=tmp_path,
+        dry_run=False,
+        approval_callback=lambda _action, _detail: True,
+        shell_network_policy="deny",
+    )
+    monkeypatch.setattr(tools, "_run_shell_process", fake_run)
+
+    result = tools.run(RunShellAction(type="run_shell", command="uv run pytest"))
+
+    assert result.ok
+    assert result.metadata["shell_network_policy"] == "deny"
 
 
 def test_run_shell_blocks_unclassified_command_without_prompt(tmp_path: Path) -> None:
@@ -231,6 +267,33 @@ def test_run_shell_reports_timeout_with_capped_redacted_output(tmp_path: Path, m
     assert "super-secret-token" not in result.output
     assert "<truncated" in result.output
     assert result.metadata["process_tree_cleanup"] is True
+
+
+def test_run_shell_process_cleans_up_on_keyboard_interrupt(tmp_path: Path, monkeypatch) -> None:
+    class InterruptingProcess:
+        pid = 12345
+        returncode = None
+
+        def communicate(self, timeout=None):
+            raise KeyboardInterrupt
+
+        def poll(self):
+            return None
+
+    process = InterruptingProcess()
+    cleanup: list[int] = []
+    monkeypatch.setattr(tools_module.subprocess, "Popen", lambda *_args, **_kwargs: process)
+    monkeypatch.setattr(ToolRegistry, "_terminate_process_tree", lambda *_args: cleanup.append(1))
+    tools = ToolRegistry(workspace=tmp_path, dry_run=False, approval_callback=lambda _a, _d: True)
+
+    try:
+        tools._run_shell_process("uv run pytest", timeout_seconds=120, env={})
+    except KeyboardInterrupt:
+        pass
+    else:
+        raise AssertionError("expected KeyboardInterrupt")
+
+    assert cleanup == [1]
 
 
 def test_search_redacts_secret_matches_when_fallback_runs(tmp_path: Path, monkeypatch) -> None:

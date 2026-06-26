@@ -37,6 +37,7 @@ from .sandbox import (
     create_sandbox_workspace,
     diff_sandbox_workspace,
     format_sandbox_diff,
+    format_sandbox_limits,
     promote_sandbox_changes,
 )
 from .storage import AgentStorage
@@ -115,6 +116,11 @@ def run(
     dry_run: bool = typer.Option(False, "--dry-run", help="Inspect only; skip writes and shell."),
     sandbox: bool = typer.Option(False, "--sandbox", help="Run inside an isolated workspace copy."),
     stream: bool = typer.Option(True, "--stream/--no-stream", help="Show compact model streaming progress."),
+    deny_network_shell: bool = typer.Option(
+        False,
+        "--deny-network-shell",
+        help="Block shell commands classified as install/network for this run.",
+    ),
     max_steps: int = typer.Option(12, "--max-steps", min=1, help="Maximum agent loop steps."),
     max_failures: Optional[int] = typer.Option(
         None,
@@ -130,6 +136,7 @@ def run(
         sandbox_workspace = create_sandbox_workspace(workspace)
         workspace = sandbox_workspace.path
         typer.echo(f"Sandbox: {workspace}")
+        typer.echo(format_sandbox_limits())
 
     agent = create_agent(
         settings=settings,
@@ -144,6 +151,7 @@ def run(
         profile=profile,
         provider=provider,
         preset=preset,
+        shell_network_policy="deny" if deny_network_shell else None,
     )
     try:
         result = agent.run_detailed(task)
@@ -315,6 +323,11 @@ def run_json(
     dry_run: bool = typer.Option(False, "--dry-run", help="Inspect only; skip writes and shell."),
     sandbox: bool = typer.Option(False, "--sandbox", help="Run inside an isolated workspace copy."),
     stream: bool = typer.Option(True, "--stream/--no-stream", help="Emit model stream lifecycle events."),
+    deny_network_shell: bool = typer.Option(
+        False,
+        "--deny-network-shell",
+        help="Block shell commands classified as install/network for this run.",
+    ),
     max_steps: int = typer.Option(12, "--max-steps", min=1, help="Maximum agent loop steps."),
     max_failures: Optional[int] = typer.Option(
         None,
@@ -349,6 +362,7 @@ def run_json(
             sandbox_workspace = create_sandbox_workspace(workspace)
             workspace = sandbox_workspace.path
             emitter.emit("sandbox_created", path=str(workspace), source=str(cwd.resolve()))
+            emitter.emit("sandbox_limits", detail=format_sandbox_limits())
 
         emit_run_started(
             emitter,
@@ -378,6 +392,7 @@ def run_json(
             profile=profile,
             provider=provider,
             preset=preset,
+            shell_network_policy="deny" if deny_network_shell else None,
         )
         result = agent.run_detailed(task)
     except KeyboardInterrupt:
@@ -418,6 +433,11 @@ def resume(
     dry_run: bool = typer.Option(False, "--dry-run", help="Inspect only; skip writes and shell."),
     sandbox: bool = typer.Option(False, "--sandbox", help="Run inside an isolated workspace copy."),
     stream: bool = typer.Option(True, "--stream/--no-stream", help="Show compact model streaming progress."),
+    deny_network_shell: bool = typer.Option(
+        False,
+        "--deny-network-shell",
+        help="Block shell commands classified as install/network for this run.",
+    ),
     max_steps: int = typer.Option(12, "--max-steps", min=1, help="Maximum agent loop steps."),
     max_failures: Optional[int] = typer.Option(
         None,
@@ -439,6 +459,7 @@ def resume(
         sandbox_workspace = create_sandbox_workspace(workspace)
         workspace = sandbox_workspace.path
         typer.echo(f"Sandbox: {workspace}")
+        typer.echo(format_sandbox_limits())
 
     task = build_resume_task(
         run_row,
@@ -459,6 +480,7 @@ def resume(
         profile=profile,
         provider=provider,
         preset=preset,
+        shell_network_policy="deny" if deny_network_shell else None,
     )
     try:
         result = agent.run_detailed(task)

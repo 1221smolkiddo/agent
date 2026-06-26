@@ -27,6 +27,7 @@ def create_agent(
     provider: str | None = None,
     preset: str | None = None,
     reviewer_client: ModelClient | None = None,
+    shell_network_policy: str | None = None,
 ) -> CodingAgent:
     workspace = cwd.resolve()
     selected_preset = resolve_model_preset(preset or settings.agent_model_preset)
@@ -75,6 +76,7 @@ def create_agent(
             workspace=workspace,
             dry_run=dry_run,
             approval_callback=approval_callback,
+            shell_network_policy=shell_network_policy or settings.shell_network_policy,
         ),
         storage=storage,
         reporter=reporter,
