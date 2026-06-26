@@ -12,6 +12,7 @@ Use this checklist before tagging any public alpha release.
 
 ## Safety Gates
 
+- [ ] `SECURITY.md`, `docs/THREAT_MODEL.md`, `docs/DATA_HANDLING.md`, and `docs/KNOWN_LIMITATIONS.md` are current.
 - [ ] Prompt-injection tests pass.
 - [ ] Secret redaction tests pass.
 - [ ] Permission and path-safety tests pass.

@@ -22,6 +22,14 @@ Agent47 is being built toward the baseline expected from a serious AI coding age
 - Editor integration, starting with a JSON protocol and eventually a VS Code extension.
 - Evaluation harnesses that measure task success, edit correctness, verification rate, and regressions.
 
+## Public Alpha Trust Model
+
+Agent47 is alpha software with real safety controls, but it is not a hard security sandbox. Review
+[SECURITY.md](SECURITY.md), [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md),
+[docs/DATA_HANDLING.md](docs/DATA_HANDLING.md), and
+[docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) before using it on sensitive repositories.
+Use `--dry-run` for inspection and `--sandbox` for risky edits.
+
 ## Quick Start
 
 ```bash
