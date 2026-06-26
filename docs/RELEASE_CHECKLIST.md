@@ -23,12 +23,18 @@ Use this checklist before tagging any public alpha release.
 
 ## Verification Gates
 
+- [ ] `uv run code-agent release-smoke` passes.
 - [ ] `uv run pytest` passes.
 - [ ] `uv run ruff check src tests` passes.
 - [ ] `uv run code-agent doctor --strict` passes or any warning is documented in release notes.
 - [ ] `uv run code-agent evals` passes.
+- [ ] Optional but recommended before public claims: `uv run code-agent evals --live --limit 3` passes with the release candidate model.
 - [ ] A clean virtual environment can install the package.
 - [ ] `code-agent run-json --dry-run "Inspect this project"` emits valid NDJSON.
+
+`release-smoke` runs the local release gate in one command: unit tests, lint, strict doctor,
+offline evals, and package build. Live evals are intentionally opt-in because they call the
+configured model provider and can spend tokens.
 
 ## Release Steps
 

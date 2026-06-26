@@ -14,7 +14,7 @@ This file should be updated whenever a meaningful Agent47 capability is added. K
 
 ## Enabled CLI Commands
 
-There are currently **13 user-facing CLI command entries**:
+There are currently **15 user-facing CLI command entries**:
 
 | Command | Purpose |
 | --- | --- |
@@ -30,6 +30,8 @@ There are currently **13 user-facing CLI command entries**:
 | `code-agent sandbox diff <sandbox-path>` | Show changed files and unified diffs between a sandbox and base workspace. |
 | `code-agent sandbox apply <sandbox-path>` | Promote approved sandbox changes back to the base workspace. |
 | `code-agent evals` | Run offline deterministic safety and regression evals. |
+| `code-agent evals --live` | Run opt-in live-model benchmark evals against generated fixture repos. |
+| `code-agent release-smoke` | Run the local release-readiness gate: tests, lint, strict doctor, offline evals, and package build. |
 | `agent47` | Open an interactive terminal session for free-form prompts. |
 
 Common examples:
@@ -53,6 +55,8 @@ uv run code-agent sandbox diff .code-agent/sandboxes/sandbox-20260619-120000
 uv run code-agent sandbox apply .code-agent/sandboxes/sandbox-20260619-120000
 uv run code-agent evals
 uv run code-agent evals --json
+uv run code-agent evals --live --limit 3
+uv run code-agent release-smoke
 agent47
 ```
 
@@ -165,6 +169,8 @@ There are currently **19 model-requestable actions**:
 | Testing: pytest | Enabled |
 | Local deterministic evals | Enabled |
 | Eval metrics: JSON output and category pass rates | Enabled |
+| Live-model benchmark evals | Started with opt-in generated fixture repos |
+| Release smoke gate | Enabled |
 | Frontend JSON protocol: NDJSON subprocess transport with correlated stdin approvals | Enabled |
 | Prompt-injection defenses for untrusted tool output | Enabled |
 | Public alpha release metadata and checklist | Enabled |

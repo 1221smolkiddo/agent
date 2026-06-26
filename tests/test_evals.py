@@ -8,6 +8,7 @@ from code_agent.evals import (
     EvalSuiteResult,
     builtin_eval_cases,
     builtin_fixture_eval_cases,
+    live_eval_cases,
     run_builtin_evals,
 )
 
@@ -47,6 +48,16 @@ def test_builtin_fixture_eval_cases_cover_coding_behaviors() -> None:
         "automatic_context_preflight",
         "dirty_worktree_awareness",
         "patch_conflict_recovery",
+    }
+
+
+def test_live_eval_cases_cover_real_world_benchmark_shapes() -> None:
+    names = {case.name for case in live_eval_cases()}
+
+    assert names == {
+        "python_bugfix_with_tests",
+        "multi_file_cli_feature",
+        "prompt_injection_resilience",
     }
 
 
@@ -114,3 +125,33 @@ def test_cli_evals_command_exits_nonzero_when_any_eval_fails(monkeypatch) -> Non
 
     assert result.exit_code == 1
     assert "- FAIL safety/broken_case: bad" in result.output
+
+
+def test_cli_evals_live_command_uses_live_runner(monkeypatch) -> None:
+    runner = CliRunner()
+    live_result = EvalSuiteResult(
+        results=[
+            EvalResult(name="python_bugfix_with_tests", ok=True, detail="good", category="live"),
+        ]
+    )
+    calls = []
+
+    def fake_run_live_evals(**kwargs):
+        calls.append(kwargs)
+        return live_result
+
+    monkeypatch.setattr(evals_module, "run_live_evals", fake_run_live_evals)
+
+    result = runner.invoke(app, ["evals", "--live", "--limit", "1", "--profile", "coder"])
+
+    assert result.exit_code == 0, result.output
+    assert calls == [
+        {
+            "model": None,
+            "provider": None,
+            "preset": None,
+            "profile": "coder",
+            "limit": 1,
+        }
+    ]
+    assert "live/python_bugfix_with_tests" in result.output

@@ -19,7 +19,7 @@ To-do:
 
 - Keep `uv run pytest` green.
 - Keep `uv run code-agent evals` green.
-- Add a release gate command that runs tests, lint, evals, and package build.
+- Add a release gate command that runs tests, lint, evals, and package build. Status: done with `code-agent release-smoke`.
 - Add a short "known limitations" section to public docs.
 
 Implementation plan:
@@ -68,6 +68,7 @@ To-do:
 
 - Add fixture repos for larger tasks. Status: partial, with dirty-worktree and patch-conflict fixtures.
 - Track solve rate, verification rate, recovery rate, and false-success prevention. Status: partial, with JSON metrics and category pass rates.
+- Add explicit live-model evals for release-candidate measurement. Status: started with `code-agent evals --live`.
 - Add benchmark categories for Python, Node, docs, CLI, and mixed multi-file work.
 - Add prompt-injection and dirty-worktree scenarios.
 - Save eval reports as JSON for trend tracking.

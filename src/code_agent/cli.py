@@ -21,6 +21,7 @@ from .protocol import (
     emit_run_started,
     json_approval_callback,
 )
+from .release_smoke import run_release_smoke
 from .resume import build_resume_task, format_run_detail
 from .revert import apply_revert_plan, build_revert_plan, format_revert_preview
 from .sandbox import (
@@ -148,13 +149,57 @@ def run(
 @app.command("evals")
 def evals_command(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable eval results."),
+    live: bool = typer.Option(False, "--live", help="Run opt-in live-model benchmark evals."),
+    limit: Optional[int] = typer.Option(None, "--limit", min=1, help="Limit live eval cases."),
+    provider: Optional[str] = typer.Option(
+        None,
+        "--provider",
+        callback=validate_provider_option,
+        help="Provider override for live evals: openrouter, openai, gemini, or deepseek.",
+    ),
+    preset: Optional[str] = typer.Option(
+        None,
+        "--preset",
+        callback=validate_preset_option,
+        help="Model preset for live evals.",
+    ),
+    model: Optional[str] = typer.Option(None, "--model", help="Model override for live evals."),
+    profile: Optional[str] = typer.Option(
+        "coder",
+        "--profile",
+        callback=validate_profile_option,
+        help="Model profile for live evals.",
+    ),
 ) -> None:
-    """Run local deterministic safety and regression evals."""
+    """Run deterministic evals, or explicit live-model benchmark evals."""
     from . import evals as evals_module
 
-    result = evals_module.run_builtin_evals()
+    result = (
+        evals_module.run_live_evals(
+            model=model,
+            provider=provider,
+            preset=preset,
+            profile=profile,
+            limit=limit,
+        )
+        if live
+        else evals_module.run_builtin_evals()
+    )
     typer.echo(result.to_json() if json_output else result.format())
     if not result.ok:
+        raise typer.Exit(code=1)
+
+
+@app.command("release-smoke")
+def release_smoke_command(
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+    skip_build: bool = typer.Option(False, "--skip-build", help="Skip package build gate."),
+) -> None:
+    """Run the local release-readiness gate."""
+    report = run_release_smoke(cwd.resolve(), include_build=not skip_build)
+    typer.echo(report.to_json() if json_output else report.format_text())
+    if not report.ok:
         raise typer.Exit(code=1)
 
 

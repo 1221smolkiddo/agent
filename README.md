@@ -70,6 +70,8 @@ code-agent run --max-failures 5 "Fix the issue and recover from failed attempts"
 code-agent run-json --dry-run "Inspect this project and emit JSON protocol events"
 code-agent models
 code-agent evals
+code-agent evals --live --limit 3
+code-agent release-smoke
 code-agent history
 code-agent history show 12
 code-agent history export 12
@@ -98,11 +100,25 @@ Local evals:
 ```bash
 uv run code-agent evals
 uv run code-agent evals --json
+uv run code-agent evals --live --limit 3
 ```
 
 The eval suite runs deterministic safety regressions plus fixture coding tasks for file creation,
 file editing, test fixing, failed-read recovery, dirty-worktree awareness, and patch-conflict
 recovery. `--json` emits benchmark-style metrics and per-case results for trend tracking.
+Live evals are opt-in because they call the configured model provider and spend tokens; use them
+for release-candidate measurement against small generated repos that exercise bug fixing,
+multi-file feature work, and prompt-injection resilience.
+
+Release smoke gate:
+
+```bash
+uv run code-agent release-smoke
+uv run code-agent release-smoke --json
+```
+
+The release smoke gate runs unit tests, lint, strict doctor checks, offline evals, and package
+build in one repeatable command.
 
 Debug bundles:
 
