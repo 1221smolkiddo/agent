@@ -8,6 +8,7 @@ from code_agent.verification import (
     suggest_verification_commands,
 )
 from code_agent.verification_diagnostics import (
+    diagnose_node_test_failure,
     diagnose_pytest_failure,
     diagnose_verification_failure,
 )
@@ -204,11 +205,37 @@ FAILED tests/test_mathlib.py::test_multiply - assert -1 == 12
     assert diagnostics.runner == "pytest"
     assert diagnostics.failed_tests == ["tests/test_mathlib.py::test_multiply"]
     assert diagnostics.failed_files == ["tests/test_mathlib.py"]
+    assert diagnostics.likely_source_files == ["mathlib.py", "src/mathlib.py"]
     assert diagnostics.assertions == ["assert -1 == 12"]
-    assert diagnostics.suggested_focus == ["tests/test_mathlib.py"]
+    assert diagnostics.suggested_focus == ["tests/test_mathlib.py", "mathlib.py", "src/mathlib.py"]
+    assert diagnostics.focused_rerun_commands == [
+        "python -m pytest tests/test_mathlib.py::test_multiply"
+    ]
     assert diagnostics.summary == "tests/test_mathlib.py::test_multiply failed: assert -1 == 12"
+
+
+def test_diagnose_node_test_failure_extracts_compact_failure_context() -> None:
+    output = """
+not ok 1 - totals values
+  ---
+  Expected values to be strictly equal:
+  3 !== 10
+  at total.test.js:6:10
+""".strip()
+
+    diagnostics = diagnose_node_test_failure("npm test", output)
+
+    assert diagnostics.runner == "node"
+    assert diagnostics.failed_tests == ["totals values"]
+    assert diagnostics.failed_files == ["total.test.js"]
+    assert diagnostics.likely_source_files == ["total.js"]
+    assert "Expected values" in diagnostics.assertions[0]
+    assert diagnostics.suggested_focus == ["total.test.js", "total.js"]
+    assert diagnostics.focused_rerun_commands == ["npm test"]
+    assert diagnostics.summary.startswith("totals values failed:")
 
 
 def test_diagnose_verification_failure_only_handles_known_runners() -> None:
     assert diagnose_verification_failure("python -m pytest", "FAILED tests/test_app.py::test_app") is not None
+    assert diagnose_verification_failure("npm test", "not ok 1 - totals values") is not None
     assert diagnose_verification_failure("npm run build", "build failed") is None

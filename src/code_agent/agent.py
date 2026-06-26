@@ -1278,7 +1278,22 @@ class CodingAgent:
             if isinstance(diagnostics, dict):
                 summary = diagnostics.get("summary")
                 if isinstance(summary, str) and summary:
-                    return summary
+                    parts = [summary]
+                    focus = diagnostics.get("suggested_focus")
+                    if isinstance(focus, list) and focus:
+                        parts.append(
+                            "Inspect likely relevant files: "
+                            + ", ".join(str(path) for path in focus[:5])
+                            + "."
+                        )
+                    rerun = diagnostics.get("focused_rerun_commands")
+                    if isinstance(rerun, list) and rerun:
+                        parts.append(
+                            "After patching, rerun focused check: "
+                            + str(rerun[0])
+                            + "."
+                        )
+                    return " ".join(parts)
         return "Inspect the failing output."
 
     @staticmethod

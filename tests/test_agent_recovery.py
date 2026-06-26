@@ -706,6 +706,8 @@ testpaths = ["tests"]
     assert first_diagnostics["summary"] == "tests/test_app.py::test_greeting failed: assert 'hello' == 'hi'"
     assert "Automatic verification failed" in model.messages_seen[1][-1]["content"]
     assert "tests/test_app.py::test_greeting failed" in model.messages_seen[1][-1]["content"]
+    assert "Inspect likely relevant files: tests/test_app.py, app.py, src/app.py." in model.messages_seen[1][-1]["content"]
+    assert "After patching, rerun focused check: uv run pytest tests/test_app.py::test_greeting." in model.messages_seen[1][-1]["content"]
 
 
 def test_agent_appends_verification_outcomes_to_final_answer(tmp_path: Path) -> None:
