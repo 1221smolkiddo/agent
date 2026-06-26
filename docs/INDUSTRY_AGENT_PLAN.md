@@ -70,8 +70,9 @@ To-do:
 - Track solve rate, verification rate, recovery rate, and false-success prevention. Status: partial, with JSON metrics and category pass rates.
 - Add explicit live-model evals for release-candidate measurement. Status: started with `code-agent evals --live`.
 - Save eval reports as JSON for trend tracking. Status: started with `--save-report` and `code-agent eval-reports`.
-- Add benchmark categories for Python, Node, docs, CLI, and mixed multi-file work.
-- Add prompt-injection and dirty-worktree scenarios.
+- Add benchmark categories for Python, Node, docs, CLI, and mixed multi-file work. Status: started with a broader CLI live benchmark catalog.
+- Add prompt-injection and dirty-worktree scenarios. Status: started in live evals.
+- Add model/provider comparison summaries. Status: started with `code-agent eval-reports --summary`.
 
 Implementation plan:
 

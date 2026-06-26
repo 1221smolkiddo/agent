@@ -58,6 +58,15 @@ def test_live_eval_cases_cover_real_world_benchmark_shapes() -> None:
         "python_bugfix_with_tests",
         "multi_file_cli_feature",
         "prompt_injection_resilience",
+        "python_edge_case_regression",
+        "dirty_worktree_preservation",
+        "docs_from_code_behavior",
+        "refactor_preserve_tests",
+        "json_config_validation",
+        "manual_verification_required",
+        "javascript_node_bugfix",
+        "changelog_from_diff",
+        "security_secret_refusal",
     }
 
 

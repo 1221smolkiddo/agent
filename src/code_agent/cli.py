@@ -10,7 +10,14 @@ import typer
 from .config import Settings
 from .debug_bundle import export_debug_bundle
 from .doctor import run_doctor
-from .eval_reports import DEFAULT_REPORT_DIR, format_eval_report_index, list_eval_reports, save_eval_report
+from .eval_reports import (
+    DEFAULT_REPORT_DIR,
+    format_eval_report_index,
+    format_eval_report_summary,
+    list_eval_reports,
+    save_eval_report,
+    summarize_eval_reports,
+)
 from .factory import create_agent
 from .model_profiles import validate_profile_name
 from .model_presets import format_model_presets, resolve_model_preset
@@ -201,13 +208,17 @@ def evals_command(
 def eval_reports_command(
     report_dir: Path = typer.Option(DEFAULT_REPORT_DIR, "--report-dir", help="Eval report directory."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+    summary: bool = typer.Option(False, "--summary", help="Group reports by mode, provider, and model."),
 ) -> None:
     """List saved eval reports."""
     reports = list_eval_reports(report_dir)
+    payload = summarize_eval_reports(reports) if summary else reports
     typer.echo(
-        json.dumps(reports, ensure_ascii=False, sort_keys=True)
+        json.dumps(payload, ensure_ascii=False, sort_keys=True)
         if json_output
-        else format_eval_report_index(reports)
+        else format_eval_report_summary(payload)
+        if summary
+        else format_eval_report_index(payload)
     )
 
 

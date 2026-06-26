@@ -104,6 +104,7 @@ uv run code-agent evals --json
 uv run code-agent evals --live --limit 3
 uv run code-agent evals --live --limit 3 --save-report
 uv run code-agent eval-reports
+uv run code-agent eval-reports --summary
 ```
 
 The eval suite runs deterministic safety regressions plus fixture coding tasks for file creation,
@@ -115,6 +116,7 @@ multi-file feature work, and prompt-injection resilience.
 Use `--save-report` to persist JSON reports under `.code-agent/eval-reports/`; reports include
 failure categories, per-case metadata, model/provider settings, changed files, commands,
 verification outcomes, and model usage when available.
+Use `eval-reports --summary` to compare pass rates by mode, provider, and model over time.
 
 Release smoke gate:
 
