@@ -201,7 +201,7 @@ For the next implementation to-do list, see [INDUSTRY_AGENT_PLAN.md](INDUSTRY_AG
 | 9 | Collaboration workflow | Adds review mode, branch/commit/PR helpers, issue context, changelogs, and release notes | Partial |
 | 10 | Editor integration | Brings Agent47 into VS Code with file context, diffs, approvals, and terminal output | Protocol baseline done |
 | 11 | Evaluation harness | Measures solve rate, edit correctness, verification rate, and regressions on fixture repos | Baseline safety and fixture coding evals done |
-| 12 | Packaging hardening | Adds release profiles, install docs, upgrade notes, and platform-specific validation | Baseline done for metadata, license, changelog, install guide, doctor, and release checklist |
+| 12 | Packaging hardening | Adds release profiles, install docs, upgrade notes, and platform-specific validation | Baseline done for metadata, changelog, install guide, doctor, and release checklist |
 
 ## Next Recommended Build Order
 
@@ -256,7 +256,7 @@ For the next implementation to-do list, see [INDUSTRY_AGENT_PLAN.md](INDUSTRY_AG
 - `docs/INSTALL.md` documents Windows, macOS, Linux, uv, editable pip, and pipx installation paths.
 - Failed automatic verification is fed back to the model for recovery instead of allowing a premature final answer.
 - Failed tool calls and invalid model action responses are automatically fed back to the model for recovery until the failure budget is exhausted.
-- Public alpha package metadata, `LICENSE`, `CHANGELOG.md`, and `docs/RELEASE_CHECKLIST.md` are present.
+- Public alpha package metadata, `CHANGELOG.md`, and `docs/RELEASE_CHECKLIST.md` are present.
 
 ## Last Updated
 

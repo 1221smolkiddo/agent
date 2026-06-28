@@ -982,7 +982,7 @@ Owner suggestion: Infrastructure/Release Owner
 
 Tasks:
 
-- Add license.
+- Review distribution rights and licensing posture before publishing.
 - Add classifiers.
 - Add author/project URLs.
 - Add changelog.
@@ -991,7 +991,7 @@ Acceptance criteria:
 
 - Package metadata is PyPI-ready.
 
-Status: **Done for public-alpha baseline**. `pyproject.toml` now includes license, author, classifiers, keywords, and project URLs, with `LICENSE` and `CHANGELOG.md` present.
+Status: **Done for public-alpha baseline**. `pyproject.toml` now includes author, classifiers, keywords, and project URLs, with `CHANGELOG.md` present. Licensing is intentionally not declared in package metadata.
 
 #### 37. Install Guide
 

@@ -199,5 +199,5 @@ Inside `agent47`:
 - Rich token-level streaming views for future non-JSON frontends.
 - Broader fixture evals with multi-file patches, larger repos, and prompt-injection scenarios.
 - Additional concrete providers beyond OpenAI-compatible APIs.
-- Package metadata, license, changelog, and release checklist.
+- Package metadata, changelog, and release checklist.
 - VS Code extension frontend.

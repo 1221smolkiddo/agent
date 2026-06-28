@@ -4,8 +4,8 @@ Use this checklist before tagging any public alpha release.
 
 ## Package Metadata
 
-- [ ] `pyproject.toml` has the release version, license, authors, classifiers, keywords, and project URLs.
-- [ ] `LICENSE` is present and matches the package classifier.
+- [ ] `pyproject.toml` has the release version, authors, classifiers, keywords, and project URLs.
+- [ ] Distribution rights and licensing posture are reviewed before publishing.
 - [ ] `CHANGELOG.md` has a dated entry for the release.
 - [ ] `README.md` quick start works from a clean checkout.
 - [ ] `docs/INSTALL.md` covers Windows, macOS, Linux, `uv`, editable pip, and `pipx`.
