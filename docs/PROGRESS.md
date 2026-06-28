@@ -8,7 +8,7 @@ This document tracks how far the coding agent has come and what collaborators ca
 
 **Approximate progress toward an industry-standard local AI coding agent:** 64%
 
-The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, durable plan checkpoints with target-file, ownership, check, blocker, and risk metadata, persisted structured work reports, non-workspace intent routing, general web search with provider fallback, structured patch application with multi-file change-set metadata and inverse-patch revert support, approved git-diff awareness, lightweight repo mapping, task-aware relevance ranking, compact symbol indexing, dependency graph indexing, deterministic local evals for baseline safety regressions and fixture-based coding tasks, a versioned newline-delimited JSON protocol with correlated stdin approval responses for future frontends, model fallback with usage/cost tracking, install diagnostics and cross-platform install guidance, verification command detection/suggestion/automatic execution/outcome summaries, disk-verified mutation tracking for truthful final answers, prompt-injection defenses for untrusted tool output, clearer interactive terminal panels with short transcript context and structured session state, run history detail views, resumable runs, tests, GitHub collaboration setup, and release metadata/checklists for public alpha preparation.
+The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, durable plan checkpoints with target-file, ownership, check, blocker, and risk metadata, persisted structured work reports, non-workspace intent routing, general web search with provider fallback, structured patch application with multi-file change-set metadata and inverse-patch revert support, approved git-diff awareness, persistent incremental repo mapping, task-aware relevance ranking, compact symbol indexing, dependency graph indexing, deterministic local evals for baseline safety regressions and fixture-based coding tasks, a versioned newline-delimited JSON protocol with correlated stdin approval responses for future frontends, model fallback with usage/cost tracking, install diagnostics and cross-platform install guidance, verification command detection/suggestion/automatic execution/outcome summaries, disk-verified mutation tracking for truthful final answers, prompt-injection defenses for untrusted tool output, clearer interactive terminal panels with short transcript context and structured session state, run history detail views, resumable runs, tests, GitHub collaboration setup, and release metadata/checklists for public alpha preparation.
 
 This file should be updated whenever a meaningful Agent47 capability is added. Keep the enabled commands/actions current, move completed items out of "What Is Left" when they land, and update the percentage only when the agent gains real product capability rather than documentation alone.
 
@@ -137,7 +137,8 @@ There are currently **19 model-requestable actions**:
 | Secret output redaction | Enabled |
 | Bounded approval previews and mutation diff outputs | Enabled |
 | Project search: ripgrep plus Python fallback | Enabled |
-| Lightweight repo map | Enabled |
+| Persistent incremental repo index cache | Enabled |
+| Lightweight repo map | Enabled through cache-aware indexing |
 | Task-aware context ranking | Enabled |
 | Compact symbol index | Enabled |
 | Lightweight dependency graph | Enabled |
@@ -246,7 +247,8 @@ For the next implementation to-do list, see [INDUSTRY_AGENT_PLAN.md](INDUSTRY_AG
 - `suggest_verification` ranks focused checks from changed paths, and successful file mutations now trigger automatic focused verification when commands are detected.
 - Verification-like shell commands are recorded and appended to final summaries as pass/fail outcomes.
 - `inspect_git_diff` shows dirty files and optional bounded diff hunks so Agent47 can avoid overwriting existing user changes.
-- `repo_map`, `rank_context`, `symbol_index`, and `dependency_graph` give Agent47 a lightweight repository index, task-aware file ranking, compact declaration map, and import impact map before broad reads.
+- `repo_map`, `rank_context`, `symbol_index`, and `dependency_graph` give Agent47 a persistent incremental repository index, task-aware file ranking, compact declaration map, and import impact map before broad reads.
+- The repo index cache lives in SQLite and stores workspace-relative paths, file metadata, SHA-256 hashes, module names, symbols, and imports. Refreshes reuse unchanged file entries by size and modification time, rehash changed files, remove deleted paths, and can run through an optional background refresh worker.
 - Repo-map, ranking, symbol-index, and dependency-graph actions are stored in run history and summarized in structured work reports as context analysis.
 - `code-agent evals` runs offline deterministic checks for greeting routing, blocked-write honesty, denied-read non-leakage, sandbox isolation, file creation, file editing, test fixing, failed-read recovery, dirty-worktree awareness, and patch-conflict recovery. `--json` emits metrics and per-case results for trend tracking.
 - `code-agent run-json` emits versioned NDJSON events, fails closed on approvals by default, supports `--approval-stdin` request/response approvals with matching request IDs for parent editor processes, includes approval metadata for frontend UIs, and keeps `--approve-all` only for trusted automation.

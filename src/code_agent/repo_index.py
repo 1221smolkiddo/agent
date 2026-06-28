@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
 import re
+import sqlite3
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,6 +59,11 @@ class RepoFile:
     kind: str
     size: int
     importance: int
+    mtime_ns: int = 0
+    sha256: str = ""
+    module_name: str = ""
+    symbols: tuple[str, ...] = ()
+    imports: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -65,8 +74,13 @@ class DependencyEdge:
     kind: str
 
 
-def build_repo_map(workspace: Path, *, max_files: int = 80) -> str:
-    files = index_repo(workspace)
+def build_repo_map(
+    workspace: Path,
+    *,
+    max_files: int = 80,
+    cache: RepoIndexCache | None = None,
+) -> str:
+    files = index_repo(workspace, cache=cache)
     important = [item for item in files if item.importance >= 6]
     source_count = sum(1 for item in files if item.kind == "source")
     test_count = sum(1 for item in files if item.kind == "test")
@@ -97,8 +111,14 @@ def build_repo_map(workspace: Path, *, max_files: int = 80) -> str:
     return "\n".join(lines)
 
 
-def rank_context(workspace: Path, task: str, *, max_results: int = 12) -> str:
-    files = index_repo(workspace)
+def rank_context(
+    workspace: Path,
+    task: str,
+    *,
+    max_results: int = 12,
+    cache: RepoIndexCache | None = None,
+) -> str:
+    files = index_repo(workspace, cache=cache)
     terms = _task_terms(task)
     scored = [(score_file(item, terms), item) for item in files]
     scored = [(score, item) for score, item in scored if score > 0]
@@ -120,13 +140,19 @@ def rank_context(workspace: Path, task: str, *, max_results: int = 12) -> str:
     return "\n".join(lines)
 
 
-def build_symbol_index(workspace: Path, *, max_files: int = 40, max_symbols: int = 120) -> str:
-    files = [item for item in index_repo(workspace) if item.kind in {"source", "test"}]
+def build_symbol_index(
+    workspace: Path,
+    *,
+    max_files: int = 40,
+    max_symbols: int = 120,
+    cache: RepoIndexCache | None = None,
+) -> str:
+    files = [item for item in index_repo(workspace, cache=cache) if item.kind in {"source", "test"}]
     lines = ["Symbol index:", f"- files scanned: {min(len(files), max_files)}", ""]
     symbol_count = 0
     for item in files[:max_files]:
         path = workspace / item.path
-        symbols = _symbols_for_file(path)
+        symbols = list(item.symbols) if item.symbols else _symbols_for_file(path)
         if not symbols:
             continue
         lines.append(f"{item.path}:")
@@ -142,13 +168,19 @@ def build_symbol_index(workspace: Path, *, max_files: int = 40, max_symbols: int
     return "\n".join(lines).rstrip()
 
 
-def build_dependency_graph(workspace: Path, *, max_files: int = 60, max_edges: int = 160) -> str:
-    files = [item for item in index_repo(workspace) if item.kind in {"source", "test"}]
+def build_dependency_graph(
+    workspace: Path,
+    *,
+    max_files: int = 60,
+    max_edges: int = 160,
+    cache: RepoIndexCache | None = None,
+) -> str:
+    files = [item for item in index_repo(workspace, cache=cache) if item.kind in {"source", "test"}]
     module_map = _module_map(files)
     edges: list[DependencyEdge] = []
     for item in files[:max_files]:
         path = workspace / item.path
-        edges.extend(_dependency_edges_for_file(path, item.path, module_map))
+        edges.extend(_dependency_edges_for_file(path, item.path, module_map, item.imports))
 
     internal = [edge for edge in edges if edge.kind == "internal"]
     external = [edge for edge in edges if edge.kind == "external"]
@@ -183,8 +215,191 @@ def build_dependency_graph(workspace: Path, *, max_files: int = 60, max_edges: i
     return "\n".join(lines)
 
 
-def index_repo(workspace: Path) -> list[RepoFile]:
+class RepoIndexCache:
+    """SQLite-backed repository index cache keyed by workspace and relative path."""
+
+    def __init__(self, db_path: Path) -> None:
+        self.db_path = db_path
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._ensure_schema()
+
+    def load_workspace(self, workspace: Path) -> dict[str, RepoFile]:
+        workspace_key = _workspace_key(workspace)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                select path, kind, size, importance, mtime_ns, sha256, module_name,
+                       symbols_json, imports_json
+                from repo_index_files
+                where workspace = ?
+                """,
+                (workspace_key,),
+            ).fetchall()
+        return {row["path"]: self._row_to_file(row) for row in rows}
+
+    def save_workspace(self, workspace: Path, files: list[RepoFile]) -> None:
+        workspace_key = _workspace_key(workspace)
+        paths = {item.path for item in files}
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                insert into repo_index_files (
+                    workspace, path, kind, size, importance, mtime_ns, sha256,
+                    module_name, symbols_json, imports_json, updated_at
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+                on conflict(workspace, path) do update set
+                    kind = excluded.kind,
+                    size = excluded.size,
+                    importance = excluded.importance,
+                    mtime_ns = excluded.mtime_ns,
+                    sha256 = excluded.sha256,
+                    module_name = excluded.module_name,
+                    symbols_json = excluded.symbols_json,
+                    imports_json = excluded.imports_json,
+                    updated_at = current_timestamp
+                """,
+                [
+                    (
+                        workspace_key,
+                        item.path,
+                        item.kind,
+                        item.size,
+                        item.importance,
+                        item.mtime_ns,
+                        item.sha256,
+                        item.module_name,
+                        json.dumps(list(item.symbols)),
+                        json.dumps(list(item.imports)),
+                    )
+                    for item in files
+                ],
+            )
+            if paths:
+                placeholders = ",".join("?" for _ in paths)
+                conn.execute(
+                    f"""
+                    delete from repo_index_files
+                    where workspace = ? and path not in ({placeholders})
+                    """,
+                    (workspace_key, *sorted(paths)),
+                )
+            else:
+                conn.execute("delete from repo_index_files where workspace = ?", (workspace_key,))
+            conn.execute(
+                """
+                insert into repo_index_meta (workspace, refreshed_at, file_count)
+                values (?, current_timestamp, ?)
+                on conflict(workspace) do update set
+                    refreshed_at = current_timestamp,
+                    file_count = excluded.file_count
+                """,
+                (workspace_key, len(files)),
+            )
+
+    def refresh(self, workspace: Path) -> list[RepoFile]:
+        return index_repo(workspace, cache=self)
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _ensure_schema(self) -> None:
+        with self._connect() as conn:
+            conn.executescript(
+                """
+                create table if not exists repo_index_files (
+                    workspace text not null,
+                    path text not null,
+                    kind text not null,
+                    size integer not null,
+                    importance integer not null,
+                    mtime_ns integer not null,
+                    sha256 text not null,
+                    module_name text not null default '',
+                    symbols_json text not null default '[]',
+                    imports_json text not null default '[]',
+                    updated_at text not null default current_timestamp,
+                    primary key (workspace, path)
+                );
+
+                create index if not exists idx_repo_index_files_workspace
+                    on repo_index_files(workspace);
+
+                create table if not exists repo_index_meta (
+                    workspace text primary key,
+                    refreshed_at text not null default current_timestamp,
+                    file_count integer not null
+                );
+                """
+            )
+
+    @staticmethod
+    def _row_to_file(row: sqlite3.Row) -> RepoFile:
+        return RepoFile(
+            path=row["path"],
+            kind=row["kind"],
+            size=int(row["size"]),
+            importance=int(row["importance"]),
+            mtime_ns=int(row["mtime_ns"]),
+            sha256=row["sha256"],
+            module_name=row["module_name"],
+            symbols=tuple(json.loads(row["symbols_json"] or "[]")),
+            imports=tuple(json.loads(row["imports_json"] or "[]")),
+        )
+
+
+class BackgroundIndexRefresh:
+    """Small idle-refresh worker for frontends that keep Agent47 alive."""
+
+    def __init__(
+        self,
+        workspace: Path,
+        cache: RepoIndexCache,
+        *,
+        interval_seconds: float = 30.0,
+    ) -> None:
+        self.workspace = workspace
+        self.cache = cache
+        self.interval_seconds = interval_seconds
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> "BackgroundIndexRefresh":
+        if self._thread and self._thread.is_alive():
+            return self
+        self._thread = threading.Thread(target=self._run, name="agent47-index-refresh", daemon=True)
+        self._thread.start()
+        return self
+
+    def stop(self, timeout: float = 2.0) -> None:
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=timeout)
+
+    def _run(self) -> None:
+        while not self._stop_event.is_set():
+            self.cache.refresh(self.workspace)
+            self._stop_event.wait(self.interval_seconds)
+
+
+def start_background_index_refresh(
+    workspace: Path,
+    cache: RepoIndexCache,
+    *,
+    interval_seconds: float = 30.0,
+) -> BackgroundIndexRefresh:
+    return BackgroundIndexRefresh(
+        workspace,
+        cache,
+        interval_seconds=interval_seconds,
+    ).start()
+
+
+def index_repo(workspace: Path, cache: RepoIndexCache | None = None) -> list[RepoFile]:
     root = workspace.resolve()
+    cached = cache.load_workspace(root) if cache else {}
     files: list[RepoFile] = []
     for path in sorted(root.rglob("*"), key=lambda item: str(item).lower()):
         if _is_ignored_path(path, root) or not path.is_file():
@@ -192,19 +407,22 @@ def index_repo(workspace: Path) -> list[RepoFile]:
         if path.suffix and path.suffix not in TEXT_EXTENSIONS:
             continue
         try:
-            size = path.stat().st_size
+            stat = path.stat()
+            size = stat.st_size
+            mtime_ns = stat.st_mtime_ns
             relative = path.relative_to(root).as_posix()
         except OSError:
             continue
-        files.append(
-            RepoFile(
-                path=relative,
-                kind=_classify_file(relative),
-                size=size,
-                importance=_importance(relative),
-            )
-        )
+        cached_item = cached.get(relative)
+        if cached_item and cached_item.size == size and cached_item.mtime_ns == mtime_ns:
+            files.append(cached_item)
+            continue
+        indexed = _index_file(path, relative, size=size, mtime_ns=mtime_ns)
+        if indexed:
+            files.append(indexed)
     files.sort(key=lambda item: (-item.importance, item.path))
+    if cache:
+        cache.save_workspace(root, files)
     return files
 
 
@@ -235,11 +453,48 @@ def _symbols_for_file(path: Path) -> list[str]:
     return []
 
 
+def _index_file(path: Path, relative: str, *, size: int, mtime_ns: int) -> RepoFile | None:
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    return RepoFile(
+        path=relative,
+        kind=_classify_file(relative),
+        size=size,
+        importance=_importance(relative),
+        mtime_ns=mtime_ns,
+        sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        module_name=_module_name_for_path(relative),
+        symbols=tuple(_symbols_for_source(path, content)),
+        imports=tuple(_imports_for_source(path, content, relative)),
+    )
+
+
+def _symbols_for_source(path: Path, source: str) -> list[str]:
+    if path.suffix == ".py":
+        return _python_symbols_from_source(source)
+    if path.suffix in {".js", ".jsx", ".ts", ".tsx"}:
+        return _javascript_like_symbols_from_lines(source.splitlines())
+    return []
+
+
+def _imports_for_source(path: Path, source: str, relative: str) -> list[str]:
+    if path.suffix == ".py":
+        return _python_imports(source, relative)
+    if path.suffix in {".js", ".jsx", ".ts", ".tsx"}:
+        return _javascript_imports_from_source(source)
+    return []
+
+
 def _dependency_edges_for_file(
     path: Path,
     relative_path: str,
     module_map: dict[str, str],
+    imports: tuple[str, ...] = (),
 ) -> list[DependencyEdge]:
+    if imports:
+        return [_dependency_edge(relative_path, item, module_map) for item in imports]
     if path.suffix == ".py":
         return _python_dependency_edges(path, relative_path, module_map)
     if path.suffix in {".js", ".jsx", ".ts", ".tsx"}:
@@ -254,23 +509,9 @@ def _python_dependency_edges(
 ) -> list[DependencyEdge]:
     try:
         source = path.read_text(encoding="utf-8")
-        tree = ast.parse(source)
     except (OSError, SyntaxError, UnicodeDecodeError):
         return []
-
-    edges: list[DependencyEdge] = []
-    current_module = _module_name_for_path(relative_path)
-    current_package = current_module.rsplit(".", 1)[0] if "." in current_module else current_module
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                import_name = alias.name
-                edges.append(_dependency_edge(relative_path, import_name, module_map))
-        elif isinstance(node, ast.ImportFrom):
-            import_name = _resolve_python_from_import(current_package, node)
-            if import_name:
-                edges.append(_dependency_edge(relative_path, import_name, module_map))
-    return edges
+    return [_dependency_edge(relative_path, item, module_map) for item in _python_imports(source, relative_path)]
 
 
 def _javascript_dependency_edges(
@@ -282,6 +523,10 @@ def _javascript_dependency_edges(
         source = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return []
+    return [_dependency_edge(relative_path, item, module_map) for item in _javascript_imports_from_source(source)]
+
+
+def _javascript_imports_from_source(source: str) -> list[str]:
 
     patterns = [
         re.compile(r"\bimport\s+(?:[^'\"]+\s+from\s+)?['\"]([^'\"]+)['\"]"),
@@ -291,7 +536,7 @@ def _javascript_dependency_edges(
     imports: list[str] = []
     for pattern in patterns:
         imports.extend(match.group(1) for match in pattern.finditer(source))
-    return [_dependency_edge(relative_path, item, module_map) for item in sorted(set(imports))]
+    return sorted(set(imports))
 
 
 def _dependency_edge(source: str, import_name: str, module_map: dict[str, str]) -> DependencyEdge:
@@ -357,7 +602,7 @@ def _resolve_python_from_import(current_package: str, node: ast.ImportFrom) -> s
 def _module_map(files: list[RepoFile]) -> dict[str, str]:
     modules: dict[str, str] = {}
     for item in files:
-        module = _module_name_for_path(item.path)
+        module = item.module_name or _module_name_for_path(item.path)
         if module:
             modules[module] = item.path
     return modules
@@ -395,8 +640,15 @@ def _group_external_edges(edges: list[DependencyEdge]) -> list[tuple[str, list[s
 def _python_symbols(path: Path) -> list[str]:
     try:
         source = path.read_text(encoding="utf-8")
-        tree = ast.parse(source)
     except (OSError, SyntaxError, UnicodeDecodeError):
+        return []
+    return _python_symbols_from_source(source)
+
+
+def _python_symbols_from_source(source: str) -> list[str]:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
         return []
     symbols: list[str] = []
     for node in ast.walk(tree):
@@ -413,6 +665,10 @@ def _javascript_like_symbols(path: Path) -> list[str]:
         lines = path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError):
         return []
+    return _javascript_like_symbols_from_lines(lines)
+
+
+def _javascript_like_symbols_from_lines(lines: list[str]) -> list[str]:
     patterns = [
         (re.compile(r"^\s*export\s+default\s+function\s+([A-Za-z_$][\w$]*)"), "function"),
         (re.compile(r"^\s*export\s+function\s+([A-Za-z_$][\w$]*)"), "function"),
@@ -430,6 +686,28 @@ def _javascript_like_symbols(path: Path) -> list[str]:
                 symbols.append(f"L{line_number} {kind} {match.group(1)}")
                 break
     return symbols
+
+
+def _python_imports(source: str, relative_path: str) -> list[str]:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    imports: list[str] = []
+    current_module = _module_name_for_path(relative_path)
+    current_package = current_module.rsplit(".", 1)[0] if "." in current_module else current_module
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imports.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            import_name = _resolve_python_from_import(current_package, node)
+            if import_name:
+                imports.append(import_name)
+    return sorted(set(imports))
+
+
+def _workspace_key(workspace: Path) -> str:
+    return str(workspace.resolve())
 
 
 def _symbol_line_number(symbol: str) -> int:

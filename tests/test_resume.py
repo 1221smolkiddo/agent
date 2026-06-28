@@ -30,6 +30,15 @@ def test_storage_returns_run_and_decoded_steps(tmp_path: Path) -> None:
     assert steps[0]["payload"] == {"type": "read_file", "path": "src/parser.py"}
     assert steps[1]["payload"]["output"] == "parser source"
     assert storage.schema_version == CURRENT_SCHEMA_VERSION
+    with sqlite3.connect(storage.db_path) as conn:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "select name from sqlite_master where type = 'table'"
+            ).fetchall()
+        }
+    assert "repo_index_files" in tables
+    assert "repo_index_meta" in tables
 
 
 def test_storage_migrates_legacy_database_and_creates_backup(tmp_path: Path) -> None:

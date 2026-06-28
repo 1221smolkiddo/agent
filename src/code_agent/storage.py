@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 
 class AgentStorage:
@@ -200,6 +200,10 @@ class AgentStorage:
         if version < 2:
             self._migration_002_model_usage_cost(conn)
             self._record_migration(conn, 2)
+            version = 2
+        if version < 3:
+            self._migration_003_repo_index_cache(conn)
+            self._record_migration(conn, 3)
 
     def _migration_001_initial(self, conn: sqlite3.Connection) -> None:
         conn.executescript(
@@ -247,6 +251,35 @@ class AgentStorage:
 
     def _migration_002_model_usage_cost(self, conn: sqlite3.Connection) -> None:
         self._ensure_column(conn, "model_usage", "estimated_cost_usd", "real")
+
+    def _migration_003_repo_index_cache(self, conn: sqlite3.Connection) -> None:
+        conn.executescript(
+            """
+            create table if not exists repo_index_files (
+                workspace text not null,
+                path text not null,
+                kind text not null,
+                size integer not null,
+                importance integer not null,
+                mtime_ns integer not null,
+                sha256 text not null,
+                module_name text not null default '',
+                symbols_json text not null default '[]',
+                imports_json text not null default '[]',
+                updated_at text not null default current_timestamp,
+                primary key (workspace, path)
+            );
+
+            create index if not exists idx_repo_index_files_workspace
+                on repo_index_files(workspace);
+
+            create table if not exists repo_index_meta (
+                workspace text primary key,
+                refreshed_at text not null default current_timestamp,
+                file_count integer not null
+            );
+            """
+        )
 
     def _create_migration_table(self, conn: sqlite3.Connection) -> None:
         conn.execute(

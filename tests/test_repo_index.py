@@ -1,11 +1,15 @@
 from pathlib import Path
+import sqlite3
+import time
 
 from code_agent.repo_index import (
+    RepoIndexCache,
     build_dependency_graph,
     build_repo_map,
     build_symbol_index,
     index_repo,
     rank_context,
+    start_background_index_refresh,
 )
 
 
@@ -130,3 +134,76 @@ def test_dependency_graph_extracts_python_and_javascript_imports(tmp_path: Path)
     assert "web/app.ts -> web/helper.ts (./helper)" in output
     assert "src/code_agent/tools.py: json" in output
     assert "web/app.ts: react" in output
+
+
+def test_repo_index_cache_persists_file_metadata_and_symbols(tmp_path: Path) -> None:
+    cache = RepoIndexCache(tmp_path / ".code-agent" / "agent.db")
+    source = tmp_path / "src" / "app.py"
+    source.parent.mkdir()
+    source.write_text("import json\n\ndef main(): pass\n", encoding="utf-8")
+
+    files = index_repo(tmp_path, cache=cache)
+
+    item = next(file for file in files if file.path == "src/app.py")
+    assert item.sha256
+    assert item.symbols == ("L3 def main",)
+    assert item.imports == ("json",)
+    with sqlite3.connect(cache.db_path) as conn:
+        count = conn.execute("select count(*) from repo_index_files").fetchone()[0]
+    assert count == 1
+
+
+def test_repo_index_cache_reuses_unchanged_symbols(tmp_path: Path, monkeypatch) -> None:
+    cache = RepoIndexCache(tmp_path / ".code-agent" / "agent.db")
+    source = tmp_path / "src" / "app.py"
+    source.parent.mkdir()
+    source.write_text("def cached_symbol(): pass\n", encoding="utf-8")
+    index_repo(tmp_path, cache=cache)
+
+    def fail_if_reparsed(_path: Path) -> list[str]:
+        raise AssertionError("unchanged file should use cached symbols")
+
+    monkeypatch.setattr("code_agent.repo_index._symbols_for_file", fail_if_reparsed)
+
+    output = build_symbol_index(tmp_path, cache=cache)
+
+    assert "cached_symbol" in output
+
+
+def test_repo_index_cache_refreshes_changed_files_and_removes_deleted_files(tmp_path: Path) -> None:
+    cache = RepoIndexCache(tmp_path / ".code-agent" / "agent.db")
+    source = tmp_path / "src" / "app.py"
+    deleted = tmp_path / "src" / "old.py"
+    source.parent.mkdir()
+    source.write_text("def before(): pass\n", encoding="utf-8")
+    deleted.write_text("def old(): pass\n", encoding="utf-8")
+    index_repo(tmp_path, cache=cache)
+
+    source.write_text("def after(): pass\n", encoding="utf-8")
+    deleted.unlink()
+
+    output = build_symbol_index(tmp_path, cache=cache)
+    cached_paths = set(cache.load_workspace(tmp_path))
+
+    assert "after" in output
+    assert "before" not in output
+    assert cached_paths == {"src/app.py"}
+
+
+def test_background_index_refresh_populates_cache(tmp_path: Path) -> None:
+    cache = RepoIndexCache(tmp_path / ".code-agent" / "agent.db")
+    source = tmp_path / "src" / "app.py"
+    source.parent.mkdir()
+    source.write_text("def background(): pass\n", encoding="utf-8")
+    worker = start_background_index_refresh(tmp_path, cache, interval_seconds=0.05)
+
+    try:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if "src/app.py" in cache.load_workspace(tmp_path):
+                break
+            time.sleep(0.02)
+    finally:
+        worker.stop()
+
+    assert "src/app.py" in cache.load_workspace(tmp_path)

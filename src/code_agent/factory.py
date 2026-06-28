@@ -8,6 +8,7 @@ from .config import Settings
 from .model_profiles import resolve_model_profile
 from .model_presets import resolve_model_preset
 from .models import ModelClient, ModelProviderConfig, create_fallback_client, create_openai_compatible_client
+from .repo_index import RepoIndexCache
 from .storage import AgentStorage
 from .status import StatusReporter
 from .tools import ToolRegistry
@@ -51,6 +52,7 @@ def create_agent(
     )
     client = create_fallback_client(provider, selected_profile, settings.fallback_model_list)
     storage = AgentStorage(settings.agent_db_path)
+    index_cache = RepoIndexCache(storage.db_path)
 
     # Build reviewer client when the reviewer pass is enabled and no explicit
     # client was supplied (e.g. by tests). The reviewer uses its own profile
@@ -77,6 +79,7 @@ def create_agent(
             dry_run=dry_run,
             approval_callback=approval_callback,
             shell_network_policy=shell_network_policy or settings.shell_network_policy,
+            index_cache=index_cache,
         ),
         storage=storage,
         reporter=reporter,

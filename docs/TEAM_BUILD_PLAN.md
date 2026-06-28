@@ -661,7 +661,7 @@ Acceptance criteria:
 
 - Agent can answer "what is this project?" without broad random reads.
 
-Status: **Done for baseline**. Agent47 now exposes an approved `repo_map` action that respects ignored local state, detects important project files, summarizes source/test/doc counts, and reports important files plus top-level layout.
+Status: **Done for baseline, upgraded with persistence**. Agent47 now exposes an approved `repo_map` action that respects ignored local state, detects important project files, summarizes source/test/doc counts, and reports important files plus top-level layout. Repo intelligence now uses a SQLite-backed incremental cache with file sizes, mtimes, SHA-256 hashes, module names, symbols, and imports, and includes an optional background refresh worker for long-lived frontends.
 
 #### 20. File Relevance Ranking
 
@@ -681,7 +681,7 @@ Acceptance criteria:
 
 - Agent asks to read fewer, more relevant files.
 
-Status: **Done for baseline**. Agent47 now exposes an approved `rank_context` action that scores indexed files against the user task using path terms, file kind, tests, docs, source modules, and important project-file signals. Repo-map and ranking usage is recorded in run history and structured work reports.
+Status: **Done for baseline**. Agent47 now exposes an approved `rank_context` action that scores indexed files against the user task using path terms, file kind, tests, docs, source modules, and important project-file signals. Repo-map and ranking usage is recorded in run history and structured work reports, and repeated calls reuse the persistent incremental repo index when files are unchanged.
 
 #### 21. Symbol Index Baseline
 
@@ -700,7 +700,7 @@ Acceptance criteria:
 
 - Agent can locate functions/classes without scanning full files.
 
-Status: **Baseline done**. Added an approved `symbol_index` action that indexes Python classes/functions with `ast` and conservative JavaScript/TypeScript declarations with deterministic parsing. Symbol-index output is recorded as context analysis and marked as untrusted model context before reuse. Tree-sitter-backed richer symbol graphs remain a possible future enhancement.
+Status: **Baseline done**. Added an approved `symbol_index` action that indexes Python classes/functions with `ast` and conservative JavaScript/TypeScript declarations with deterministic parsing. Symbol-index output is recorded as context analysis and marked as untrusted model context before reuse. Symbols and imports are cached persistently and refreshed incrementally; tree-sitter-backed richer symbol graphs remain a possible future enhancement.
 
 #### 22. Git Awareness
 

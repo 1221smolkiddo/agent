@@ -37,7 +37,13 @@ from .schema import (
     WriteFileAction,
 )
 from .parsing import summarize_code_file
-from .repo_index import build_dependency_graph, build_repo_map, build_symbol_index, rank_context
+from .repo_index import (
+    RepoIndexCache,
+    build_dependency_graph,
+    build_repo_map,
+    build_symbol_index,
+    rank_context,
+)
 from .safety import classify_network_url, classify_shell_command, is_sensitive_path, redact_secrets
 from .verification import detect_verification_commands, suggest_verification_commands
 
@@ -92,11 +98,13 @@ class ToolRegistry:
         dry_run: bool,
         approval_callback: Callable[[str, str], bool] | None = None,
         shell_network_policy: str = "allow",
+        index_cache: RepoIndexCache | None = None,
     ) -> None:
         self.workspace = workspace.resolve()
         self.dry_run = dry_run
         self.approval_callback = approval_callback
         self.shell_network_policy = shell_network_policy.strip().lower()
+        self.index_cache = index_cache
         if self.shell_network_policy not in {"allow", "deny"}:
             raise ValueError("shell_network_policy must be one of: allow, deny")
 
@@ -441,7 +449,10 @@ class ToolRegistry:
     def _repo_map(self, max_files: int) -> ToolResult:
         if not self._approve("repo_map", "Build a lightweight repository map and important-file summary."):
             return ToolResult(ok=False, output="Permission denied for repo_map.")
-        return ToolResult(ok=True, output=build_repo_map(self.workspace, max_files=max_files))
+        return ToolResult(
+            ok=True,
+            output=build_repo_map(self.workspace, max_files=max_files, cache=self.index_cache),
+        )
 
     def _rank_context(self, task: str, max_results: int) -> ToolResult:
         if not self._approve(
@@ -449,7 +460,15 @@ class ToolRegistry:
             f"Rank likely relevant files for task: {task}",
         ):
             return ToolResult(ok=False, output="Permission denied for rank_context.")
-        return ToolResult(ok=True, output=rank_context(self.workspace, task, max_results=max_results))
+        return ToolResult(
+            ok=True,
+            output=rank_context(
+                self.workspace,
+                task,
+                max_results=max_results,
+                cache=self.index_cache,
+            ),
+        )
 
     def _symbol_index(self, max_files: int, max_symbols: int) -> ToolResult:
         if not self._approve(
@@ -463,6 +482,7 @@ class ToolRegistry:
                 self.workspace,
                 max_files=max_files,
                 max_symbols=max_symbols,
+                cache=self.index_cache,
             ),
         )
 
@@ -478,6 +498,7 @@ class ToolRegistry:
                 self.workspace,
                 max_files=max_files,
                 max_edges=max_edges,
+                cache=self.index_cache,
             ),
         )
 

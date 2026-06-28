@@ -32,6 +32,9 @@ This document summarizes the current state of Agent47 for collaborators.
 - Task-aware context ranking through an approved `rank_context` action that scores likely relevant files before broad reads.
 - Compact symbol indexing through an approved `symbol_index` action that locates Python classes/functions and JavaScript/TypeScript declarations before implementation reads.
 - Lightweight dependency graph indexing through an approved `dependency_graph` action that maps Python and JavaScript/TypeScript imports into internal edges and external packages before impact analysis.
+- Persistent SQLite-backed repo index cache with file size, modification time, SHA-256 hash, module name, symbols, and imports.
+- Incremental repo index refresh that reuses unchanged cached files and removes deleted paths from the cache.
+- Optional background repo index refresh worker for long-lived idle frontends.
 - Repo-map, ranking, symbol-index, and dependency-graph actions are saved in run history and summarized in structured work reports as context analysis.
 - Offline deterministic eval harness through `code-agent evals`.
 - Built-in safety regressions for greeting routing, blocked-write honesty, denied-read non-leakage, and sandbox write isolation.
@@ -172,7 +175,7 @@ Inside `agent47`:
 - Verification outcome summaries.
 - Clean terminal panel formatting.
 - Project search fallback when `ripgrep` is unavailable.
-- Lightweight repo index, context ranking, symbol indexing, and dependency graphing.
+- Persistent incremental repo index, context ranking, symbol indexing, and dependency graphing.
 - Sandbox diff/apply promotion.
 - Local deterministic eval harness.
 - Fixture-based coding evals.
