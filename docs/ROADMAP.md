@@ -7,7 +7,7 @@ For the prioritized implementation checklist and provider expansion plan, see
 
 ## Current Position
 
-Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRouter/OpenAI-compatible model access, typed tool actions, durable plan checkpoints with visible plan snapshots, non-workspace intent routing, local file/search/shell/web tools with general web-search fallback, structured patch application, git-diff awareness, verification command detection/suggestion/automatic execution/outcome summaries, permission prompts, dry-run mode, local sandbox copies, SQLite run history with detail views and resume support, operation status labels, cleaner bordered terminal panels with short transcript context and structured session state, failure recovery, persistent incremental repo/symbol/dependency indexing, optional tree-sitter summaries, and an Agent47 engineering protocol in the system prompt.
+Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRouter/OpenAI-compatible model access, typed tool actions, durable plan checkpoints with visible plan snapshots, non-workspace intent routing, local file/search/shell/web tools with general web-search fallback, structured patch application, git-diff awareness, verification command detection/suggestion/automatic execution/outcome summaries, permission prompts, dry-run mode, local sandbox copies, SQLite run history with detail views and resume support, operation status labels, cleaner bordered terminal panels with short transcript context and structured session state, local per-repo project memory, failure recovery, persistent incremental repo/symbol/dependency indexing, optional tree-sitter summaries, and an Agent47 engineering protocol in the system prompt.
 
 ## Industry-Standard Capability Checklist
 
@@ -15,11 +15,11 @@ Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRou
 | --- | --- | --- |
 | Agent loop | Basic typed action loop with failure recovery, non-workspace routing, durable plan checkpoints, and visible plan snapshots | Add richer task decomposition, cancellation, pause/resume, and bounded long-running work |
 | Code editing | Full-file writes, exact text replacement, and approved `git apply` patches | Add multi-file change set metadata, conflict handling, rollback support, and formatting hooks |
-| Repository intelligence | File listing, ripgrep search, optional code summaries, approved git status/diff inspection, persistent incremental repo map, context ranking, symbol index, dependency graph | Add ownership hints, architectural memory, and richer context ranking |
+| Repository intelligence | File listing, ripgrep search, optional code summaries, approved git status/diff inspection, persistent incremental repo map, context ranking, symbol index, dependency graph, and local project memory | Add ownership hints, stale-memory cleanup helpers, and richer context ranking |
 | Verification | Agent can detect likely verification commands, suggest focused checks from changed paths, automatically run focused checks after successful mutations, feed failed checks back to the model, and summarize verification outcomes | Add richer retry policy and failure-output parsing |
 | Safety and sandboxing | Workspace path guard, dry-run, permission prompts, copy sandbox, shell command risk policy, destructive-command blocking, public-web network policy, and secret redaction | Add configurable command allow/deny policy, process limits, timeout tiers, and deeper secret scanning |
 | Model layer | Single OpenAI-compatible chat client | Add provider abstraction, model profiles, planner/coder/reviewer routing, fallback models, token/cost tracking, and streaming |
-| Memory and sessions | SQLite run history with detail views, resumable runs, durable plan checkpoints, and in-memory interactive session state for follow-ups | Add conversation checkpoints, per-repo memory, decision logs, and context compaction |
+| Memory and sessions | SQLite run history with detail views, resumable runs, durable plan checkpoints, local per-repo memory, and in-memory interactive session state for follow-ups | Add conversation checkpoints, decision logs, memory maintenance helpers, and context compaction |
 | Collaboration | Basic docs and GitHub setup | Add branch/commit/PR workflow, review mode, issue ingestion, changelog generation, and release notes |
 | Developer UX | CLI, `agent47` interactive mode, status labels, bordered panels for prompts, responses, history, and plan snapshots, short transcript and session-state context for follow-ups | Add richer TUI streaming, approval diff views, command output panes, transcript export, and VS Code integration |
 | Observability | Stored steps and simple status | Add structured traces, tool timing, model usage metrics, failure analytics, and debug bundles |
@@ -50,7 +50,8 @@ Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRou
 
 - Done: add git diff awareness so Agent47 can inspect dirty files before editing.
 - Done: build a persistent incremental repo index with file hashes, mtimes, symbols, imports, and ranked context.
-- Add code ownership and architectural summary files under `.code-agent/`.
+- Done: add `.code-agent/memory/project.md` for reusable conventions, commands, architecture notes, pitfalls, glossary entries, and successful patterns.
+- Add code ownership hints and stale-memory cleanup helpers.
 
 ## Phase 4: Safer Autonomy
 
@@ -75,7 +76,7 @@ Agent47 already has a reusable Python core, a CLI and interactive shell, OpenRou
 - Done: add run detail views and resume support from saved tool history.
 - Done: save durable plan updates with step statuses in run history and resume context.
 - Save patch sets, richer verification results, and final summaries.
-- Add per-repo memory for conventions, preferred commands, and recurring project facts.
+- Done: add per-repo memory for conventions, preferred commands, architecture notes, pitfalls, glossary terms, and recurring project facts.
 - Add context compaction for long tasks.
 
 ## Phase 7: Collaboration Workflow

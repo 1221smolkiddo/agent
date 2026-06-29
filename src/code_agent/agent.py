@@ -18,6 +18,7 @@ from .schema import (
     DependencyGraphAction,
     FinalAction,
     RankContextAction,
+    ReadMemoryAction,
     RepoMapAction,
     RunShellAction,
     SymbolIndexAction,
@@ -658,6 +659,7 @@ class CodingAgent:
         messages: list[ChatMessage],
     ) -> list[dict[str, Any]]:
         actions: list[AgentAction] = [
+            ReadMemoryAction(type="read_memory", max_chars=8000),
             RepoMapAction(type="repo_map", max_files=60),
             RankContextAction(type="rank_context", task=task, max_results=10),
         ]
@@ -925,6 +927,8 @@ class CodingAgent:
             "rank_context",
             "symbol_index",
             "dependency_graph",
+            "read_memory",
+            "update_memory",
         }
 
     @staticmethod
@@ -1183,6 +1187,7 @@ class CodingAgent:
             "rank_context",
             "symbol_index",
             "dependency_graph",
+            "read_memory",
         }:
             return None
         item: dict[str, Any] = {
@@ -1207,6 +1212,7 @@ class CodingAgent:
             "rank_context",
             "symbol_index",
             "dependency_graph",
+            "read_memory",
             "web_search",
         }:
             return {}

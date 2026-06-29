@@ -10,6 +10,7 @@ Agent47 is a credible alpha CLI coding agent, not a finished industry product.
 - Verification detection and automatic focused checks.
 - Local sandbox copies with diff/apply promotion.
 - Run history, resume, work reports, debug bundles, and eval reports.
+- Local per-repo memory under `.code-agent/memory/project.md` for stable project facts.
 - Offline deterministic evals and opt-in live-model benchmarks.
 
 ## Current Limits
@@ -20,7 +21,8 @@ Agent47 is a credible alpha CLI coding agent, not a finished industry product.
 - Shell network-deny mode blocks commands classified as install/network, but it is not an OS firewall.
 - Shell timeout and Ctrl+C cancellation paths attempt process-tree cleanup, but Agent47 still does
   not provide a container, VM, seccomp/AppArmor profile, Windows Job Object policy, or macOS seatbelt.
-- Per-repo memory for stable project conventions is not implemented yet.
+- Project memory is approval-gated and secret-scanned on writes, but users should still review it like any
+  other local project note and delete stale or incorrect entries.
 - Editor integration is intentionally deferred while Agent47 remains CLI-first.
 - Redaction handles common secret patterns but cannot guarantee every secret format.
 - The agent can still make incorrect code changes; tests and review remain necessary.

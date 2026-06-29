@@ -138,6 +138,32 @@ class DependencyGraphAction(BaseModel):
     max_edges: int = Field(default=160, ge=10, le=500)
 
 
+class ReadMemoryAction(BaseModel):
+    type: Literal["read_memory"]
+    max_chars: int = Field(default=12000, ge=1000, le=50000)
+
+
+class MemoryEntry(BaseModel):
+    section: Literal[
+        "project_conventions",
+        "user_preferences",
+        "architecture_notes",
+        "common_commands",
+        "known_pitfalls",
+        "project_glossary",
+        "successful_patterns",
+        "verification_strategy",
+        "dependencies_integrations",
+        "release_notes",
+    ]
+    content: str = Field(min_length=1, max_length=1000)
+
+
+class UpdateMemoryAction(BaseModel):
+    type: Literal["update_memory"]
+    entries: list[MemoryEntry] = Field(min_length=1, max_length=20)
+
+
 AgentAction = Union[
     FinalAction,
     UpdatePlanAction,
@@ -158,6 +184,8 @@ AgentAction = Union[
     RankContextAction,
     SymbolIndexAction,
     DependencyGraphAction,
+    ReadMemoryAction,
+    UpdateMemoryAction,
 ]
 
 

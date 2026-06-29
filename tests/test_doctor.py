@@ -26,7 +26,21 @@ def test_run_doctor_reports_core_install_checks(tmp_path: Path, monkeypatch) -> 
     assert "sqlite-storage" in names
     assert "api-key" in names
     assert "env-file" in names
+    assert "project-memory" in names
     assert not any("test-key" in check.detail for check in report.checks)
+
+
+def test_run_doctor_reports_project_memory_health(tmp_path: Path) -> None:
+    memory = tmp_path / ".code-agent" / "memory" / "project.md"
+    memory.parent.mkdir(parents=True)
+    memory.write_text("# Agent47 Project Memory\n\n## Project Conventions\n\n- Use Ruff.\n", encoding="utf-8")
+    settings = Settings(openrouter_api_key="test-key", agent_db_path=tmp_path / ".agent.db")
+
+    report = run_doctor(cwd=tmp_path, settings=settings)
+    memory_check = next(check for check in report.checks if check.name == "project-memory")
+
+    assert memory_check.status == "pass"
+    assert "project.md" in memory_check.detail
 
 
 def test_run_doctor_reports_selected_provider_key(tmp_path: Path) -> None:

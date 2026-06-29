@@ -111,6 +111,7 @@ def test_auto_approval_modes_keep_subprocess_actions_manual() -> None:
 
     assert policy.approve("read_file", "README.md") is True
     assert policy.approve("dependency_graph", "Graph imports") is True
+    assert policy.approve("read_memory", "Read project memory") is True
     assert policy.approve("search", "Search .") is False
     assert requested == ["search"]
 
@@ -120,7 +121,15 @@ def test_auto_approval_modes_keep_subprocess_actions_manual() -> None:
     assert policy.approve("run_shell", "uv run pytest") is False
     assert policy.approve("apply_patch", "Patch preview") is False
     assert policy.approve("inspect_git_diff", "Git status") is False
-    assert requested == ["search", "read_file", "run_shell", "apply_patch", "inspect_git_diff"]
+    assert policy.approve("update_memory", "Memory preview") is False
+    assert requested == [
+        "search",
+        "read_file",
+        "run_shell",
+        "apply_patch",
+        "inspect_git_diff",
+        "update_memory",
+    ]
 
 
 def test_read_file_with_permission_succeeds(tmp_path: Path) -> None:

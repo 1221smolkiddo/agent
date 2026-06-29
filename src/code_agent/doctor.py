@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Literal
 
 from .config import Settings
+from .memory import MAX_MEMORY_FILE_CHARS, memory_file_path
 from .model_presets import resolve_model_preset
 from .storage import AgentStorage
 
@@ -93,6 +94,7 @@ def run_doctor(cwd: Path | None = None, settings: Settings | None = None) -> Doc
         ),
         _check_api_key(config),
         _check_env_file(workspace),
+        _check_project_memory(workspace),
     ]
     return DoctorReport(
         platform=f"{platform.system()} {platform.release()}",
@@ -254,3 +256,37 @@ def _check_env_file(workspace: Path) -> DoctorCheck:
         ".env and .env.example are missing",
         "Create .env or configure environment variables directly.",
     )
+
+
+def _check_project_memory(workspace: Path) -> DoctorCheck:
+    path = memory_file_path(workspace)
+    if not path.exists():
+        return DoctorCheck(
+            "project-memory",
+            "pass",
+            ".code-agent/memory/project.md not initialized yet",
+        )
+    try:
+        content = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return DoctorCheck(
+            "project-memory",
+            "fail",
+            f"{path} is not UTF-8 text",
+            "Rewrite project memory as UTF-8 Markdown or delete it to regenerate.",
+        )
+    except OSError as exc:
+        return DoctorCheck(
+            "project-memory",
+            "fail",
+            str(exc),
+            "Fix .code-agent/memory permissions or delete the damaged memory file.",
+        )
+    if len(content) > MAX_MEMORY_FILE_CHARS:
+        return DoctorCheck(
+            "project-memory",
+            "warn",
+            f"{path} is {len(content)} chars",
+            f"Keep project memory below {MAX_MEMORY_FILE_CHARS} chars.",
+        )
+    return DoctorCheck("project-memory", "pass", f"{path} ({len(content)} chars)")

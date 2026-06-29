@@ -10,6 +10,8 @@ Agent47 may create local state under `.code-agent/`:
 - `agent.db`: run history, steps, work reports, and model usage metadata.
 - `debug-bundles/`: redacted run exports created by `code-agent history export`.
 - `eval-reports/`: saved eval metrics created by `code-agent evals --save-report`.
+- `memory/project.md`: human-readable per-repo memory for stable project conventions, commands,
+  architecture notes, pitfalls, glossary terms, and successful patterns.
 - `sandboxes/`: copied workspaces created by `--sandbox` or `/sandbox`.
 
 `.code-agent/` is git-ignored and should stay local.
@@ -21,6 +23,7 @@ For model-backed runs, Agent47 sends:
 - The user task.
 - System/developer prompt instructions.
 - Selected file contents or summaries that the user approved.
+- Bounded project memory from `.code-agent/memory/project.md` for workspace coding tasks.
 - Tool outputs needed for the agent to continue.
 - Verification output when recovery is needed.
 
@@ -43,6 +46,7 @@ Agent47 does not upload local history to its own service. Retention depends on:
 - Any external tools or shell commands you approve.
 
 Delete `.code-agent/` to remove local Agent47 history for a workspace.
+Delete `.code-agent/memory/project.md` to reset only project memory.
 
 ## Safe Sharing
 

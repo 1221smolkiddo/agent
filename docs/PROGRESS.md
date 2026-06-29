@@ -6,9 +6,9 @@ This document tracks how far the coding agent has come and what collaborators ca
 
 **Stage:** Multi-provider CLI coding agent with Agent47 engineering protocol
 
-**Approximate progress toward an industry-standard local AI coding agent:** 64%
+**Approximate progress toward an industry-standard local AI coding agent:** 68%
 
-The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, durable plan checkpoints with target-file, ownership, check, blocker, and risk metadata, persisted structured work reports, non-workspace intent routing, general web search with provider fallback, structured patch application with multi-file change-set metadata and inverse-patch revert support, approved git-diff awareness, persistent incremental repo mapping, task-aware relevance ranking, compact symbol indexing, dependency graph indexing, deterministic local evals for baseline safety regressions and fixture-based coding tasks, a versioned newline-delimited JSON protocol with correlated stdin approval responses for future frontends, model fallback with usage/cost tracking, install diagnostics and cross-platform install guidance, verification command detection/suggestion/automatic execution/outcome summaries, disk-verified mutation tracking for truthful final answers, prompt-injection defenses for untrusted tool output, clearer interactive terminal panels with short transcript context and structured session state, run history detail views, resumable runs, tests, GitHub collaboration setup, and release metadata/checklists for public alpha preparation.
+The project currently has a working Python CLI foundation with a reusable agent core, model client, local tools, durable plan checkpoints with target-file, ownership, check, blocker, and risk metadata, persisted structured work reports, non-workspace intent routing, general web search with provider fallback, structured patch application with multi-file change-set metadata and inverse-patch revert support, approved git-diff awareness, persistent incremental repo mapping, task-aware relevance ranking, compact symbol indexing, dependency graph indexing, local per-repo memory for stable project facts, deterministic local evals for baseline safety regressions and fixture-based coding tasks, a versioned newline-delimited JSON protocol with correlated stdin approval responses for future frontends, model fallback with usage/cost tracking, install diagnostics and cross-platform install guidance, verification command detection/suggestion/automatic execution/outcome summaries, disk-verified mutation tracking for truthful final answers, prompt-injection defenses for untrusted tool output, clearer interactive terminal panels with short transcript context and structured session state, run history detail views, resumable runs, tests, GitHub collaboration setup, and release metadata/checklists for public alpha preparation.
 
 This file should be updated whenever a meaningful Agent47 capability is added. Keep the enabled commands/actions current, move completed items out of "What Is Left" when they land, and update the percentage only when the agent gains real product capability rather than documentation alone.
 
@@ -86,7 +86,7 @@ Inside `agent47`, there are currently **19 slash commands**:
 
 ## Enabled Agent Actions
 
-There are currently **19 model-requestable actions**:
+There are currently **21 model-requestable actions**:
 
 | Action | Purpose |
 | --- | --- |
@@ -109,6 +109,8 @@ There are currently **19 model-requestable actions**:
 | `rank_context` | Rank likely relevant files for the current task before broader reads. |
 | `symbol_index` | Build a compact symbol index for source and test declarations before implementation reads. |
 | `dependency_graph` | Build a compact import dependency graph for source and test files before impact analysis. |
+| `read_memory` | Read bounded local project memory from `.code-agent/memory/project.md`. |
+| `update_memory` | Add approved, secret-safe durable project facts to local project memory. |
 
 ## Installed / Supported Stack
 
@@ -124,6 +126,7 @@ There are currently **19 model-requestable actions**:
 | Model token usage tracking | Enabled |
 | Optional model cost estimation | Enabled |
 | Model output cap: configurable `AGENT_MAX_TOKENS` | Enabled |
+| Per-repo memory: `.code-agent/memory/project.md` | Enabled with approval-gated writes |
 | Config: python-dotenv + pydantic-settings | Enabled |
 | File ops: pathlib | Enabled |
 | Diffs: difflib | Enabled |
@@ -194,7 +197,7 @@ For the next implementation to-do list, see [INDUSTRY_AGENT_PLAN.md](INDUSTRY_AG
 | 2 | Verification loop | Lets Agent47 detect, suggest, run, and summarize the right tests, lint, typecheck, and builds after edits | Baseline done |
 | 3 | Repo intelligence | Helps the agent choose relevant context using symbols, dependencies, git diff, and architecture summaries | Baseline done for repo map, ranking, symbol indexing, dependency graphing, and git awareness |
 | 4 | Safer shell policy | Separates read-only, test/build, install/network, and destructive commands with stronger approvals | Baseline done |
-| 5 | Durable sessions | Enables pause/resume, plan state, checkpoints, and long task recovery | Partial, with resumable runs, visible durable plan checkpoints, planner metadata, and persisted structured work reports |
+| 5 | Durable sessions | Enables pause/resume, plan state, checkpoints, memory, and long task recovery | Partial, with resumable runs, visible durable plan checkpoints, local per-repo memory, planner metadata, and persisted structured work reports |
 | 6 | Streaming UX | Makes CLI and interactive mode feel alive during model reasoning and tool execution | Baseline done |
 | 7 | Multi-model/provider layer | Supports planner/coder/reviewer profiles, fallbacks, and cost-aware routing | Baseline done for profiles, fallback, and usage/cost tracking |
 | 8 | Observability | Captures traces, timings, token use, failures, and debug bundles for reliability work | Partial, with model usage and work reports |
@@ -209,7 +212,7 @@ For the next implementation to-do list, see [INDUSTRY_AGENT_PLAN.md](INDUSTRY_AG
 2. Add richer terminal/editor diff approval UI.
 3. Add stronger process isolation for sandboxed commands.
 4. Add formal security policy and threat model.
-5. Add per-repo architecture and ownership memory under `.code-agent/`.
+5. Expand per-repo memory with optional ownership hints and stale-entry cleanup helpers.
 
 ## Current Safety Notes
 
@@ -220,6 +223,9 @@ For the next implementation to-do list, see [INDUSTRY_AGENT_PLAN.md](INDUSTRY_AG
 - Read/list/project-search/code-summary actions now ask for user approval.
 - Project search skips local state and secret files such as `.env`, `.git`, `.code-agent`, caches, and virtual environments.
 - Direct file reads and mutations against sensitive credential files such as `.env`, `.npmrc`, `.pypirc`, and `.netrc` are refused by default.
+- Project memory lives in `.code-agent/memory/project.md`, is ignored by git through `.code-agent/`,
+  is human-readable Markdown, is read as bounded untrusted context, and requires approval plus secret-pattern
+  checks before writes.
 - Shell commands are classified by risk before approval, and destructive commands such as `git reset --hard`, recursive force deletes, and aggressive `git clean` forms are blocked by policy.
 - Web search approval prompts include provider domains and query text, and localhost/private-network web targets are blocked or filtered.
 - Tool outputs are redacted for common secret key/value pairs, bearer tokens, and OpenAI-style secret keys before model/storage use.

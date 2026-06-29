@@ -266,6 +266,11 @@ Project search uses `ripgrep` when available and falls back to a built-in Python
 
 Repo intelligence actions use a persistent SQLite-backed index cache in the agent database. The cache stores workspace-relative paths, file kinds, sizes, modification times, SHA-256 hashes, module names, symbols, and imports, then refreshes incrementally so unchanged files can be reused without reparsing. A small background refresh worker is available for long-lived frontends that want to keep the index warm while idle.
 
+Project memory lives in `.code-agent/memory/project.md`. Agent47 reads it as bounded context for
+workspace tasks and can update it only after approval. Use it for stable, secret-free facts such as
+formatters, package manager, test commands, architecture rules, user project preferences, pitfalls,
+glossary terms, dependencies, release notes, and successful implementation patterns.
+
 Shell commands are classified before approval. Destructive commands such as `git reset --hard`, recursive force deletes, and aggressive `git clean` forms are blocked by policy; install/network commands are labeled high risk; verification and read-only commands get lower-risk labels. Tool outputs are redacted for common secret patterns before they are returned to the model or stored. Large approval previews and mutation diffs are bounded so long generated files do not flood the terminal or model context.
 
 Set `AGENT_SHELL_NETWORK=deny` or pass `--deny-network-shell` to block shell commands classified
@@ -278,7 +283,7 @@ Patch approvals include a change-set summary before the unified diff, and applie
 
 Web search approval prompts include the provider domains and query. Agent47 blocks localhost, private-network, link-local, reserved, and multicast web targets, and filters unsafe result URLs before returning search results.
 
-Repository content, command output, search results, diffs, web results, repo maps, ranked context, symbol indexes, and dependency graphs are treated as untrusted data in the model loop. Tool payloads that can contain external or repo-supplied text are marked with `untrusted_content` and a security instruction so prompt-injection text in files or tool output is not promoted into model instructions.
+Repository content, command output, search results, diffs, web results, repo maps, ranked context, symbol indexes, dependency graphs, and project memory are treated as untrusted data in the model loop. Tool payloads that can contain external or repo-supplied text are marked with `untrusted_content` and a security instruction so prompt-injection text in files or tool output is not promoted into model instructions.
 
 ## Failure Recovery
 
@@ -360,6 +365,7 @@ src/
     factory.py          Shared agent construction
     config.py           dotenv + pydantic-settings
     doctor.py           Local install and platform diagnostics
+    memory.py           Local per-repo project memory
     models.py           OpenAI-compatible model client for OpenRouter
     prompts.py          System prompt
     protocol.py         Versioned JSON event protocol for future frontends

@@ -14,6 +14,13 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from .memory import (
+    MemoryUpdate,
+    build_memory_write_plan,
+    ensure_memory_dir,
+    read_project_memory,
+    write_memory_plan,
+)
 from .processes import CancellationToken, ProcessSupervisor, terminate_process_tree
 from .schema import (
     AgentAction,
@@ -25,6 +32,7 @@ from .schema import (
     InspectGitDiffAction,
     ListFilesAction,
     RankContextAction,
+    ReadMemoryAction,
     ReadFileAction,
     RepoMapAction,
     RunShellAction,
@@ -33,6 +41,7 @@ from .schema import (
     SymbolIndexAction,
     SummarizeCodeAction,
     ToolResult,
+    UpdateMemoryAction,
     WebSearchAction,
     WriteFileAction,
 )
@@ -154,6 +163,10 @@ class ToolRegistry:
             return self._symbol_index(action.max_files, action.max_symbols)
         if isinstance(action, DependencyGraphAction):
             return self._dependency_graph(action.max_files, action.max_edges)
+        if isinstance(action, ReadMemoryAction):
+            return self._read_memory(action.max_chars)
+        if isinstance(action, UpdateMemoryAction):
+            return self._update_memory(action.entries)
         return ToolResult(ok=False, output=f"Unsupported action: {action.type}")
 
     def resolve_inside_workspace(self, requested_path: str | None = None) -> Path:
@@ -538,6 +551,70 @@ class ToolRegistry:
                 max_edges=max_edges,
                 cache=self.index_cache,
             ),
+        )
+
+    def _read_memory(self, max_chars: int) -> ToolResult:
+        if not self._approve(
+            "read_memory",
+            "Read local project memory from .code-agent/memory/project.md.",
+        ):
+            return ToolResult(ok=False, output="Permission denied for read_memory.")
+        output = read_project_memory(self.workspace, max_chars=max_chars)
+        return ToolResult(
+            ok=True,
+            output=output,
+            metadata={
+                "path": ".code-agent/memory/project.md",
+                "max_chars": max_chars,
+                "secret_redacted": True,
+            },
+        )
+
+    def _update_memory(self, entries: list[Any]) -> ToolResult:
+        if self.dry_run:
+            return ToolResult(
+                ok=False,
+                output=(
+                    "Dry-run mode skipped update_memory. Enable write mode before saving "
+                    "project memory."
+                ),
+            )
+        updates = [MemoryUpdate(section=item.section, content=item.content) for item in entries]
+        try:
+            plan = build_memory_write_plan(self.workspace, updates)
+        except ValueError as exc:
+            return ToolResult(ok=False, output=str(exc))
+        if not plan.changed:
+            return ToolResult(
+                ok=True,
+                output="Project memory already contains those facts.",
+                metadata={"path": ".code-agent/memory/project.md", "changed": False},
+            )
+        detail = "\n".join(
+            [
+                "Project memory update preview:",
+                "Path: .code-agent/memory/project.md",
+                "Sections: " + ", ".join(plan.sections),
+                "",
+                plan.diff,
+            ]
+        )
+        if not self._approve(
+            "update_memory",
+            self._truncate(redact_secrets(detail), MAX_MUTATION_OUTPUT_CHARS),
+            {"paths": [".code-agent/memory/project.md"], "sections": plan.sections},
+        ):
+            return ToolResult(ok=False, output="Permission denied for update_memory.")
+        ensure_memory_dir(self.workspace)
+        write_memory_plan(plan)
+        return ToolResult(
+            ok=True,
+            output="Project memory updated: .code-agent/memory/project.md",
+            metadata={
+                "path": ".code-agent/memory/project.md",
+                "changed": True,
+                "sections": plan.sections,
+            },
         )
 
     def _web_search(self, query: str) -> ToolResult:

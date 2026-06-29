@@ -20,6 +20,7 @@ READ_ONLY_ACTIONS = frozenset({
     "rank_context",
     "symbol_index",
     "dependency_graph",
+    "read_memory",
     "detect_verification",
     "suggest_verification",
 })
@@ -31,6 +32,7 @@ HIGH_RISK_ACTIONS = frozenset({
     "delete_file",
     "inspect_git_diff",
     "search",
+    "update_memory",
 })
 
 MANUAL_APPROVAL_ACTIONS = HIGH_RISK_ACTIONS
@@ -99,6 +101,8 @@ def confirm_permission(action: str, detail: str) -> str:
         "rank_context": "Rank context",
         "symbol_index": "Index symbols",
         "dependency_graph": "Analyze dependency graph",
+        "read_memory": "Read project memory",
+        "update_memory": "Update project memory",
         "detect_verification": "Detect verification commands",
         "suggest_verification": "Suggest verification",
     }
