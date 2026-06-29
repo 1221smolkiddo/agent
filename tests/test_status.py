@@ -14,7 +14,7 @@ from code_agent.schema import (
     WebSearchAction,
 )
 from code_agent.status import _semantic_stage
-from code_agent.interactive import is_casual_greeting, task_with_transcript
+from code_agent.interactive import is_casual_greeting, is_chat_request, task_with_transcript
 
 
 def test_semantic_stage_for_editing() -> None:
@@ -110,6 +110,9 @@ def test_is_casual_greeting() -> None:
     assert is_casual_greeting("hey")
     assert is_casual_greeting(" Hello ")
     assert not is_casual_greeting("hey inspect this project")
+    assert is_chat_request("hey")
+    assert is_chat_request(" Hello ")
+    assert not is_chat_request("hey inspect this project")
 
 
 def test_task_with_transcript_includes_recent_turns() -> None:

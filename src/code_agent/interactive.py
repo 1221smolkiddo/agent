@@ -78,9 +78,6 @@ def main() -> None:
         if not user_input:
             continue
 
-        if is_casual_greeting(user_input):
-            print_response("Agent47", "Hey! I am ready. Ask me a question, or use /help to see commands.")
-            continue
         if is_persona_instruction(user_input):
             print_response("Agent47", "Got it. I will use that as guidance for future turns.")
             continue
@@ -662,6 +659,8 @@ def is_casual_greeting(user_input: str) -> bool:
 def is_chat_request(user_input: str) -> bool:
     """Detect non-workspace questions that should use a lightweight chat path."""
     normalized = user_input.strip().lower()
+    if is_casual_greeting(normalized):
+        return True
 
     # Short meta-questions
     chat_patterns = [
