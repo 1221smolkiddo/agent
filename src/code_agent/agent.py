@@ -81,6 +81,11 @@ class CodingAgent:
     def run(self, task: str) -> str:
         return self.run_detailed(task).message
 
+    def cancel(self, reason: str = "user stop") -> int:
+        if hasattr(self.tools, "cancel_running_processes"):
+            return self.tools.cancel_running_processes(reason)
+        return 0
+
     def run_detailed(self, task: str) -> AgentRunResult:
         clean_task = self._extract_user_task(task)
         run_id = self.storage.create_run(task=clean_task, model=self.model_client.model, cwd=self.cwd)

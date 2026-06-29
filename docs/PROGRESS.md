@@ -4,7 +4,7 @@ This document tracks how far the coding agent has come and what collaborators ca
 
 ## Current Stage
 
-**Stage:** Basic single-model CLI agent with Agent47 engineering protocol
+**Stage:** Multi-provider CLI coding agent with Agent47 engineering protocol
 
 **Approximate progress toward an industry-standard local AI coding agent:** 64%
 
@@ -163,7 +163,7 @@ There are currently **19 model-requestable actions**:
 | Structured interactive session state | Enabled |
 | Run detail views | Enabled |
 | Resumable runs | Enabled |
-| Stop shortcut: `Ctrl+C` and `/stop` | Enabled |
+| Stop shortcut: `Ctrl+C` and `/stop` | Enabled with shell process-tree cleanup |
 | Code parsing: tree-sitter | Enabled as optional parsing extra |
 | Storage: SQLite | Enabled |
 | Storage migrations: schema versioning and legacy backup | Enabled |
@@ -237,6 +237,9 @@ For the next implementation to-do list, see [INDUSTRY_AGENT_PLAN.md](INDUSTRY_AG
 - Model attempts, token usage, fallback transitions, and optional cost estimates are stored in SQLite and summarized in work reports and JSON results.
 - `code-agent history show <run-id>` and `/history-show <run-id>` expose saved step details for auditability.
 - `code-agent resume <run-id>` and `/resume <run-id>` continue from compact saved run context while preserving a new run record.
+- Shell commands run under a shared process supervisor that tracks active local child processes, applies
+  command-risk timeout tiers, exposes cancellation for current/future clients, and attempts process-tree cleanup
+  on timeout, Ctrl+C, or explicit agent cancellation.
 - `update_plan` stores durable plan steps plus target files, owned files, intended checks, blockers, and risk notes in run history and resume context, with validation that only one step is `in_progress` and planned file paths stay workspace-relative.
 - CLI and `agent47` render a structured work report before the final response for non-trivial runs, including current task, current step, files, planned targets, file ownership, planned checks, blockers, risk notes, progress, commands, validation, change summary, changed-line diff review, and final outcome.
 - Structured work reports are persisted in SQLite, shown in `history show`, and included in resume context.

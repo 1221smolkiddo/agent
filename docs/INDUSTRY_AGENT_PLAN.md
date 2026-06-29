@@ -120,16 +120,18 @@ Goal: make shell execution safer for real projects.
 To-do:
 
 - Add timeout tiers by command risk. Status: done through shell policy enforcement.
-- Add cancellation for running shell commands.
+- Add cancellation for running shell commands. Status: baseline done with a shared process supervisor
+  and agent-level cancellation hook.
 - Add optional network-deny mode.
-- Add process tree cleanup on timeout or stop. Status: partial, with timeout process-tree cleanup.
+- Add process tree cleanup on timeout or stop. Status: baseline done for shell timeout, Ctrl+C, and
+  explicit cancellation paths; OS-level isolation remains future work.
 - Research platform-specific isolation options for Windows, macOS, and Linux.
 
 Implementation plan:
 
 - Extend `ShellPolicy` with timeout, network, and write flags already present in the model.
 - Enforce timeout tiers consistently in `ToolRegistry._run_shell`.
-- Add process cleanup tests for timeouts.
+- Add process cleanup tests for timeouts, cancellation, and keyboard interrupts.
 - Add a documented isolation strategy per platform.
 - Keep stronger isolation optional until the cross-platform behavior is proven.
 

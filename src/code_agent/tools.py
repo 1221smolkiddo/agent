@@ -7,7 +7,6 @@ import inspect
 import os
 import re
 import shutil
-import signal
 import subprocess
 import urllib.parse
 import urllib.request
@@ -15,6 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from .processes import CancellationToken, ProcessSupervisor, terminate_process_tree
 from .schema import (
     AgentAction,
     ApplyPatchAction,
@@ -99,14 +99,25 @@ class ToolRegistry:
         approval_callback: Callable[[str, str], bool] | None = None,
         shell_network_policy: str = "allow",
         index_cache: RepoIndexCache | None = None,
+        cancellation_token: CancellationToken | None = None,
+        process_supervisor: ProcessSupervisor | None = None,
     ) -> None:
         self.workspace = workspace.resolve()
         self.dry_run = dry_run
         self.approval_callback = approval_callback
         self.shell_network_policy = shell_network_policy.strip().lower()
         self.index_cache = index_cache
+        self.cancellation_token = cancellation_token or CancellationToken()
+        self.process_supervisor = process_supervisor or ProcessSupervisor()
         if self.shell_network_policy not in {"allow", "deny"}:
             raise ValueError("shell_network_policy must be one of: allow, deny")
+
+    def cancel_running_processes(self, reason: str = "cancelled") -> int:
+        self.cancellation_token.cancel(reason)
+        return self.process_supervisor.cancel_all(reason)
+
+    def reset_cancellation(self) -> None:
+        self.cancellation_token.reset()
 
     def run(self, action: AgentAction) -> ToolResult:
         if isinstance(action, ListFilesAction):
@@ -329,11 +340,36 @@ class ToolRegistry:
             return ToolResult(ok=False, output="Permission denied for run_shell.")
         if self._is_python_test_command(command):
             self._clear_python_bytecode_cache()
-        completed, timed_out, timeout_output = self._run_shell_process(
-            command,
-            timeout_seconds=policy.timeout_seconds,
-            env=self._safe_shell_env(python_no_bytecode=self._is_python_test_command(command)),
+        self.reset_cancellation()
+        process_result = self._normalize_shell_process_result(
+            self._run_shell_process(
+                command,
+                timeout_seconds=policy.timeout_seconds,
+                env=self._safe_shell_env(python_no_bytecode=self._is_python_test_command(command)),
+            )
         )
+        completed = process_result["completed"]
+        timed_out = bool(process_result["timed_out"])
+        cancelled = bool(process_result["cancelled"])
+        timeout_output = str(process_result["output"])
+        cleanup_attempted = bool(process_result["cleanup_attempted"])
+        if cancelled:
+            output = timeout_output.strip()
+            detail = f"Shell command cancelled: {self.cancellation_token.reason}."
+            if output:
+                detail += "\n" + output
+            return ToolResult(
+                ok=False,
+                output=redact_secrets(self._truncate(detail, MAX_SHELL_OUTPUT_CHARS)),
+                metadata={
+                    "category": policy.category,
+                    "risk": policy.risk,
+                    "timeout_seconds": policy.timeout_seconds,
+                    "cancelled": True,
+                    "process_tree_cleanup": cleanup_attempted,
+                    "shell_network_policy": self.shell_network_policy,
+                },
+            )
         if timed_out:
             output = timeout_output.strip()
             detail = f"Shell command timed out after {policy.timeout_seconds}s."
@@ -346,7 +382,8 @@ class ToolRegistry:
                     "category": policy.category,
                     "risk": policy.risk,
                     "timeout_seconds": policy.timeout_seconds,
-                    "process_tree_cleanup": True,
+                    "cancelled": False,
+                    "process_tree_cleanup": cleanup_attempted,
                     "shell_network_policy": self.shell_network_policy,
                 },
             )
@@ -358,7 +395,8 @@ class ToolRegistry:
                 "category": policy.category,
                 "risk": policy.risk,
                 "timeout_seconds": policy.timeout_seconds,
-                "process_tree_cleanup": True,
+                "cancelled": False,
+                "process_tree_cleanup": cleanup_attempted,
                 "shell_network_policy": self.shell_network_policy,
             },
         )
@@ -645,71 +683,32 @@ class ToolRegistry:
         *,
         timeout_seconds: int,
         env: dict[str, str],
-    ) -> tuple[subprocess.CompletedProcess[str], bool, str]:
-        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
-        start_new_session = os.name != "nt"
-        process = subprocess.Popen(
+    ) -> tuple[subprocess.CompletedProcess[str], bool, str, bool, bool]:
+        result = self.process_supervisor.run_shell(
             command,
             cwd=self.workspace,
-            shell=True,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            timeout_seconds=timeout_seconds,
             env=env,
-            creationflags=creationflags,
-            start_new_session=start_new_session,
+            cancellation_token=self.cancellation_token,
         )
-        try:
-            stdout, stderr = process.communicate(timeout=timeout_seconds)
-            return (
-                subprocess.CompletedProcess(command, process.returncode, stdout, stderr),
-                False,
-                "",
-            )
-        except subprocess.TimeoutExpired as exc:
-            self._terminate_process_tree(process)
-            stdout, stderr = process.communicate()
-            output = "\n".join(
-                self._coerce_process_output(part)
-                for part in [exc.stdout, exc.stderr, stdout, stderr]
-                if part
-            )
-            return (
-                subprocess.CompletedProcess(command, process.returncode, stdout, stderr),
-                True,
-                output,
-            )
-        except KeyboardInterrupt:
-            self._terminate_process_tree(process)
-            raise
+        return result.completed, result.timed_out, result.output, result.cancelled, result.cleanup_attempted
 
     @staticmethod
     def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
-        if process.poll() is not None:
-            return
-        if os.name == "nt":
-            try:
-                subprocess.run(
-                    ["taskkill", "/F", "/T", "/PID", str(process.pid)],
-                    text=True,
-                    capture_output=True,
-                    timeout=10,
-                    check=False,
-                )
-            except (OSError, subprocess.TimeoutExpired):
-                process.kill()
-            return
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except OSError:
-            process.terminate()
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except OSError:
-                process.kill()
+        terminate_process_tree(process)
+
+    @staticmethod
+    def _normalize_shell_process_result(value: Any) -> dict[str, Any]:
+        completed, timed_out, output, *rest = value
+        cancelled = bool(rest[0]) if len(rest) >= 1 else False
+        cleanup_attempted = bool(rest[1]) if len(rest) >= 2 else bool(timed_out or cancelled)
+        return {
+            "completed": completed,
+            "timed_out": timed_out,
+            "output": output,
+            "cancelled": cancelled,
+            "cleanup_attempted": cleanup_attempted,
+        }
 
     @staticmethod
     def _is_python_test_command(command: str) -> bool:

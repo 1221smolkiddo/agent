@@ -42,6 +42,7 @@ DEFAULT_DRY_RUN = False
 
 class InteractiveAgent(Protocol):
     def run_detailed(self, task: str): ...
+    def cancel(self, reason: str = "user stop") -> int: ...
 
 
 def main() -> None:
@@ -131,6 +132,7 @@ def main() -> None:
             try:
                 response = agent.run(user_input)
             except KeyboardInterrupt:
+                agent.cancel("interactive keyboard interrupt")
                 print_panel("Stopped", "Current action stopped. Interactive session is still open.")
                 continue
             except Exception as exc:
@@ -164,6 +166,7 @@ def main() -> None:
         try:
             transcript = run_interactive_turn(user_input, agent, transcript, session_state)
         except KeyboardInterrupt:
+            agent.cancel("interactive keyboard interrupt")
             print_panel("Stopped", "Current action stopped. Interactive session is still open.")
             continue
         except Exception as exc:

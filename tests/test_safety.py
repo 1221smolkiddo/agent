@@ -1,6 +1,7 @@
 from pathlib import Path
 import subprocess
 
+from code_agent import processes as processes_module
 import code_agent.tools as tools_module
 from code_agent.safety import classify_network_url, classify_shell_command, redact_secrets
 from code_agent.schema import ReadFileAction, RunShellAction, SearchAction, WebSearchAction, WriteFileAction
@@ -269,6 +270,28 @@ def test_run_shell_reports_timeout_with_capped_redacted_output(tmp_path: Path, m
     assert result.metadata["process_tree_cleanup"] is True
 
 
+def test_run_shell_reports_cancelled_process_cleanup(tmp_path: Path, monkeypatch) -> None:
+    def cancelled_run(*_args, **_kwargs):
+        return (
+            subprocess.CompletedProcess(args=["uv"], returncode=-9, stdout="", stderr=""),
+            False,
+            "stopped output",
+            True,
+            True,
+        )
+
+    tools = ToolRegistry(workspace=tmp_path, dry_run=False, approval_callback=lambda _a, _d: True)
+    monkeypatch.setattr(tools, "_run_shell_process", cancelled_run)
+
+    result = tools.run(RunShellAction(type="run_shell", command="uv run pytest"))
+
+    assert not result.ok
+    assert "Shell command cancelled" in result.output
+    assert "stopped output" in result.output
+    assert result.metadata["cancelled"] is True
+    assert result.metadata["process_tree_cleanup"] is True
+
+
 def test_run_shell_process_cleans_up_on_keyboard_interrupt(tmp_path: Path, monkeypatch) -> None:
     class InterruptingProcess:
         pid = 12345
@@ -283,7 +306,7 @@ def test_run_shell_process_cleans_up_on_keyboard_interrupt(tmp_path: Path, monke
     process = InterruptingProcess()
     cleanup: list[int] = []
     monkeypatch.setattr(tools_module.subprocess, "Popen", lambda *_args, **_kwargs: process)
-    monkeypatch.setattr(ToolRegistry, "_terminate_process_tree", lambda *_args: cleanup.append(1))
+    monkeypatch.setattr(processes_module, "terminate_process_tree", lambda *_args: cleanup.append(1))
     tools = ToolRegistry(workspace=tmp_path, dry_run=False, approval_callback=lambda _a, _d: True)
 
     try:

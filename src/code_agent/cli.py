@@ -156,6 +156,7 @@ def run(
     try:
         result = agent.run_detailed(task)
     except KeyboardInterrupt:
+        agent.cancel("keyboard interrupt")
         typer.echo("\nSTOPPED by user")
         raise typer.Exit(code=130)
     print_work_report_panel(result)
@@ -357,6 +358,7 @@ def run_json(
         raise typer.Exit(code=2)
     settings = Settings()
     workspace = cwd.resolve()
+    agent = None
     try:
         if sandbox:
             sandbox_workspace = create_sandbox_workspace(workspace)
@@ -396,6 +398,8 @@ def run_json(
         )
         result = agent.run_detailed(task)
     except KeyboardInterrupt:
+        if agent is not None:
+            agent.cancel("keyboard interrupt")
         emit_run_failed(emitter, "Stopped by user.", code="keyboard_interrupt")
         raise typer.Exit(code=130)
     except Exception as exc:
@@ -485,6 +489,7 @@ def resume(
     try:
         result = agent.run_detailed(task)
     except KeyboardInterrupt:
+        agent.cancel("keyboard interrupt")
         typer.echo("\nSTOPPED by user")
         raise typer.Exit(code=130)
     print_work_report_panel(result)

@@ -18,7 +18,8 @@ Agent47 is a credible alpha CLI coding agent, not a finished industry product.
 - The sandbox is a copied workspace, not OS-level isolation.
 - Shell commands can still execute local project code after approval.
 - Shell network-deny mode blocks commands classified as install/network, but it is not an OS firewall.
-- Cancellation and process isolation are basic.
+- Shell timeout and Ctrl+C cancellation paths attempt process-tree cleanup, but Agent47 still does
+  not provide a container, VM, seccomp/AppArmor profile, Windows Job Object policy, or macOS seatbelt.
 - Per-repo memory for stable project conventions is not implemented yet.
 - Editor integration is intentionally deferred while Agent47 remains CLI-first.
 - Redaction handles common secret patterns but cannot guarantee every secret format.
@@ -39,4 +40,5 @@ Before calling a release public-alpha ready:
 - Use `--sandbox` for risky edits.
 - Keep changes small and review patch previews.
 - Run project tests after edits.
+- Treat approved shell commands as local processes with cleanup safeguards, not as jailed execution.
 - Treat generated code like a junior contributor's patch: useful, but always reviewed.
