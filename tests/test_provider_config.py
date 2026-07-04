@@ -135,6 +135,16 @@ def test_model_preset_resolves_provider_and_model() -> None:
     assert "key=" not in format_model_presets()
 
 
+def test_nvidia_deepseek_v4_flash_preset_resolves_provider_and_model() -> None:
+    preset = resolve_model_preset("deepseek-v4-flash")
+
+    assert preset is not None
+    assert preset.provider == "nvidia"
+    assert preset.model == "deepseek-ai/deepseek-v4-flash"
+    assert "deepseek-v4-flash" in format_model_presets()
+    assert "key=" not in format_model_presets()
+
+
 def test_unknown_model_preset_is_rejected() -> None:
     with pytest.raises(ValueError, match="Unknown model preset"):
         resolve_model_preset("not-real")
@@ -317,5 +327,6 @@ def test_cli_models_lists_presets() -> None:
     assert "gemini-flash" in result.output
     assert "deepseek-pro" in result.output
     assert "glm-5.2" in result.output
+    assert "deepseek-v4-flash" in result.output
     assert "key=" not in result.output
     assert "Available model presets:\n\n- qwen-coder: provider=openrouter, model=qwen/qwen3-coder\nDefault OpenRouter coding model." in result.output

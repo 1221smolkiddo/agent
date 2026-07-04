@@ -46,6 +46,23 @@ class NoopTools:
         return ToolResult(ok=True, output="ok")
 
 
+class FakeReporter:
+    def __init__(self) -> None:
+        self.done_calls = 0
+
+    def workspace_analysis(self, _summary: str) -> None:
+        pass
+
+    def thinking(self, _step: int) -> None:
+        pass
+
+    def recovery(self, _detail: str) -> None:
+        pass
+
+    def done(self) -> None:
+        self.done_calls += 1
+
+
 def test_fallback_model_client_uses_next_model_after_failure() -> None:
     client = FallbackModelClient(
         [
@@ -168,6 +185,7 @@ def test_agent_persists_model_usage_records(tmp_path: Path) -> None:
 def test_agent_turns_model_failure_into_blocked_result(tmp_path: Path) -> None:
     model = FakeUsageClient("primary", error="provider unavailable")
     storage = AgentStorage(tmp_path / "agent.db")
+    reporter = FakeReporter()
     agent = CodingAgent(
         cwd=tmp_path,
         dry_run=True,
@@ -176,6 +194,7 @@ def test_agent_turns_model_failure_into_blocked_result(tmp_path: Path) -> None:
         model_client=model,
         tools=NoopTools(),  # type: ignore[arg-type]
         storage=storage,
+        reporter=reporter,  # type: ignore[arg-type]
         stream_model=False,
     )
 
@@ -184,3 +203,4 @@ def test_agent_turns_model_failure_into_blocked_result(tmp_path: Path) -> None:
     assert result.blocked
     assert "Stopped after a model failure" in result.message
     assert result.failed_actions[0]["type"] == "model_failure"
+    assert reporter.done_calls == 1

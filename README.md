@@ -196,7 +196,7 @@ the interactive session. Between turns, `/stop` and `/exit` also quit normally.
 
 - `OPENROUTER_API_KEY` is required.
 - `AGENT_PROVIDER` is optional and defaults to `openrouter`. Supported values are `openrouter`, `openai`, `gemini`, `deepseek`, and `nvidia`.
-- `AGENT_MODEL_PRESET` is optional. Supported presets are `qwen-coder`, `gemini-flash`, `gemini-pro`, `deepseek-flash`, `deepseek-pro`, and `glm-5.2`.
+- `AGENT_MODEL_PRESET` is optional. Supported presets are `qwen-coder`, `gemini-flash`, `gemini-pro`, `deepseek-flash`, `deepseek-pro`, `glm-5.2`, and `deepseek-v4-flash`.
 - `AGENT_MODEL` is optional. The CLI also accepts `--model`.
 - `AGENT_PROFILE` is optional and defaults to `default`. Supported profiles are `default`, `planner`, `coder`, `reviewer`, and `fast`.
 - `AGENT_PLANNER_MODEL`, `AGENT_CODER_MODEL`, `AGENT_REVIEWER_MODEL`, and `AGENT_FAST_MODEL` are optional per-profile model overrides.
@@ -226,6 +226,7 @@ uv run code-agent models
 uv run code-agent run --preset gemini-flash "Fix the failing test"
 uv run code-agent run --preset deepseek-pro "Refactor the parser"
 uv run code-agent run --preset glm-5.2 "Implement the next coding task"
+uv run code-agent run --preset deepseek-v4-flash "Inspect this repo"
 uv run code-agent run --provider gemini --model gemini-3.5-flash "Inspect this repo"
 ```
 
@@ -254,6 +255,13 @@ AGENT_MODEL=deepseek-v4-pro
 AGENT_PROVIDER=nvidia
 NVIDIA_API_KEY=...
 AGENT_MODEL=z-ai/glm-5.2
+```
+
+```bash
+AGENT_PROVIDER=nvidia
+NVIDIA_API_KEY=...
+AGENT_MODEL_PRESET=deepseek-v4-flash
+AGENT_MODEL=deepseek-ai/deepseek-v4-flash
 ```
 
 Check the provider docs for current model IDs before pinning production profiles.

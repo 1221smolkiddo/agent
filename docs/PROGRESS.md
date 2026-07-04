@@ -42,6 +42,7 @@ uv run code-agent models
 uv run code-agent run --preset gemini-flash "Fix the failing test"
 uv run code-agent run --preset deepseek-pro "Refactor the parser"
 uv run code-agent run --preset glm-5.2 "Implement the next coding task"
+uv run code-agent run --preset deepseek-v4-flash "Inspect this repo"
 uv run code-agent doctor
 uv run code-agent run-json --dry-run "Inspect this project and emit JSON events"
 uv run code-agent run --dry-run "Find risky areas in the codebase"

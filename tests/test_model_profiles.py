@@ -36,7 +36,9 @@ def test_validate_profile_name_rejects_unknown_profile() -> None:
 
 def test_create_agent_uses_profile_model_from_settings(tmp_path: Path) -> None:
     settings = Settings(
+        _env_file=None,
         openrouter_api_key="test-key",
+        agent_model_preset=None,
         agent_model="default-model",
         agent_coder_model="coder-model",
         agent_db_path=tmp_path / "agent.db",
@@ -56,7 +58,9 @@ def test_create_agent_uses_profile_model_from_settings(tmp_path: Path) -> None:
 
 def test_create_agent_model_override_wins_over_profile_specific_model(tmp_path: Path) -> None:
     settings = Settings(
+        _env_file=None,
         openrouter_api_key="test-key",
+        agent_model_preset=None,
         agent_model="default-model",
         agent_coder_model="coder-model",
         agent_db_path=tmp_path / "agent.db",

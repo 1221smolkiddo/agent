@@ -108,7 +108,7 @@ def run(
         None,
         "--preset",
         callback=validate_preset_option,
-        help="Model preset, such as qwen-coder, gemini-flash, gemini-pro, deepseek-pro, or glm-5.2.",
+        help="Model preset, such as qwen-coder, gemini-flash, deepseek-pro, glm-5.2, or deepseek-v4-flash.",
     ),
     model: Optional[str] = typer.Option(None, "--model", help="Model override."),
     profile: Optional[str] = typer.Option(
@@ -316,7 +316,7 @@ def run_json(
         None,
         "--preset",
         callback=validate_preset_option,
-        help="Model preset, such as qwen-coder, gemini-flash, gemini-pro, deepseek-pro, or glm-5.2.",
+        help="Model preset, such as qwen-coder, gemini-flash, deepseek-pro, glm-5.2, or deepseek-v4-flash.",
     ),
     model: Optional[str] = typer.Option(None, "--model", help="Model override."),
     profile: Optional[str] = typer.Option(
@@ -429,7 +429,7 @@ def resume(
         None,
         "--preset",
         callback=validate_preset_option,
-        help="Model preset, such as qwen-coder, gemini-flash, gemini-pro, deepseek-pro, or glm-5.2.",
+        help="Model preset, such as qwen-coder, gemini-flash, deepseek-pro, glm-5.2, or deepseek-v4-flash.",
     ),
     model: Optional[str] = typer.Option(None, "--model", help="Model override."),
     profile: Optional[str] = typer.Option(

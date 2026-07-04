@@ -522,6 +522,7 @@ class CodingAgent:
         )
 
     def _finalize_run(self, result: AgentRunResult) -> AgentRunResult:
+        self._report_done()
         if should_show_work_report(result):
             payload = build_work_report_payload(result)
             self.storage.save_work_report(result.run_id, payload["body"], payload)

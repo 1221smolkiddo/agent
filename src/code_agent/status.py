@@ -39,6 +39,7 @@ class StatusReporter:
         self._current_label = ""
         self._current_detail = ""
         self._is_generating = False
+        self._stopped = False
         # stages: list of tuples (stage_detail, status) where status is 'pending','in-progress','done'
         self._stages: list[tuple[str, str]] = []
         self._live = Live(console=console, transient=True, refresh_per_second=10)
@@ -84,6 +85,8 @@ class StatusReporter:
         return Group(*lines)
 
     def _update(self) -> None:
+        if self._stopped:
+            return
         self._live.update(self._render())
 
     def _complete_current(self) -> None:
@@ -131,11 +134,14 @@ class StatusReporter:
             self._update()
 
     def done(self) -> None:
-        self._complete_current()
-        self._live.stop()
+        if self._stopped:
+            return
         self._current_label = ""
         self._current_detail = ""
+        self._is_generating = False
         self._stages.clear()
+        self._stopped = True
+        self._live.stop()
 
     def model_stream_start(self, step: int) -> None:
         self._is_generating = True
@@ -148,6 +154,9 @@ class StatusReporter:
 
     def model_stream_end(self) -> None:
         self._is_generating = False
+        if self._current_label == "Thinking":
+            self._current_label = ""
+            self._current_detail = ""
         self._update()
 
     def workspace_analysis(self, summary: str) -> None:

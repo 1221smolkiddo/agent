@@ -305,6 +305,7 @@ def test_status_reporter_uses_single_thinking_spinner(monkeypatch) -> None:
     class FakeLive:
         def __init__(self, *args, **kwargs) -> None:
             self.renderable = None
+            self.stopped = False
 
         def start(self) -> None:
             pass
@@ -313,7 +314,7 @@ def test_status_reporter_uses_single_thinking_spinner(monkeypatch) -> None:
             self.renderable = renderable
 
         def stop(self) -> None:
-            pass
+            self.stopped = True
 
     monkeypatch.setattr("code_agent.status.Live", FakeLive)
     reporter = StatusReporter()
@@ -326,6 +327,37 @@ def test_status_reporter_uses_single_thinking_spinner(monkeypatch) -> None:
     assert "Thinking" in rendered
     assert "Generating output" not in rendered
     assert "Gathering context" not in rendered
+
+
+def test_status_reporter_done_clears_live_state(monkeypatch) -> None:
+    class FakeLive:
+        def __init__(self, *args, **kwargs) -> None:
+            self.stopped = False
+            self.update_count = 0
+
+        def start(self) -> None:
+            pass
+
+        def update(self, _renderable) -> None:
+            self.update_count += 1
+
+        def stop(self) -> None:
+            self.stopped = True
+
+    monkeypatch.setattr("code_agent.status.Live", FakeLive)
+    reporter = StatusReporter()
+
+    reporter.thinking(1)
+    reporter.model_stream_start(1)
+    reporter.model_stream_end()
+    reporter.done()
+    reporter.done()
+
+    assert reporter._live.stopped is True
+    assert reporter._current_label == ""
+    assert reporter._current_detail == ""
+    assert reporter._is_generating is False
+    assert reporter._stages == []
 
 
 def test_is_persona_instruction() -> None:
