@@ -135,6 +135,7 @@ def test_task_with_context_includes_session_state_and_transcript() -> None:
         current_task="create a contributors file",
         pending_user_info="Need contributor names",
         target_files=["CONTRIBUTORS.md"],
+        conversation_steering="Keep answers concise and implementation-first.",
     )
 
     task = task_with_context("the names are sm and sv", [("previous", "response")], state)
@@ -142,6 +143,7 @@ def test_task_with_context_includes_session_state_and_transcript() -> None:
     assert task.startswith("the names are sm and sv")
     assert "Current interactive session state:" in task
     assert "pending_user_info: Need contributor names" in task
+    assert "conversation_steering: Keep answers concise" in task
     assert "Recent interactive transcript for reference:" in task
 
 

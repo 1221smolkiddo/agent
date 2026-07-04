@@ -78,7 +78,12 @@ def main() -> None:
         if not user_input:
             continue
 
+        if user_input.lower() == "x":
+            print_panel("System", "bye")
+            return
+
         if is_persona_instruction(user_input):
+            session_state.set_steering(user_input)
             print_response("Agent47", "Got it. I will use that as guidance for future turns.")
             continue
 
@@ -224,7 +229,7 @@ def handle_command(
     command = parts[0].lower()
     value = parts[1].strip() if len(parts) > 1 else ""
 
-    if command in {"/exit", "/quit", "/q", "/stop"}:
+    if command in {"/exit", "/quit", "/q", "/x", "/stop", "/force-stop", "/force-exit"}:
         return CommandState(
             base_cwd,
             cwd,
@@ -399,6 +404,17 @@ def handle_command(
                 ("Sandbox", "on" if sandbox_enabled else "off"),
             ],
         )
+    elif command == "/steer":
+        if session_state is None:
+            print_panel("Steering", "Session steering is unavailable.")
+        elif value.lower() in {"clear", "off", "reset"}:
+            session_state.clear_steering()
+            print_panel("Steering", "cleared")
+        elif value:
+            session_state.set_steering(value)
+            print_panel("Steering", session_state.conversation_steering or "cleared")
+        else:
+            print_panel("Steering", session_state.conversation_steering or "No steering set.")
     else:
         print_panel("Unknown Command", f"{command}\nUse /help to see available commands.", style="red")
 
@@ -444,8 +460,13 @@ def print_help() -> None:
         ("/report", "Show where detailed reports are saved."),
         ("/files", "Show current workspace path."),
         ("/settings", "Show current session settings."),
+        ("/steer <guidance>", "Steer future turns with style, focus, or constraints."),
+        ("/steer clear", "Clear conversation steering."),
         ("/debug", "Show stack trace of the last error."),
         ("/stop", "Quit interactive mode."),
+        ("/x", "Shortcut to immediately stop the interactive session."),
+        ("/force-stop", "Immediately stop the interactive session."),
+        ("/force-exit", "Immediately stop and exit interactive mode."),
     ]:
         table.add_row(command, description)
     print_renderable_panel("Help", table, style="cyan")
@@ -738,7 +759,7 @@ def is_persona_instruction(user_input: str) -> bool:
 
 def read_prompt() -> str:
     console.print(Text("You", style="bold green"), end=" ")
-    value = input("(/help /models /restore /stop) | ").strip()
+    value = input("(/help /models /restore /x) | ").strip()
     return value
 
 

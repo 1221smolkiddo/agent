@@ -46,6 +46,7 @@ def test_run_doctor_reports_project_memory_health(tmp_path: Path) -> None:
 def test_run_doctor_reports_selected_provider_key(tmp_path: Path) -> None:
     settings = Settings(
         agent_provider="deepseek",
+        agent_model_preset=None,
         deepseek_api_key="deepseek-test-key",
         agent_db_path=tmp_path / ".agent.db",
     )
@@ -60,8 +61,8 @@ def test_run_doctor_reports_selected_provider_key(tmp_path: Path) -> None:
 
 def test_run_doctor_reports_preset_provider_key(tmp_path: Path) -> None:
     settings = Settings(
-        agent_model_preset="gemini-pro",
-        gemini_api_key="gemini-test-key",
+        agent_model_preset="glm-5.2",
+        nvidia_api_key="nvidia-test-key",
         agent_db_path=tmp_path / ".agent.db",
     )
 
@@ -69,8 +70,8 @@ def test_run_doctor_reports_preset_provider_key(tmp_path: Path) -> None:
     api_key = next(check for check in report.checks if check.name == "api-key")
 
     assert api_key.status == "pass"
-    assert "provider gemini" in api_key.detail
-    assert "gemini-test-key" not in api_key.detail
+    assert "provider nvidia" in api_key.detail
+    assert "nvidia-test-key" not in api_key.detail
 
 
 def test_doctor_json_is_machine_readable() -> None:

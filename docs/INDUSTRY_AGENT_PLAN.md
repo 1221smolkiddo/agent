@@ -183,6 +183,7 @@ Acceptance criteria:
 - Users can run via OpenRouter with `AGENT_MODEL=google/...` or `AGENT_MODEL=deepseek/...`.
 - Users can run direct DeepSeek with `AGENT_PROVIDER=deepseek`.
 - Users can run direct Gemini with `AGENT_PROVIDER=gemini`.
+- Users can run NVIDIA NIM models with `AGENT_PROVIDER=nvidia`, including the `glm-5.2` preset.
 - Usage records identify both provider and model.
 - Existing OpenRouter setup continues to work unchanged.
 

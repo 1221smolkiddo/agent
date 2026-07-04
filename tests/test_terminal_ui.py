@@ -5,6 +5,7 @@ import code_agent.interactive as interactive
 from code_agent.agent import AgentRunResult
 from code_agent.interactive import DEFAULT_DRY_RUN, read_prompt
 from code_agent.interactive import format_model_selection_preview, is_persona_instruction
+from code_agent.config import Settings
 from code_agent.work_report import should_show_work_report
 from code_agent.terminal_ui import print_work_report_panel, console
 
@@ -83,6 +84,72 @@ def test_prompt_model_selection_accepts_preset_name(monkeypatch) -> None:
     selected = interactive.prompt_model_selection("current-model")
 
     assert selected == "deepseek-v4-pro"
+
+
+def test_force_stop_commands_request_exit(tmp_path) -> None:
+    settings = Settings(_env_file=None, agent_db_path=tmp_path / "agent.db")
+
+    for raw in ["/x", "/force-stop", "/force-exit"]:
+        state = interactive.handle_command(
+            raw,
+            settings,
+            tmp_path,
+            tmp_path,
+            model=None,
+            profile=None,
+            dry_run=False,
+            stream_model=True,
+            sandbox_enabled=False,
+            max_steps=12,
+            max_failures=None,
+        )
+
+        assert state.exit_requested is True
+
+
+def test_plain_x_is_documented_stop_shortcut(monkeypatch) -> None:
+    monkeypatch.setattr("builtins.input", lambda _prompt: "x")
+
+    assert read_prompt() == "x"
+
+
+def test_steer_command_updates_session_state(tmp_path) -> None:
+    settings = Settings(_env_file=None, agent_provider="openrouter", agent_db_path=tmp_path / "agent.db")
+    session_state = interactive.SessionState()
+
+    interactive.handle_command(
+        "/steer be concise and ask before broad refactors",
+        settings,
+        tmp_path,
+        tmp_path,
+        model=None,
+        profile=None,
+        dry_run=False,
+        stream_model=True,
+        sandbox_enabled=False,
+        max_steps=12,
+        max_failures=None,
+        session_state=session_state,
+    )
+
+    assert session_state.conversation_steering == "be concise and ask before broad refactors"
+
+    interactive.handle_command(
+        "/steer clear",
+        settings,
+        tmp_path,
+        tmp_path,
+        model=None,
+        profile=None,
+        dry_run=False,
+        stream_model=True,
+        sandbox_enabled=False,
+        max_steps=12,
+        max_failures=None,
+        session_state=session_state,
+    )
+
+    assert session_state.conversation_steering is None
 
 
 def test_is_persona_instruction() -> None:

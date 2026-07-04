@@ -67,7 +67,7 @@ uv run code-agent run "Create a README section describing this project"
 code-agent doctor
 code-agent run "Fix the failing pytest"
 code-agent run --preset gemini-flash "Fix the failing pytest"
-code-agent run --provider deepseek --model deepseek-v4-pro "Fix the failing pytest"
+code-agent run --provider nvidia --model z-ai/glm-5.2 "Fix the failing pytest"
 code-agent run --cwd ../some-project --model qwen/qwen3-coder "Add tests for the parser"
 code-agent run --profile coder "Implement the next roadmap item"
 code-agent run --profile reviewer "Review the latest changes for regressions"
@@ -171,21 +171,28 @@ agent47: /sandbox diff
 agent47: /sandbox apply
 agent47: /sandbox off
 agent47: /profile coder
+agent47: /steer be concise and focus on implementation
+agent47: /steer clear
 agent47: /max-failures 5
 agent47: /history-show 12
 agent47: /resume 12 continue from the failed verification
 agent47: /revert 12
+agent47: /x
 agent47: /stop
+agent47: /force-stop
+agent47: /force-exit
 agent47: /exit
 ```
 
 `agent47` is the only interactive launcher. The old `copilot` alias was removed to avoid colliding with GitHub Copilot.
+Use `Ctrl+C` or your terminal's interrupt key to interrupt an active model/tool turn. Between turns,
+`x`, `/x`, `/force-stop`, and `/force-exit` immediately quit the interactive session.
 
 ## Environment
 
 - `OPENROUTER_API_KEY` is required.
-- `AGENT_PROVIDER` is optional and defaults to `openrouter`. Supported values are `openrouter`, `openai`, `gemini`, and `deepseek`.
-- `AGENT_MODEL_PRESET` is optional. Supported presets are `qwen-coder`, `gemini-flash`, `gemini-pro`, `deepseek-flash`, and `deepseek-pro`.
+- `AGENT_PROVIDER` is optional and defaults to `openrouter`. Supported values are `openrouter`, `openai`, `gemini`, `deepseek`, and `nvidia`.
+- `AGENT_MODEL_PRESET` is optional. Supported presets are `qwen-coder`, `gemini-flash`, `gemini-pro`, `deepseek-flash`, `deepseek-pro`, and `glm-5.2`.
 - `AGENT_MODEL` is optional. The CLI also accepts `--model`.
 - `AGENT_PROFILE` is optional and defaults to `default`. Supported profiles are `default`, `planner`, `coder`, `reviewer`, and `fast`.
 - `AGENT_PLANNER_MODEL`, `AGENT_CODER_MODEL`, `AGENT_REVIEWER_MODEL`, and `AGENT_FAST_MODEL` are optional per-profile model overrides.
@@ -196,6 +203,8 @@ agent47: /exit
 - `GEMINI_BASE_URL` is optional and defaults to `https://generativelanguage.googleapis.com/v1beta/openai/`.
 - `DEEPSEEK_API_KEY` is required when `AGENT_PROVIDER=deepseek`.
 - `DEEPSEEK_BASE_URL` is optional and defaults to `https://api.deepseek.com`.
+- `NVIDIA_API_KEY` is required when `AGENT_PROVIDER=nvidia`.
+- `NVIDIA_BASE_URL` is optional and defaults to `https://integrate.api.nvidia.com/v1`.
 - `AGENT_MAX_TOKENS` is optional and defaults to `4096`.
 - `AGENT_MAX_FAILURES` is optional and defaults to `3`.
 - `AGENT_INPUT_COST_PER_MILLION` and `AGENT_OUTPUT_COST_PER_MILLION` are optional. When both are set, Agent47 estimates per-run model cost from provider token usage.
@@ -212,15 +221,17 @@ Model switching:
 uv run code-agent models
 uv run code-agent run --preset gemini-flash "Fix the failing test"
 uv run code-agent run --preset deepseek-pro "Refactor the parser"
+uv run code-agent run --preset glm-5.2 "Implement the next coding task"
 uv run code-agent run --provider gemini --model gemini-3.5-flash "Inspect this repo"
 ```
 
 Preset selection chooses both provider and model. `--model` can still override the model string
-while keeping the preset provider, and `--provider` can override the provider for advanced cases.
+while keeping the preset provider. Use `--provider` with `--model` for custom provider/model pairs.
 If a preset needs a missing key, Agent47 fails with a targeted message such as
-`GEMINI_API_KEY is required for AGENT_PROVIDER=gemini`.
+`GEMINI_API_KEY is required for AGENT_PROVIDER=gemini`. Preset/provider mismatches, such as
+`--preset glm-5.2 --provider gemini`, are rejected before the model client is created.
 
-Gemini and DeepSeek can be used either through OpenRouter model slugs or through their direct
+Gemini, DeepSeek, and NVIDIA NIM can be used either through OpenRouter model slugs or through their direct
 OpenAI-compatible endpoints:
 
 ```bash
@@ -233,6 +244,12 @@ AGENT_MODEL=gemini-3.5-flash
 AGENT_PROVIDER=deepseek
 DEEPSEEK_API_KEY=...
 AGENT_MODEL=deepseek-v4-pro
+```
+
+```bash
+AGENT_PROVIDER=nvidia
+NVIDIA_API_KEY=...
+AGENT_MODEL=z-ai/glm-5.2
 ```
 
 Check the provider docs for current model IDs before pinning production profiles.

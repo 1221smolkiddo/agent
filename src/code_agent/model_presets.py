@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
 
-
-ProviderName = Literal["openrouter", "openai", "gemini", "deepseek"]
+from .model_registry import ProviderName, REGISTERED_MODELS
 
 
 @dataclass(frozen=True)
@@ -17,41 +15,14 @@ class ModelPreset:
 
 
 MODEL_PRESETS: dict[str, ModelPreset] = {
-    "qwen-coder": ModelPreset(
-        name="qwen-coder",
-        provider="openrouter",
-        model="qwen/qwen3-coder",
-        description="Default OpenRouter coding model.",
-        required_key="OPENROUTER_API_KEY",
-    ),
-    "gemini-flash": ModelPreset(
-        name="gemini-flash",
-        provider="gemini",
-        model="gemini-3.5-flash",
-        description="Fast Gemini model for agentic and coding tasks.",
-        required_key="GEMINI_API_KEY",
-    ),
-    "gemini-pro": ModelPreset(
-        name="gemini-pro",
-        provider="gemini",
-        model="gemini-3.1-pro",
-        description="Higher-capability Gemini model for deeper coding work.",
-        required_key="GEMINI_API_KEY",
-    ),
-    "deepseek-flash": ModelPreset(
-        name="deepseek-flash",
-        provider="deepseek",
-        model="deepseek-v4-flash",
-        description="Fast DeepSeek model with OpenAI-compatible access.",
-        required_key="DEEPSEEK_API_KEY",
-    ),
-    "deepseek-pro": ModelPreset(
-        name="deepseek-pro",
-        provider="deepseek",
-        model="deepseek-v4-pro",
-        description="DeepSeek pro model for larger coding and reasoning tasks.",
-        required_key="DEEPSEEK_API_KEY",
-    ),
+    name: ModelPreset(
+        name=model.name,
+        provider=model.provider,
+        model=model.model,
+        description=model.description,
+        required_key=model.required_key,
+    )
+    for name, model in REGISTERED_MODELS.items()
 }
 
 

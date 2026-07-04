@@ -21,6 +21,7 @@ from .eval_reports import (
 from .factory import create_agent
 from .model_profiles import validate_profile_name
 from .model_presets import format_model_presets, resolve_model_preset
+from .model_registry import provider_name_list, validate_provider_name
 from .permissions import confirm_permission
 from .protocol import (
     JsonEventEmitter,
@@ -78,10 +79,13 @@ def validate_preset_option(value: Optional[str]) -> Optional[str]:
 def validate_provider_option(value: Optional[str]) -> Optional[str]:
     if value is None:
         return None
-    normalized = value.strip().lower()
-    if normalized in {"openrouter", "openai", "gemini", "deepseek"}:
-        return normalized
-    raise typer.BadParameter("Expected one of: openrouter, openai, gemini, deepseek.")
+    try:
+        return validate_provider_name(value)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
+PROVIDER_HELP = f"Provider override: {provider_name_list()}."
 
 
 @app.command("models")
@@ -98,13 +102,13 @@ def run(
         None,
         "--provider",
         callback=validate_provider_option,
-        help="Provider override: openrouter, openai, gemini, or deepseek.",
+        help=PROVIDER_HELP,
     ),
     preset: Optional[str] = typer.Option(
         None,
         "--preset",
         callback=validate_preset_option,
-        help="Model preset, such as qwen-coder, gemini-flash, gemini-pro, deepseek-flash, or deepseek-pro.",
+        help="Model preset, such as qwen-coder, gemini-flash, gemini-pro, deepseek-pro, or glm-5.2.",
     ),
     model: Optional[str] = typer.Option(None, "--model", help="Model override."),
     profile: Optional[str] = typer.Option(
@@ -173,7 +177,7 @@ def evals_command(
         None,
         "--provider",
         callback=validate_provider_option,
-        help="Provider override for live evals: openrouter, openai, gemini, or deepseek.",
+        help=f"Provider override for live evals: {provider_name_list()}.",
     ),
     preset: Optional[str] = typer.Option(
         None,
@@ -306,13 +310,13 @@ def run_json(
         None,
         "--provider",
         callback=validate_provider_option,
-        help="Provider override: openrouter, openai, gemini, or deepseek.",
+        help=PROVIDER_HELP,
     ),
     preset: Optional[str] = typer.Option(
         None,
         "--preset",
         callback=validate_preset_option,
-        help="Model preset, such as qwen-coder, gemini-flash, gemini-pro, deepseek-flash, or deepseek-pro.",
+        help="Model preset, such as qwen-coder, gemini-flash, gemini-pro, deepseek-pro, or glm-5.2.",
     ),
     model: Optional[str] = typer.Option(None, "--model", help="Model override."),
     profile: Optional[str] = typer.Option(
@@ -419,13 +423,13 @@ def resume(
         None,
         "--provider",
         callback=validate_provider_option,
-        help="Provider override: openrouter, openai, gemini, or deepseek.",
+        help=PROVIDER_HELP,
     ),
     preset: Optional[str] = typer.Option(
         None,
         "--preset",
         callback=validate_preset_option,
-        help="Model preset, such as qwen-coder, gemini-flash, gemini-pro, deepseek-flash, or deepseek-pro.",
+        help="Model preset, such as qwen-coder, gemini-flash, gemini-pro, deepseek-pro, or glm-5.2.",
     ),
     model: Optional[str] = typer.Option(None, "--model", help="Model override."),
     profile: Optional[str] = typer.Option(

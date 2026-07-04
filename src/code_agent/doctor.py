@@ -13,6 +13,7 @@ from typing import Literal
 from .config import Settings
 from .memory import MAX_MEMORY_FILE_CHARS, memory_file_path
 from .model_presets import resolve_model_preset
+from .model_registry import provider_name_list
 from .storage import AgentStorage
 
 
@@ -206,7 +207,7 @@ def _check_api_key(settings: Settings) -> DoctorCheck:
             "api-key",
             "fail",
             str(exc),
-            "Set AGENT_PROVIDER to openrouter, openai, gemini, or deepseek.",
+            f"Set AGENT_PROVIDER to one of: {provider_name_list()}.",
         )
     except ValueError as exc:
         return DoctorCheck(
@@ -220,12 +221,14 @@ def _check_api_key(settings: Settings) -> DoctorCheck:
         "openai": "OPENAI_API_KEY",
         "gemini": "GEMINI_API_KEY",
         "deepseek": "DEEPSEEK_API_KEY",
+        "nvidia": "NVIDIA_API_KEY",
     }
     key_by_provider = {
         "openrouter": settings.openrouter_api_key,
         "openai": settings.openai_api_key,
         "gemini": settings.gemini_api_key,
         "deepseek": settings.deepseek_api_key,
+        "nvidia": settings.nvidia_api_key,
     }
     env_name = env_by_provider[provider]
     if key_by_provider[provider]:

@@ -5,6 +5,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .model_registry import provider_name_list, provider_names
+
 load_dotenv()
 
 
@@ -26,6 +28,9 @@ class Settings(BaseSettings):
 
     deepseek_api_key: str | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
+
+    nvidia_api_key: str | None = None
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
 
     agent_model: str = "qwen/qwen3-coder"
     agent_profile: str = "default"
@@ -53,11 +58,9 @@ class Settings(BaseSettings):
         provider = (provider_override or self.agent_provider).strip().lower()
         if provider == "openrouter" and not self.openrouter_api_key and self.openai_api_key:
             return "openai"
-        if provider in {"openrouter", "openai", "gemini", "deepseek"}:
+        if provider in provider_names():
             return provider
-        raise RuntimeError(
-            "AGENT_PROVIDER must be one of: openrouter, openai, gemini, deepseek."
-        )
+        raise RuntimeError(f"AGENT_PROVIDER must be one of: {provider_name_list()}.")
 
     @property
     def model_api_key(self) -> str:
@@ -70,6 +73,7 @@ class Settings(BaseSettings):
             "openai": self.openai_api_key,
             "gemini": self.gemini_api_key,
             "deepseek": self.deepseek_api_key,
+            "nvidia": self.nvidia_api_key,
         }
         key = key_by_provider[provider]
         if not key:
@@ -78,6 +82,7 @@ class Settings(BaseSettings):
                 "openai": "OPENAI_API_KEY",
                 "gemini": "GEMINI_API_KEY",
                 "deepseek": "DEEPSEEK_API_KEY",
+                "nvidia": "NVIDIA_API_KEY",
             }
             raise RuntimeError(
                 f"{env_by_provider[provider]} is required for AGENT_PROVIDER={provider}."
@@ -98,9 +103,9 @@ class Settings(BaseSettings):
             return self.gemini_base_url
         if provider == "deepseek":
             return self.deepseek_base_url
-        raise RuntimeError(
-            "AGENT_PROVIDER must be one of: openrouter, openai, gemini, deepseek."
-        )
+        if provider == "nvidia":
+            return self.nvidia_base_url
+        raise RuntimeError(f"AGENT_PROVIDER must be one of: {provider_name_list()}.")
 
     @property
     def model_headers(self) -> dict[str, str]:

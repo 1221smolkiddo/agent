@@ -40,7 +40,9 @@ class StreamingModelClient(ModelClient, Protocol):
 class ModelProviderConfig:
     api_key: str
     base_url: str
+    name: str = "openai-compatible"
     default_headers: dict[str, str] | None = None
+    include_stream_usage: bool = True
     input_cost_per_million: float | None = None
     output_cost_per_million: float | None = None
 
@@ -84,6 +86,8 @@ class OpenAICompatibleChatClient:
     max_tokens: int = 4096
     temperature: float = 0.2
     default_headers: dict[str, str] | None = None
+    provider_name: str = "openai-compatible"
+    include_stream_usage: bool = True
     input_cost_per_million: float | None = None
     output_cost_per_million: float | None = None
 
@@ -119,14 +123,16 @@ class OpenAICompatibleChatClient:
     ) -> str:
         def _make_request(current_max_tokens: int) -> str:
             chunks: list[str] = []
-            stream = self._client.chat.completions.create(
-                model=self.model,
-                messages=messages,  # type: ignore[arg-type]
-                temperature=self.temperature,
-                max_tokens=current_max_tokens,
-                stream=True,
-                stream_options={"include_usage": True},
-            )
+            request: dict[str, Any] = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": self.temperature,
+                "max_tokens": current_max_tokens,
+                "stream": True,
+            }
+            if self.include_stream_usage:
+                request["stream_options"] = {"include_usage": True}
+            stream = self._client.chat.completions.create(**request)  # type: ignore[arg-type]
             for event in stream:
                 usage = getattr(event, "usage", None)
                 if usage is not None:
@@ -188,6 +194,7 @@ class OpenAICompatibleChatClient:
             ModelUsageRecord(
                 model=self.model,
                 ok=True,
+                provider=self.provider_name,
                 prompt_tokens=usage.get("prompt_tokens"),
                 completion_tokens=usage.get("completion_tokens"),
                 total_tokens=usage.get("total_tokens"),
@@ -199,7 +206,9 @@ class OpenAICompatibleChatClient:
         )
 
     def _record_failure(self, error: str) -> None:
-        self._usage_records.append(ModelUsageRecord(model=self.model, ok=False, error=error))
+        self._usage_records.append(
+            ModelUsageRecord(model=self.model, ok=False, provider=self.provider_name, error=error)
+        )
 
     def _estimate_cost(
         self,
@@ -310,6 +319,8 @@ def create_openai_compatible_client(
         max_tokens=profile.max_tokens,
         temperature=profile.temperature,
         default_headers=provider.default_headers,
+        provider_name=provider.name,
+        include_stream_usage=provider.include_stream_usage,
         input_cost_per_million=provider.input_cost_per_million,
         output_cost_per_million=provider.output_cost_per_million,
     )

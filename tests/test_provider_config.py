@@ -10,7 +10,12 @@ from code_agent.model_presets import format_model_presets, resolve_model_preset
 
 
 def test_openrouter_is_default_provider() -> None:
-    settings = Settings(_env_file=None, openrouter_api_key="router-key")
+    settings = Settings(
+        _env_file=None,
+        agent_provider="openrouter",
+        agent_model_preset=None,
+        openrouter_api_key="router-key",
+    )
 
     assert settings.provider_name == "openrouter"
     assert settings.model_api_key == "router-key"
@@ -19,7 +24,13 @@ def test_openrouter_is_default_provider() -> None:
 
 
 def test_openai_fallback_still_works_when_openrouter_key_is_missing() -> None:
-    settings = Settings(_env_file=None, openrouter_api_key="", openai_api_key="openai-key")
+    settings = Settings(
+        _env_file=None,
+        agent_provider="openrouter",
+        agent_model_preset=None,
+        openrouter_api_key="",
+        openai_api_key="openai-key",
+    )
 
     assert settings.provider_name == "openai"
     assert settings.model_api_key == "openai-key"
@@ -42,6 +53,15 @@ def test_deepseek_provider_uses_openai_compatible_endpoint() -> None:
     assert settings.provider_name == "deepseek"
     assert settings.model_api_key == "deepseek-key"
     assert settings.model_base_url == "https://api.deepseek.com"
+    assert settings.model_headers == {}
+
+
+def test_nvidia_provider_uses_nim_openai_compatible_endpoint() -> None:
+    settings = Settings(_env_file=None, agent_provider="nvidia", nvidia_api_key="nvidia-key")
+
+    assert settings.provider_name == "nvidia"
+    assert settings.model_api_key == "nvidia-key"
+    assert settings.model_base_url == "https://integrate.api.nvidia.com/v1"
     assert settings.model_headers == {}
 
 
@@ -72,12 +92,12 @@ def test_shell_network_policy_rejects_unknown_values() -> None:
 
 
 def test_model_preset_resolves_provider_and_model() -> None:
-    preset = resolve_model_preset("gemini-flash")
+    preset = resolve_model_preset("glm-5.2")
 
     assert preset is not None
-    assert preset.provider == "gemini"
-    assert preset.model == "gemini-3.5-flash"
-    assert "gemini-flash" in format_model_presets()
+    assert preset.provider == "nvidia"
+    assert preset.model == "z-ai/glm-5.2"
+    assert "glm-5.2" in format_model_presets()
     assert "key=" not in format_model_presets()
 
 
@@ -89,8 +109,8 @@ def test_unknown_model_preset_is_rejected() -> None:
 def test_create_agent_uses_preset_provider_and_model(tmp_path) -> None:
     settings = Settings(
         _env_file=None,
-        agent_model_preset="deepseek-pro",
-        deepseek_api_key="deepseek-key",
+        agent_model_preset="glm-5.2",
+        nvidia_api_key="nvidia-key",
         agent_reviewer_pass=False,
         agent_db_path=tmp_path / "agent.db",
     )
@@ -104,7 +124,8 @@ def test_create_agent_uses_preset_provider_and_model(tmp_path) -> None:
         max_steps=1,
     )
 
-    assert agent.model_client.model == "deepseek-v4-pro"
+    assert agent.model_client.model == "z-ai/glm-5.2"
+    assert agent.model_client.include_stream_usage is False
 
 
 def test_create_agent_passes_shell_network_policy_to_tools(tmp_path) -> None:
@@ -131,6 +152,7 @@ def test_create_agent_passes_shell_network_policy_to_tools(tmp_path) -> None:
 def test_model_override_keeps_preset_provider(tmp_path) -> None:
     settings = Settings(
         _env_file=None,
+        agent_model_preset=None,
         gemini_api_key="gemini-key",
         agent_reviewer_pass=False,
         agent_db_path=tmp_path / "agent.db",
@@ -169,6 +191,48 @@ def test_preset_missing_key_has_targeted_error(tmp_path) -> None:
         )
 
 
+def test_provider_override_rejects_mismatched_preset(tmp_path) -> None:
+    settings = Settings(
+        _env_file=None,
+        agent_model_preset=None,
+        gemini_api_key="gemini-key",
+        agent_reviewer_pass=False,
+        agent_db_path=tmp_path / "agent.db",
+    )
+
+    with pytest.raises(RuntimeError, match="Preset glm-5.2 requires provider=nvidia"):
+        create_agent(
+            settings=settings,
+            cwd=tmp_path,
+            model=None,
+            provider="gemini",
+            preset="glm-5.2",
+            profile=None,
+            dry_run=True,
+            max_steps=1,
+        )
+
+
+def test_registered_model_rejects_wrong_provider(tmp_path) -> None:
+    settings = Settings(
+        _env_file=None,
+        gemini_api_key="gemini-key",
+        agent_reviewer_pass=False,
+        agent_db_path=tmp_path / "agent.db",
+    )
+
+    with pytest.raises(RuntimeError, match="z-ai/glm-5.2 is registered for provider=nvidia"):
+        create_agent(
+            settings=settings,
+            cwd=tmp_path,
+            model="z-ai/glm-5.2",
+            provider="gemini",
+            profile=None,
+            dry_run=True,
+            max_steps=1,
+        )
+
+
 def test_cli_models_lists_presets() -> None:
     runner = CliRunner()
 
@@ -177,5 +241,6 @@ def test_cli_models_lists_presets() -> None:
     assert result.exit_code == 0
     assert "gemini-flash" in result.output
     assert "deepseek-pro" in result.output
+    assert "glm-5.2" in result.output
     assert "key=" not in result.output
     assert "Available model presets:\n\n- qwen-coder: provider=openrouter, model=qwen/qwen3-coder\nDefault OpenRouter coding model." in result.output

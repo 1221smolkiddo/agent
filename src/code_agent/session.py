@@ -24,6 +24,7 @@ class SessionState:
     last_blocker: str | None = None
     last_run_id: int | None = None
     previous_status: str | None = None
+    conversation_steering: str | None = None
 
     def update(self, user_input: str, result: AgentRunResult) -> None:
         self.last_run_id = result.run_id
@@ -89,6 +90,8 @@ class SessionState:
             rows.append(("last_run_id", self.last_run_id))
         if self.previous_status:
             rows.append(("previous_status", self.previous_status))
+        if self.conversation_steering:
+            rows.append(("conversation_steering", self.conversation_steering))
         if not rows:
             return ""
 
@@ -169,6 +172,13 @@ class SessionState:
             action = result.failed_actions[-1].get("action", "tool")
             summaries.append(f"{action} failed")
         return summaries
+
+    def set_steering(self, guidance: str) -> None:
+        cleaned = " ".join(guidance.strip().split())
+        self.conversation_steering = cleaned[:500] if cleaned else None
+
+    def clear_steering(self) -> None:
+        self.conversation_steering = None
 
 
 def extract_file_refs(text: str) -> list[str]:

@@ -102,6 +102,7 @@ def test_create_fallback_client_returns_single_client_without_fallbacks() -> Non
 
 def test_factory_uses_configured_fallback_models(tmp_path: Path) -> None:
     settings = Settings(
+        agent_model_preset=None,
         openrouter_api_key="test-key",
         agent_model="primary",
         agent_fallback_models="fallback-a, fallback-b",
