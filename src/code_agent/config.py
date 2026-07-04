@@ -42,13 +42,14 @@ class Settings(BaseSettings):
     agent_input_cost_per_million: float | None = None
     agent_output_cost_per_million: float | None = None
     agent_max_tokens: int = 4096
+    agent_model_timeout_seconds: float = 60.0
     agent_max_failures: int = 3
     agent_db_path: Path = Path(".code-agent/agent.db")
     agent_stream: bool = True
     agent_reviewer_pass: bool = True
     agent_shell_network: str = "allow"
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @property
     def provider_name(self) -> str:

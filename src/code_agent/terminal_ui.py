@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import os
 from pathlib import Path
 from collections.abc import Iterable
@@ -29,6 +30,18 @@ custom_theme = Theme({
     "accent": "bright_cyan",
 })
 console = Console(theme=custom_theme)
+
+
+@dataclass(frozen=True)
+class SessionHeader:
+    version: str
+    profile: str
+    model: str
+    provider: str
+    workspace: str
+    sandbox: str
+    approval: str
+    git_branch: str | None = None
 
 def should_color() -> bool:
     if os.environ.get("NO_COLOR"):
@@ -75,17 +88,64 @@ def print_renderable_panel(title: str, renderable: object, *, style: str = "mute
     console.print()
 
 
-def print_startup_header(cwd: str, mode: str, model: str) -> None:
-    grid = Table.grid(expand=True)
-    grid.add_column(ratio=1)
-    grid.add_column(justify="right")
-    title = Text("Agent47", style="bold cyan")
-    title.append("  coding agent", style="muted")
-    mode_text = Text("Write Enabled" if mode == "write-enabled" else "Dry Run")
+def print_startup_header(
+    cwd: str | Path,
+    mode: str,
+    model: str,
+    *,
+    version: str = "0.x",
+    profile: str = "default",
+    provider: str = "openrouter",
+    sandbox: bool = False,
+    approval: str = "auto_read",
+    git_branch: str | None = None,
+) -> None:
+    header = SessionHeader(
+        version=version,
+        profile=profile,
+        model=model,
+        provider=provider,
+        workspace=str(Path(cwd)),
+        sandbox="enabled" if sandbox else "disabled",
+        approval=approval,
+        git_branch=git_branch,
+    )
+    print_session_header(header, mode=mode)
+
+
+def print_session_header(header: SessionHeader, *, mode: str) -> None:
+    table = Table.grid(expand=True, padding=(0, 3))
+    table.add_column(no_wrap=True)
+    table.add_column(ratio=1)
+    table.add_column(no_wrap=True)
+    title = Text(f"Agent47 v{header.version}", style="bold cyan")
+    mode_text = Text("write" if mode == "write-enabled" else "dry-run")
     mode_text.stylize("green" if mode == "write-enabled" else "yellow")
-    grid.add_row(title, mode_text)
-    grid.add_row(Text(str(Path(cwd)), style="muted"), Text(f"Model: {model}", style="cyan"))
-    print_renderable_panel("Session", grid, style="cyan")
+    table.add_row(title, Text(header.workspace, style="muted"), mode_text)
+    table.add_row("Model", Text(header.model, style="cyan"), Text(f"Provider {header.provider}", style="muted"))
+    table.add_row("Profile", Text(header.profile, style="default"), Text(f"Approval {header.approval}", style="muted"))
+    git_value = header.git_branch or "none"
+    table.add_row("Sandbox", Text(header.sandbox, style="default"), Text(f"Git {git_value}", style="muted"))
+    console.print(table)
+    console.print()
+
+
+def format_status_line(
+    *,
+    model: str,
+    provider: str,
+    approval: str,
+    sandbox: bool,
+    git_status: str = "unknown",
+    tokens: str = "-",
+    cost: str = "-",
+    elapsed: str = "-",
+) -> str:
+    sandbox_text = "Sandbox ON" if sandbox else "Sandbox OFF"
+    return (
+        f"{model} | {provider} | {tokens} tokens | {cost} | {elapsed} | "
+        f"{git_status} | {approval} | {sandbox_text}"
+    )
 
 def print_key_values(title: str, rows: Iterable[tuple[str, object]]) -> None:
     """Compact key-values."""

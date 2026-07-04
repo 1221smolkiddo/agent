@@ -52,7 +52,7 @@ class StatusReporter:
         lines = []
 
         if self._current_label or self._is_generating:
-            label = self._current_label or "Working"
+            label = self._current_label or "Thinking"
             detail = self._current_detail or ""
             text = Text()
             text.append(" ")
@@ -64,8 +64,9 @@ class StatusReporter:
         else:
             lines.append(Text("Ready. /help /history /report /diff", style="muted"))
 
-        # Keep one compact progress surface; completed activity is hidden when the live view stops.
-        if self._stages:
+        # Keep one compact progress surface for actual tool work. While waiting
+        # for the model, a single Thinking spinner is calmer and avoids noise.
+        if self._stages and not self._is_generating:
             prog = Text()
             prog.append("Progress:\n", style="muted")
             for stage, status in self._stages[-8:]:
@@ -99,10 +100,8 @@ class StatusReporter:
     def thinking(self, step: int) -> None:
         if self._current_label or self._stages:
             return
-        self._current_label = "Inspecting Project"
-        self._current_detail = "Gathering context"
-        if not any(s == self._current_detail for s, _ in self._stages):
-            self._stages.append((self._current_detail, "in-progress"))
+        self._current_label = "Thinking"
+        self._current_detail = ""
         self._update()
 
     def action(self, action: AgentAction) -> None:
@@ -140,7 +139,8 @@ class StatusReporter:
 
     def model_stream_start(self, step: int) -> None:
         self._is_generating = True
-        self._current_label = "Generating output"
+        self._current_label = "Thinking"
+        self._current_detail = ""
         self._update()
 
     def model_stream_chunk(self, chunk: str) -> None:

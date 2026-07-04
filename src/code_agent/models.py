@@ -26,6 +26,9 @@ class ModelClient(Protocol):
     def complete(self, messages: list[ChatMessage]) -> str:
         """Return the assistant message content."""
 
+    def cancel(self, reason: str = "user stop") -> int:
+        """Cancel any in-flight model request if the client supports it."""
+
 
 class StreamingModelClient(ModelClient, Protocol):
     def stream_complete(
@@ -43,6 +46,7 @@ class ModelProviderConfig:
     name: str = "openai-compatible"
     default_headers: dict[str, str] | None = None
     include_stream_usage: bool = True
+    timeout_seconds: float = 60.0
     input_cost_per_million: float | None = None
     output_cost_per_million: float | None = None
 
@@ -88,6 +92,7 @@ class OpenAICompatibleChatClient:
     default_headers: dict[str, str] | None = None
     provider_name: str = "openai-compatible"
     include_stream_usage: bool = True
+    timeout_seconds: float = 60.0
     input_cost_per_million: float | None = None
     output_cost_per_million: float | None = None
 
@@ -97,6 +102,7 @@ class OpenAICompatibleChatClient:
             api_key=self.api_key,
             base_url=self.base_url,
             default_headers=self.default_headers,
+            timeout=self.timeout_seconds,
         )
 
     def complete(self, messages: list[ChatMessage]) -> str:
@@ -159,6 +165,16 @@ class OpenAICompatibleChatClient:
         records = self._usage_records
         self._usage_records = []
         return records
+
+    def cancel(self, reason: str = "user stop") -> int:
+        close = getattr(self._client, "close", None)
+        if close is None:
+            return 0
+        try:
+            close()
+        except Exception:
+            return 0
+        return 1
 
     def _call_with_credit_retry(self, make_request: Callable[[int], T]) -> T:
         current_tokens = self.max_tokens
@@ -252,6 +268,14 @@ class FallbackModelClient:
         self._usage_records = []
         return records
 
+    def cancel(self, reason: str = "user stop") -> int:
+        cancelled = 0
+        for client in self.clients:
+            cancel = getattr(client, "cancel", None)
+            if cancel is not None:
+                cancelled += int(cancel(reason) or 0)
+        return cancelled
+
     def _try_clients(self, call: Callable[[UsageTrackingModelClient], str]) -> str:
         errors: list[str] = []
         previous_model: str | None = None
@@ -321,6 +345,7 @@ def create_openai_compatible_client(
         default_headers=provider.default_headers,
         provider_name=provider.name,
         include_stream_usage=provider.include_stream_usage,
+        timeout_seconds=provider.timeout_seconds,
         input_cost_per_million=provider.input_cost_per_million,
         output_cost_per_million=provider.output_cost_per_million,
     )

@@ -91,6 +91,24 @@ def test_shell_network_policy_rejects_unknown_values() -> None:
         _ = settings.shell_network_policy
 
 
+def test_settings_ignores_unknown_dotenv_keys(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("AGENT_PROVIDER", raising=False)
+    monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
+    monkeypatch.delenv("BASE_URL", raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "AGENT_PROVIDER=nvidia\n"
+        "NVIDIA_API_KEY=nvidia-key\n"
+        "BASE_URL=https://integrate.api.nvidia.com/v1\n",
+        encoding="utf-8",
+    )
+
+    settings = Settings(_env_file=env_file)
+
+    assert settings.provider_name == "nvidia"
+    assert settings.model_api_key == "nvidia-key"
+
+
 def test_model_preset_resolves_provider_and_model() -> None:
     preset = resolve_model_preset("glm-5.2")
 

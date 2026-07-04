@@ -62,6 +62,7 @@ def create_agent(
             if (registered_model := find_registered_model(default_model))
             else DEFAULT_CAPABILITIES.stream_usage
         ),
+        timeout_seconds=settings.agent_model_timeout_seconds,
         input_cost_per_million=settings.agent_input_cost_per_million,
         output_cost_per_million=settings.agent_output_cost_per_million,
     )
@@ -101,3 +102,45 @@ def create_agent(
         stream_model=settings.agent_stream if stream_model is None else stream_model,
         reviewer_client=resolved_reviewer,
     )
+
+
+def create_chat_client(
+    settings: Settings,
+    *,
+    model: str | None = None,
+    profile: str | None = None,
+    provider: str | None = None,
+    preset: str | None = None,
+    stream_model: bool | None = None,
+) -> ModelClient:
+    configured_preset = None if model or provider else settings.agent_model_preset
+    selected_preset = resolve_model_preset(preset if preset is not None else configured_preset)
+    selected_provider = provider or (selected_preset.provider if selected_preset else None)
+    default_model = model or (selected_preset.model if selected_preset else settings.agent_model)
+    resolved_provider_name = settings.provider_name_for(selected_provider)
+    validate_model_selection(
+        provider=resolved_provider_name,
+        model=default_model,
+        preset_name=selected_preset.name if selected_preset else None,
+        stream=settings.agent_stream if stream_model is None else stream_model,
+    )
+    selected_profile = resolve_model_profile(
+        profile or settings.agent_profile,
+        default_model=default_model,
+        max_tokens=min(settings.agent_max_tokens, 1024),
+    )
+    provider_config = ModelProviderConfig(
+        api_key=settings.model_api_key_for(selected_provider),
+        base_url=settings.model_base_url_for(selected_provider),
+        name=resolved_provider_name,
+        default_headers=settings.model_headers_for(selected_provider),
+        include_stream_usage=(
+            registered_model.capabilities.stream_usage
+            if (registered_model := find_registered_model(default_model))
+            else DEFAULT_CAPABILITIES.stream_usage
+        ),
+        timeout_seconds=settings.agent_model_timeout_seconds,
+        input_cost_per_million=settings.agent_input_cost_per_million,
+        output_cost_per_million=settings.agent_output_cost_per_million,
+    )
+    return create_openai_compatible_client(provider_config, selected_profile)

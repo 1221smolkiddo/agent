@@ -82,7 +82,7 @@ These are already built and should be maintained while new work continues.
 - [x] Dry-run mode.
 - [x] Local workspace sandbox copy mode.
 - [x] Operation status labels such as `THINKING`, `READING`, `EDITING`, `TESTING`, and `DONE`.
-- [x] Stop controls with `Ctrl+C`, `/stop`, and `/exit`.
+- [x] Stop controls with `Ctrl+C`, `Ctrl+E`, `/stop`, and `/exit`.
 - [x] Automatic tool failure recovery loop.
 - [x] Guard against false completion after blocked writes/edits.
 - [x] GitHub CI, issue templates, PR template, and contribution docs.

@@ -153,7 +153,10 @@ agent47
 ```
 
 Interactive mode separates prompts, responses, help, status, history, and structured work reports into bordered terminal panels so user input and Agent47 output do not visually merge.
-It starts with a centered `A G E N T 4 7` banner and uses a restrained terminal color theme when color output is supported. Set `NO_COLOR=1` to disable color, or `AGENT47_COLOR=always` to force it.
+It starts with a compact session header showing Agent47 version, workspace, model, provider, profile,
+approval mode, sandbox mode, and git branch. The prompt stays context-aware, for example
+`agent47(main) [glm-5.2|coder] >`, and updates when the model or profile changes. Set `NO_COLOR=1`
+to disable color, or `AGENT47_COLOR=always` to force it.
 It carries both a short in-memory transcript and structured session state into follow-up turns so Agent47 can continue recent work without relying on magic phrases.
 Interactive mode starts write-enabled so file creation and edits can actually happen after approval. Use `/dry-run` when you want inspect-only behavior.
 
@@ -170,6 +173,8 @@ agent47: /sandbox
 agent47: /sandbox diff
 agent47: /sandbox apply
 agent47: /sandbox off
+agent47: /model
+agent47: /model select
 agent47: /profile coder
 agent47: /steer be concise and focus on implementation
 agent47: /steer clear
@@ -177,16 +182,15 @@ agent47: /max-failures 5
 agent47: /history-show 12
 agent47: /resume 12 continue from the failed verification
 agent47: /revert 12
-agent47: /x
 agent47: /stop
-agent47: /force-stop
-agent47: /force-exit
 agent47: /exit
 ```
 
 `agent47` is the only interactive launcher. The old `copilot` alias was removed to avoid colliding with GitHub Copilot.
-Use `Ctrl+C` or your terminal's interrupt key to interrupt an active model/tool turn. Between turns,
-`x`, `/x`, `/force-stop`, and `/force-exit` immediately quit the interactive session.
+Use `/model` to inspect the current model and capabilities, `/model select` or `/models` to open
+the capability-aware model picker, and `/model <id>` to set a custom model id. Use `Ctrl+C` to
+interrupt an active model/tool turn and return to the prompt. Use `Ctrl+E` to interrupt and exit
+the interactive session. Between turns, `/stop` and `/exit` also quit normally.
 
 ## Environment
 
@@ -338,7 +342,8 @@ After non-trivial runs, the CLI and interactive shell render a structured work r
 
 ## Stopping The Agent
 
-Use `Ctrl+C` to stop a running operation.
+Use `Ctrl+C` to stop a running operation and return to the prompt in interactive mode. Use `Ctrl+E`
+to exit interactive mode.
 
 Inside `agent47`, you can also quit between prompts with:
 

@@ -74,7 +74,7 @@ Inside `agent47`, there are currently **19 slash commands**:
 | `/sandbox [off]` | Create and use a sandbox copy, or return to the base workspace. |
 | `/sandbox diff` | Show sandbox changes before promotion. |
 | `/sandbox apply` | Promote approved sandbox changes back to the base workspace. |
-| `/model <name>` | Change model for this session. |
+| `/model`, `/model select`, `/model <name>` | Show the current model and capabilities, open the picker, or change model for this session. |
 | `/profile <name>` | Change model profile: `default`, `planner`, `coder`, `reviewer`, or `fast`. |
 | `/max-steps <n>` | Change max agent loop steps. |
 | `/max-failures <n>` | Change consecutive failure recovery budget. |
@@ -167,7 +167,8 @@ There are currently **21 model-requestable actions**:
 | Structured interactive session state | Enabled |
 | Run detail views | Enabled |
 | Resumable runs | Enabled |
-| Stop shortcut: `Ctrl+C` and `/stop` | Enabled with shell process-tree cleanup |
+| Premium interactive shell | Compact session header, contextual prompt, capability-aware model picker, status line, and reusable UI helpers |
+| Stop shortcuts: `Ctrl+C`, `Ctrl+E`, and `/stop` | `Ctrl+C` stops the active turn, `Ctrl+E` exits interactive mode, and `/stop` quits between turns |
 | Code parsing: tree-sitter | Enabled as optional parsing extra |
 | Storage: SQLite | Enabled |
 | Storage migrations: schema versioning and legacy backup | Enabled |

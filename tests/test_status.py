@@ -109,9 +109,12 @@ def test_semantic_stage_for_generic_shell() -> None:
 def test_is_casual_greeting() -> None:
     assert is_casual_greeting("hey")
     assert is_casual_greeting(" Hello ")
+    assert is_casual_greeting("hii")
     assert not is_casual_greeting("hey inspect this project")
     assert is_chat_request("hey")
     assert is_chat_request(" Hello ")
+    assert is_chat_request("hii")
+    assert is_chat_request("so how far away are we to make this an industry agent")
     assert not is_chat_request("hey inspect this project")
 
 

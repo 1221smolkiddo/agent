@@ -32,6 +32,11 @@ class RegisteredModel:
     description: str
     required_key: str
     capabilities: ModelCapabilities
+    context_window: str = "unknown"
+    quality: int = 3
+    speed: int = 3
+    cost: int = 3
+    reasoning: int = 3
 
 
 DEFAULT_CAPABILITIES = ModelCapabilities()
@@ -44,6 +49,11 @@ REGISTERED_MODELS: dict[str, RegisteredModel] = {
         description="Default OpenRouter coding model.",
         required_key="OPENROUTER_API_KEY",
         capabilities=DEFAULT_CAPABILITIES,
+        context_window="varies",
+        quality=4,
+        speed=4,
+        cost=4,
+        reasoning=4,
     ),
     "gemini-flash": RegisteredModel(
         name="gemini-flash",
@@ -52,6 +62,11 @@ REGISTERED_MODELS: dict[str, RegisteredModel] = {
         description="Fast Gemini model for agentic and coding tasks.",
         required_key="GEMINI_API_KEY",
         capabilities=DEFAULT_CAPABILITIES,
+        context_window="large",
+        quality=4,
+        speed=5,
+        cost=4,
+        reasoning=3,
     ),
     "gemini-pro": RegisteredModel(
         name="gemini-pro",
@@ -60,6 +75,11 @@ REGISTERED_MODELS: dict[str, RegisteredModel] = {
         description="Higher-capability Gemini model for deeper coding work.",
         required_key="GEMINI_API_KEY",
         capabilities=DEFAULT_CAPABILITIES,
+        context_window="large",
+        quality=5,
+        speed=3,
+        cost=3,
+        reasoning=5,
     ),
     "deepseek-flash": RegisteredModel(
         name="deepseek-flash",
@@ -68,6 +88,11 @@ REGISTERED_MODELS: dict[str, RegisteredModel] = {
         description="Fast DeepSeek model with OpenAI-compatible access.",
         required_key="DEEPSEEK_API_KEY",
         capabilities=DEFAULT_CAPABILITIES,
+        context_window="large",
+        quality=4,
+        speed=5,
+        cost=5,
+        reasoning=4,
     ),
     "deepseek-pro": RegisteredModel(
         name="deepseek-pro",
@@ -76,6 +101,11 @@ REGISTERED_MODELS: dict[str, RegisteredModel] = {
         description="DeepSeek pro model for larger coding and reasoning tasks.",
         required_key="DEEPSEEK_API_KEY",
         capabilities=DEFAULT_CAPABILITIES,
+        context_window="large",
+        quality=5,
+        speed=3,
+        cost=5,
+        reasoning=5,
     ),
     "glm-5.2": RegisteredModel(
         name="glm-5.2",
@@ -84,6 +114,11 @@ REGISTERED_MODELS: dict[str, RegisteredModel] = {
         description="Z.ai GLM-5.2 on NVIDIA NIM for agentic coding and long-horizon reasoning.",
         required_key="NVIDIA_API_KEY",
         capabilities=ModelCapabilities(stream_usage=False),
+        context_window="large",
+        quality=4,
+        speed=5,
+        cost=5,
+        reasoning=4,
     ),
 }
 

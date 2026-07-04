@@ -100,6 +100,19 @@ def test_create_fallback_client_returns_single_client_without_fallbacks() -> Non
     assert client._estimate_cost(1_000_000, 500_000) == 4.0
 
 
+def test_create_fallback_client_passes_timeout_to_model_client() -> None:
+    profile = resolve_model_profile("default", default_model="primary", max_tokens=1000)
+    provider = ModelProviderConfig(
+        api_key="test",
+        base_url="https://example.com",
+        timeout_seconds=12.5,
+    )
+
+    client = create_fallback_client(provider, profile, [])
+
+    assert client.timeout_seconds == 12.5
+
+
 def test_factory_uses_configured_fallback_models(tmp_path: Path) -> None:
     settings = Settings(
         agent_model_preset=None,

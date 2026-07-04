@@ -83,9 +83,13 @@ class CodingAgent:
         return self.run_detailed(task).message
 
     def cancel(self, reason: str = "user stop") -> int:
+        cancelled = 0
+        model_cancel = getattr(self.model_client, "cancel", None)
+        if model_cancel is not None:
+            cancelled += int(model_cancel(reason) or 0)
         if hasattr(self.tools, "cancel_running_processes"):
-            return self.tools.cancel_running_processes(reason)
-        return 0
+            cancelled += self.tools.cancel_running_processes(reason)
+        return cancelled
 
     def run_detailed(self, task: str) -> AgentRunResult:
         clean_task = self._extract_user_task(task)

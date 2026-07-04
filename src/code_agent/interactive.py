@@ -1,6 +1,14 @@
 from __future__ import annotations
 
+import _thread
+import contextlib
+from importlib.metadata import PackageNotFoundError, version
+import os
 from pathlib import Path
+import signal
+import sys
+import threading
+import time
 from typing import Protocol
 
 import typer  # noqa: F401
@@ -9,9 +17,10 @@ from rich.table import Table
 from typer._click.exceptions import Abort
 
 from .config import Settings
-from .factory import create_agent
+from .factory import create_agent, create_chat_client
 from .model_profiles import validate_profile_name
 from .model_presets import MODEL_PRESETS, resolve_model_preset
+from .model_registry import REGISTERED_MODELS, find_registered_model
 from .permissions import ApprovalMode, PermissionPolicy, confirm_permission
 from .resume import build_resume_task, format_run_detail
 from .revert import apply_revert_plan, build_revert_plan, format_revert_preview
@@ -33,14 +42,22 @@ from .terminal_ui import (
     print_startup_header,
     print_work_report_panel,
     print_response,
+    format_status_line,
 )
 from rich.text import Text
 from .work_report import should_show_work_report
 
 DEFAULT_DRY_RUN = False
+CTRL_C = "\x03"
+CTRL_E = "\x05"
+
+
+class InteractiveExitRequested(KeyboardInterrupt):
+    """Raised when the user asks the interactive agent to exit immediately."""
 
 
 class InteractiveAgent(Protocol):
+    def complete(self, messages: list[dict[str, str]]) -> str: ...
     def run_detailed(self, task: str): ...
     def cancel(self, reason: str = "user stop") -> int: ...
 
@@ -60,7 +77,17 @@ def main() -> None:
     session_state = SessionState()
     permission_policy = PermissionPolicy(confirm_permission, ApprovalMode.auto_read)
 
-    print_startup_header(cwd, "write-enabled" if not dry_run else "dry-run", model or settings.agent_model)
+    print_startup_header(
+        cwd,
+        "write-enabled" if not dry_run else "dry-run",
+        current_model_name(settings, model),
+        version=agent_version(),
+        profile=profile or settings.agent_profile,
+        provider=current_provider_name(settings, model),
+        sandbox=sandbox_enabled,
+        approval=permission_policy.mode.value,
+        git_branch=git_branch(cwd),
+    )
     workspace_summary = analyze_workspace(cwd)
     StatusReporter.mark_workspace_seen(workspace_summary)
     console.print(f"[bold cyan]WORKSPACE[/bold cyan]   {workspace_summary.splitlines()[0]}")
@@ -70,17 +97,16 @@ def main() -> None:
 
     while True:
         try:
-            user_input = read_prompt()
+            user_input = read_prompt(settings, cwd, model, profile)
+        except InteractiveExitRequested:
+            print_panel("System", "bye")
+            return
         except (EOFError, KeyboardInterrupt, Abort):
             print_panel("System", "bye")
             return
 
         if not user_input:
             continue
-
-        if user_input.lower() == "x":
-            print_panel("System", "bye")
-            return
 
         if is_persona_instruction(user_input):
             session_state.set_steering(user_input)
@@ -119,25 +145,30 @@ def main() -> None:
 
         # Chat vs Execute separation: lightweight chat path for non-workspace questions
         if is_chat_request(user_input):
-            agent = create_agent(
+            client = create_chat_client(
                 settings=settings,
-                cwd=cwd,
                 model=model,
                 profile=profile,
-                dry_run=dry_run,
-                max_steps=1,
-                max_failures=1,
-                approval_callback=permission_policy.approve,
-                reporter=None,
                 stream_model=stream_model,
             )
+            reporter = StatusReporter()
+            reporter.thinking(1)
             try:
-                response = agent.run(user_input)
+                with active_shortcuts(client):
+                    response = run_lightweight_chat(user_input, client)
+                reporter.done()
+            except InteractiveExitRequested:
+                reporter.done()
+                client.cancel("interactive exit shortcut")
+                print_panel("System", "bye")
+                return
             except KeyboardInterrupt:
-                agent.cancel("interactive keyboard interrupt")
+                reporter.done()
+                client.cancel("interactive keyboard interrupt")
                 print_panel("Stopped", "Current action stopped. Interactive session is still open.")
                 continue
             except Exception as exc:
+                reporter.done()
                 print_error_card(
                     "Error",
                     [
@@ -166,7 +197,12 @@ def main() -> None:
             stream_model=stream_model,
         )
         try:
-            transcript = run_interactive_turn(user_input, agent, transcript, session_state)
+            with active_shortcuts(agent):
+                transcript = run_interactive_turn(user_input, agent, transcript, session_state)
+        except InteractiveExitRequested:
+            agent.cancel("interactive exit shortcut")
+            print_panel("System", "bye")
+            return
         except KeyboardInterrupt:
             agent.cancel("interactive keyboard interrupt")
             print_panel("Stopped", "Current action stopped. Interactive session is still open.")
@@ -229,7 +265,7 @@ def handle_command(
     command = parts[0].lower()
     value = parts[1].strip() if len(parts) > 1 else ""
 
-    if command in {"/exit", "/quit", "/q", "/x", "/stop", "/force-stop", "/force-exit"}:
+    if command in {"/exit", "/quit", "/q", "/stop"}:
         return CommandState(
             base_cwd,
             cwd,
@@ -300,14 +336,16 @@ def handle_command(
             sandbox_enabled = True
             print_key_values("Sandbox", [("Sandbox", "on"), ("Workspace", cwd)])
     elif command == "/model":
-        if value:
+        if value.lower() in {"select", "picker", "list"}:
+            selected_model = prompt_model_selection(current_model=current_model_name(settings, model))
+            if selected_model:
+                model = selected_model
+            print_panel("Model", current_model_name(settings, model))
+        elif value:
             model = value
             print_panel("Model", model or settings.agent_model)
         else:
-            selected_model = prompt_model_selection(current_model=model or settings.agent_model)
-            if selected_model:
-                model = selected_model
-            print_panel("Model", model or settings.agent_model)
+            print_model_status(settings, model, profile)
     elif command == "/profile":
         if value:
             try:
@@ -359,8 +397,21 @@ def handle_command(
             [
                 ("Workspace", cwd),
                 ("Mode", "dry-run" if dry_run else "write-enabled"),
-                ("Current model", model or settings.agent_model),
+                ("Current model", current_model_name(settings, model)),
+                ("Provider", current_provider_name(settings, model)),
+                ("Profile", profile or settings.agent_profile),
+                ("Git", git_branch(cwd) or "none"),
                 ("Approvals", permission_policy.mode.value if permission_policy else "per_action"),
+                (
+                    "Status",
+                    format_status_line(
+                        model=current_model_name(settings, model),
+                        provider=current_provider_name(settings, model),
+                        approval=permission_policy.mode.value if permission_policy else "per_action",
+                        sandbox=sandbox_enabled,
+                        git_status="branch " + git_branch(cwd) if git_branch(cwd) else "no git",
+                    ),
+                ),
             ],
         )
     elif command == "/approve-all":
@@ -390,10 +441,10 @@ def handle_command(
     elif command == "/files":
         print_panel("Files", f"Current workspace: {cwd}")
     elif command == "/models":
-        selected_model = prompt_model_selection(current_model=model or settings.agent_model)
+        selected_model = prompt_model_selection(current_model=current_model_name(settings, model))
         if selected_model:
             model = selected_model
-        print_panel("Model", model or settings.agent_model)
+        print_panel("Model", current_model_name(settings, model))
     elif command == "/settings":
         print_key_values(
             "Settings",
@@ -402,6 +453,9 @@ def handle_command(
                 ("Approvals", permission_policy.mode.value if permission_policy else "per_action"),
                 ("Streaming", "on" if stream_model else "off"),
                 ("Sandbox", "on" if sandbox_enabled else "off"),
+                ("Model", current_model_name(settings, model)),
+                ("Provider", current_provider_name(settings, model)),
+                ("Profile", profile or settings.agent_profile),
             ],
         )
     elif command == "/steer":
@@ -438,7 +492,9 @@ def print_help() -> None:
     for command, description in [
         ("/help", "Show this help."),
         ("/status", "Show workspace, model, mode, and approvals."),
+        ("/model", "Show the current model and capabilities."),
         ("/models", "Preview model presets and select one."),
+        ("/model select", "Open the model picker."),
         ("/model <name>", "Change model for this session."),
         ("/profile <name>", "Change model profile: default, planner, coder, reviewer, or fast."),
         ("/dry-run", "Inspect only; skip writes and shell commands."),
@@ -463,10 +519,9 @@ def print_help() -> None:
         ("/steer <guidance>", "Steer future turns with style, focus, or constraints."),
         ("/steer clear", "Clear conversation steering."),
         ("/debug", "Show stack trace of the last error."),
-        ("/stop", "Quit interactive mode."),
-        ("/x", "Shortcut to immediately stop the interactive session."),
-        ("/force-stop", "Immediately stop the interactive session."),
-        ("/force-exit", "Immediately stop and exit interactive mode."),
+        ("Ctrl+C", "Stop the active model/tool turn and return to the prompt."),
+        ("Ctrl+E", "Exit the interactive agent."),
+        ("/stop", "Quit interactive mode between turns."),
     ]:
         table.add_row(command, description)
     print_renderable_panel("Help", table, style="cyan")
@@ -630,8 +685,12 @@ def format_model_selection_preview(current_model: str) -> str:
         "Built-in presets:",
     ]
     for index, preset in enumerate(MODEL_PRESETS.values(), start=1):
+        registered = REGISTERED_MODELS.get(preset.name)
+        meta = format_model_metadata(registered) if registered else ""
         lines.append(f"{index}. {preset.name}  provider={preset.provider}  model={preset.model}")
         lines.append(f"   {preset.description}")
+        if meta:
+            lines.append(f"   {meta}")
     lines.extend(
         [
             "",
@@ -656,13 +715,27 @@ def build_model_selection_table(current_model: str) -> Table:
     table.add_column("Preset", style="bold")
     table.add_column("Provider", style="muted", no_wrap=True)
     table.add_column("Model", style="cyan", overflow="fold")
+    table.add_column("Context", no_wrap=True)
+    table.add_column("Tools", no_wrap=True)
+    table.add_column("Stream", no_wrap=True)
+    table.add_column("Quality", no_wrap=True)
+    table.add_column("Speed", no_wrap=True)
+    table.add_column("Cost", no_wrap=True)
     table.add_column("Best for", overflow="fold")
     for index, preset in enumerate(MODEL_PRESETS.values(), start=1):
+        registered = REGISTERED_MODELS.get(preset.name)
+        caps = registered.capabilities if registered else None
         table.add_row(
             str(index),
             preset.name,
             preset.provider,
             preset.model,
+            registered.context_window if registered else "unknown",
+            yes_no(caps.json_actions if caps else True),
+            yes_no(caps.streaming if caps else True),
+            stars(registered.quality if registered else 3),
+            stars(registered.speed if registered else 3),
+            stars(registered.cost if registered else 3),
             preset.description,
         )
     table.caption = (
@@ -674,7 +747,19 @@ def build_model_selection_table(current_model: str) -> Table:
 
 def is_casual_greeting(user_input: str) -> bool:
     normalized = user_input.strip().lower()
-    return normalized in {"hey", "hi", "hello", "yo", "sup", "hiya"}
+    return normalized in {
+        "hey",
+        "hi",
+        "hii",
+        "hiii",
+        "hello",
+        "yo",
+        "sup",
+        "hiya",
+        "heyy",
+        "hey there",
+        "hello there",
+    }
 
 
 def is_chat_request(user_input: str) -> bool:
@@ -692,10 +777,18 @@ def is_chat_request(user_input: str) -> bool:
         "help me",
         "what is ",
         "what are ",
+        "how far ",
+        "how close ",
+        "how much ",
+        "how long ",
+        "how many ",
         "explain ",
         "define ",
         "how to ",
         "how do i ",
+        "so how ",
+        "are we ",
+        "where are we ",
         "tell me about ",
         "what's the difference ",
         "compare ",
@@ -711,7 +804,7 @@ def is_chat_request(user_input: str) -> bool:
 
     # If it starts with a chat pattern and doesn't mention workspace terms, it's chat
     workspace_terms = [
-        "file", "project", "workspace", "codebase", "repo", "directory",
+        "file", "workspace", "codebase", "repo", "directory",
         "create", "edit", "update", "fix", "build", "test", "run",
         "commit", "diff", "patch", "lint", "debug", "refactor",
         "add", "delete", "remove", "implement", "install",
@@ -757,10 +850,238 @@ def is_persona_instruction(user_input: str) -> bool:
     )
 
 
-def read_prompt() -> str:
-    console.print(Text("You", style="bold green"), end=" ")
-    value = input("(/help /models /restore /x) | ").strip()
-    return value
+def read_prompt(
+    settings: Settings | None = None,
+    cwd: Path | None = None,
+    model: str | None = None,
+    profile: str | None = None,
+) -> str:
+    if settings is None:
+        prompt = "agent47 > "
+    else:
+        prompt = format_interactive_prompt(settings, cwd or Path.cwd(), model, profile)
+    return read_interactive_line(prompt).strip()
+
+
+def format_interactive_prompt(
+    settings: Settings,
+    cwd: Path,
+    model: str | None,
+    profile: str | None,
+) -> str:
+    branch = git_branch(cwd) or cwd.name
+    model_label = model_display_name(current_model_name(settings, model))
+    active_profile = profile or settings.agent_profile
+    return f"agent47({branch}) [{model_label}|{active_profile}] > "
+
+
+def current_model_name(settings: Settings, model_override: str | None) -> str:
+    if model_override:
+        return model_override
+    preset = resolve_model_preset(settings.agent_model_preset)
+    return preset.model if preset else settings.agent_model
+
+
+def current_provider_name(settings: Settings, model_override: str | None) -> str:
+    if model_override:
+        registered = find_registered_model(model_override)
+        if registered:
+            return registered.provider
+    preset = resolve_model_preset(settings.agent_model_preset)
+    return settings.provider_name_for(preset.provider if preset else None)
+
+
+def model_display_name(model: str) -> str:
+    registered = find_registered_model(model)
+    return registered.name if registered else model.rsplit("/", 1)[-1]
+
+
+def print_model_status(settings: Settings, model_override: str | None, profile: str | None) -> None:
+    model_name = current_model_name(settings, model_override)
+    registered = find_registered_model(model_name)
+    rows: list[tuple[str, object]] = [
+        ("Model", model_name),
+        ("Display", model_display_name(model_name)),
+        ("Provider", current_provider_name(settings, model_override)),
+        ("Profile", profile or settings.agent_profile),
+    ]
+    if registered:
+        caps = registered.capabilities
+        rows.extend(
+            [
+                ("Context", registered.context_window),
+                ("Tools", yes_no(caps.json_actions)),
+                ("Reasoning", stars(registered.reasoning)),
+                ("Streaming", yes_no(caps.streaming)),
+                ("Quality", stars(registered.quality)),
+                ("Speed", stars(registered.speed)),
+                ("Cost", stars(registered.cost)),
+            ]
+        )
+    print_key_values("Model", rows)
+
+
+def stars(value: int, total: int = 5) -> str:
+    clamped = max(0, min(total, value))
+    return "*" * clamped + "-" * (total - clamped)
+
+
+def yes_no(value: bool) -> str:
+    return "yes" if value else "no"
+
+
+def format_model_metadata(model) -> str:
+    caps = model.capabilities
+    return (
+        f"context={model.context_window} tools={yes_no(caps.json_actions)} "
+        f"reasoning={stars(model.reasoning)} speed={stars(model.speed)} cost={stars(model.cost)}"
+    )
+
+
+def agent_version() -> str:
+    try:
+        return version("code-agent")
+    except PackageNotFoundError:
+        return "0.1.0"
+
+
+def git_branch(cwd: Path) -> str | None:
+    git_dir = find_git_dir(cwd)
+    if git_dir is None:
+        return None
+    head = git_dir / "HEAD"
+    try:
+        content = head.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    prefix = "ref: refs/heads/"
+    if content.startswith(prefix):
+        return content[len(prefix):]
+    return content[:7] if content else None
+
+
+def find_git_dir(cwd: Path) -> Path | None:
+    for path in [cwd, *cwd.parents]:
+        candidate = path / ".git"
+        if candidate.is_dir():
+            return candidate
+        if candidate.is_file():
+            try:
+                text = candidate.read_text(encoding="utf-8").strip()
+            except OSError:
+                return None
+            prefix = "gitdir: "
+            if text.startswith(prefix):
+                return (path / text[len(prefix):]).resolve()
+    return None
+
+
+def run_lightweight_chat(user_input: str, client: InteractiveAgent) -> str:
+    return client.complete(
+        [
+            {
+                "role": "system",
+                "content": (
+                    "You are Agent47 in casual interactive chat mode. "
+                    "Answer conversationally and briefly. Do not inspect files, gather workspace "
+                    "context, plan code changes, or suggest tool work unless the user explicitly "
+                    "asks for a workspace, code, file, terminal, git, or project task."
+                ),
+            },
+            {"role": "user", "content": user_input},
+        ]
+    )
+
+
+def read_interactive_line(prompt: str) -> str:
+    if os.name == "nt" and sys.stdin.isatty():
+        return read_windows_line(prompt)
+    return input(prompt)
+
+
+def read_windows_line(prompt: str) -> str:
+    import msvcrt
+
+    print(prompt, end="", flush=True)
+    chars: list[str] = []
+    while True:
+        char = msvcrt.getwch()
+        if char in {"\r", "\n"}:
+            print()
+            return "".join(chars)
+        if char == CTRL_C:
+            raise KeyboardInterrupt
+        if char == CTRL_E:
+            raise InteractiveExitRequested
+        if char in {"\b", "\x7f"}:
+            if chars:
+                chars.pop()
+                print("\b \b", end="", flush=True)
+            continue
+        if char in {"\x00", "\xe0"}:
+            msvcrt.getwch()
+            continue
+        if char < " ":
+            continue
+        chars.append(char)
+        print(char, end="", flush=True)
+
+
+@contextlib.contextmanager
+def active_shortcuts(agent: InteractiveAgent):
+    monitor = ActiveShortcutMonitor(agent)
+    monitor.start()
+    try:
+        yield
+    except KeyboardInterrupt as exc:
+        if monitor.exit_requested:
+            raise InteractiveExitRequested from exc
+        raise
+    finally:
+        monitor.stop()
+
+
+class ActiveShortcutMonitor:
+    def __init__(self, agent: InteractiveAgent) -> None:
+        self.agent = agent
+        self.exit_requested = False
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._previous_sigint = None
+
+    def start(self) -> None:
+        self._previous_sigint = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, self._handle_sigint)
+        if os.name == "nt" and sys.stdin.isatty():
+            self._thread = threading.Thread(target=self._watch_windows_keys, daemon=True)
+            self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._previous_sigint is not None:
+            signal.signal(signal.SIGINT, self._previous_sigint)
+
+    def _handle_sigint(self, signum, frame) -> None:
+        self.agent.cancel("interactive ctrl+c")
+        raise KeyboardInterrupt
+
+    def _watch_windows_keys(self) -> None:
+        import msvcrt
+
+        while not self._stop.is_set():
+            if not msvcrt.kbhit():
+                time.sleep(0.05)
+                continue
+            char = msvcrt.getwch()
+            if char == CTRL_C:
+                self.agent.cancel("interactive ctrl+c")
+                _thread.interrupt_main()
+                return
+            if char == CTRL_E:
+                self.exit_requested = True
+                self.agent.cancel("interactive ctrl+e")
+                _thread.interrupt_main()
+                return
 
 
 def run_interactive_turn(
