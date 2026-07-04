@@ -232,7 +232,8 @@ def print_error_card(title: str, lines: list[tuple[str, str]], suggestions: list
         for sug in suggestions:
             text.append(f"- {sug}\n", style="default")
 
-    print_renderable_panel(title, text.rstrip(), style="red")
+    text.rstrip()
+    print_renderable_panel(title, text, style="red")
 
 def format_prompt_header(title: str) -> str:
     return f"[bold green]{title}[/bold green]"

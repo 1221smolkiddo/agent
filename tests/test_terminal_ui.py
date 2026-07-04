@@ -7,7 +7,14 @@ from code_agent.interactive import DEFAULT_DRY_RUN, read_prompt
 from code_agent.interactive import format_model_selection_preview, is_persona_instruction
 from code_agent.config import Settings
 from code_agent.work_report import should_show_work_report
-from code_agent.terminal_ui import SessionHeader, format_status_line, print_session_header, print_work_report_panel, console
+from code_agent.terminal_ui import (
+    SessionHeader,
+    format_status_line,
+    print_error_card,
+    print_session_header,
+    print_work_report_panel,
+    console,
+)
 from code_agent.status import StatusReporter
 
 
@@ -40,6 +47,23 @@ def test_format_work_report_body_produces_rich_panel() -> None:
     assert "docs/PROGRESS.md" in text
     assert "uv run pytest" in text
     assert "Passed" in text
+
+
+def test_print_error_card_renders_rich_text() -> None:
+    with console.capture() as capture:
+        print_error_card(
+            "Model Request Failed",
+            [
+                ("What failed:", "The model request could not be completed."),
+                ("Reason:", "APIError: ResourceExhausted"),
+            ],
+            ["Switch models with /model"],
+        )
+
+    text = capture.get()
+    assert "Model Request Failed" in text
+    assert "ResourceExhausted" in text
+    assert "Switch models with /model" in text
 
 
 def test_should_show_work_report_stays_quiet_for_simple_chat() -> None:
@@ -136,6 +160,52 @@ def test_model_switch_validates_inferred_provider_key(monkeypatch) -> None:
         interactive.model_switch_error(missing_key, "qwen/qwen3-coder") or ""
     )
     assert interactive.model_switch_error(ready, "qwen/qwen3-coder") is None
+
+
+def test_persist_model_selection_updates_non_secret_env_fields(tmp_path) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "AGENT_PROVIDER=nvidia\n"
+        "AGENT_MODEL_PRESET=glm-5.2\n"
+        "NVIDIA_API_KEY=keep-this-secret\n"
+        "AGENT_MODEL=z-ai/glm-5.2\n",
+        encoding="utf-8",
+    )
+    settings = Settings(
+        _env_file=None,
+        agent_provider="nvidia",
+        agent_model_preset="glm-5.2",
+        agent_model="z-ai/glm-5.2",
+    )
+
+    interactive.persist_model_selection(settings, "gemini-3.5-flash", env_path=env_path)
+
+    text = env_path.read_text(encoding="utf-8")
+    assert "AGENT_PROVIDER=gemini" in text
+    assert "AGENT_MODEL_PRESET=gemini-flash" in text
+    assert "AGENT_MODEL=gemini-3.5-flash" in text
+    assert "NVIDIA_API_KEY=keep-this-secret" in text
+    assert settings.agent_provider == "gemini"
+    assert settings.agent_model_preset == "gemini-flash"
+    assert settings.agent_model == "gemini-3.5-flash"
+
+
+def test_persist_custom_model_clears_preset_and_keeps_provider(tmp_path) -> None:
+    env_path = tmp_path / ".env"
+    settings = Settings(
+        _env_file=None,
+        agent_provider="gemini",
+        agent_model_preset="gemini-flash",
+        agent_model="gemini-3.5-flash",
+    )
+
+    interactive.persist_model_selection(settings, "custom/model", env_path=env_path)
+
+    text = env_path.read_text(encoding="utf-8")
+    assert "AGENT_PROVIDER=gemini" in text
+    assert "AGENT_MODEL_PRESET=\n" in text
+    assert "AGENT_MODEL=custom/model" in text
+    assert settings.agent_model_preset is None
 
 
 def test_interactive_prompt_contains_repo_model_and_profile(tmp_path) -> None:

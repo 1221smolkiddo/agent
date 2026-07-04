@@ -256,10 +256,12 @@ def test_registered_chat_model_infers_provider_over_agent_provider() -> None:
     assert client.provider_name == "openrouter"
 
 
-def test_preset_missing_key_has_targeted_error(tmp_path) -> None:
+def test_preset_missing_key_has_targeted_error(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     settings = Settings(
         _env_file=None,
         openrouter_api_key="router-key",
+        gemini_api_key=None,
         agent_reviewer_pass=False,
         agent_db_path=tmp_path / "agent.db",
     )

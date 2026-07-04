@@ -507,7 +507,7 @@ def print_help() -> None:
         ("/model", "Show the current model and capabilities."),
         ("/models", "Preview model presets and select one."),
         ("/model select", "Open the model picker."),
-        ("/model <name>", "Change model for this session."),
+        ("/model <name>", "Change model and save provider/model settings."),
         ("/profile <name>", "Change model profile: default, planner, coder, reviewer, or fast."),
         ("/dry-run", "Inspect only; skip writes and shell commands."),
         ("/write", "Allow writes and shell commands."),
@@ -1030,6 +1030,7 @@ def switch_model_or_report(
     choice: str,
     *,
     stream_model: bool,
+    env_path: Path = Path(".env"),
 ) -> str | None:
     model = resolve_model_choice(choice)
     error = model_switch_error(settings, model, stream_model=stream_model)
@@ -1044,7 +1045,61 @@ def switch_model_or_report(
             ],
         )
         return None
+    try:
+        persist_model_selection(settings, model, env_path=env_path)
+    except OSError as exc:
+        print_error_card(
+            "Model Saved For Session Only",
+            [
+                ("What failed:", "The model was switched for this session, but .env could not be updated."),
+                ("Reason:", str(exc)),
+            ],
+            ["Check file permissions", "Update .env manually if you want this model after restart"],
+        )
     return model
+
+
+def persist_model_selection(settings: Settings, model: str, *, env_path: Path = Path(".env")) -> None:
+    registered = find_registered_model(model)
+    provider = registered.provider if registered else settings.provider_name
+    preset = registered.name if registered else ""
+    updates = {
+        "AGENT_PROVIDER": provider,
+        "AGENT_MODEL_PRESET": preset,
+        "AGENT_MODEL": model,
+    }
+    write_env_values(env_path, updates)
+    settings.agent_provider = provider
+    settings.agent_model_preset = preset or None
+    settings.agent_model = model
+
+
+def write_env_values(env_path: Path, updates: dict[str, str]) -> None:
+    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+    remaining = dict(updates)
+    output: list[str] = []
+
+    for line in lines:
+        key = _env_line_key(line)
+        if key in remaining:
+            output.append(f"{key}={remaining.pop(key)}")
+        else:
+            output.append(line)
+
+    if remaining and output and output[-1].strip():
+        output.append("")
+    for key, value in remaining.items():
+        output.append(f"{key}={value}")
+
+    env_path.write_text("\n".join(output).rstrip() + "\n", encoding="utf-8")
+
+
+def _env_line_key(line: str) -> str | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#") or "=" not in line:
+        return None
+    key = line.split("=", 1)[0].strip()
+    return key if key else None
 
 
 def model_display_name(model: str) -> str:
