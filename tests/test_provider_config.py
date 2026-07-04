@@ -109,6 +109,22 @@ def test_settings_ignores_unknown_dotenv_keys(tmp_path, monkeypatch) -> None:
     assert settings.model_api_key == "nvidia-key"
 
 
+def test_settings_treats_blank_optional_cost_fields_as_none(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("AGENT_INPUT_COST_PER_MILLION", raising=False)
+    monkeypatch.delenv("AGENT_OUTPUT_COST_PER_MILLION", raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "AGENT_INPUT_COST_PER_MILLION=\n"
+        "AGENT_OUTPUT_COST_PER_MILLION=\n",
+        encoding="utf-8",
+    )
+
+    settings = Settings(_env_file=env_file)
+
+    assert settings.agent_input_cost_per_million is None
+    assert settings.agent_output_cost_per_million is None
+
+
 def test_model_preset_resolves_provider_and_model() -> None:
     preset = resolve_model_preset("glm-5.2")
 

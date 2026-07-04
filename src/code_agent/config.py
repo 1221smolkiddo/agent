@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from dotenv import load_dotenv
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .model_registry import provider_name_list, provider_names
@@ -50,6 +51,17 @@ class Settings(BaseSettings):
     agent_shell_network: str = "allow"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    @field_validator(
+        "agent_input_cost_per_million",
+        "agent_output_cost_per_million",
+        mode="before",
+    )
+    @classmethod
+    def blank_optional_float(cls, value: object) -> object:
+        if value == "":
+            return None
+        return value
 
     @property
     def provider_name(self) -> str:
