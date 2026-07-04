@@ -176,11 +176,17 @@ def test_model_selection_table_shows_capabilities() -> None:
     table = interactive.build_model_selection_table("z-ai/glm-5.2")
 
     columns = [column.header for column in table.columns]
-    assert "Context" in columns
-    assert "Tools" in columns
-    assert "Quality" in columns
-    assert "Speed" in columns
-    assert "Cost" in columns
+    assert "Ctx" in columns
+    assert "Caps" in columns
+    assert "Score" in columns
+    assert "Best for" not in columns
+
+
+def test_compact_model_labels_are_readable() -> None:
+    model = interactive.REGISTERED_MODELS["deepseek-v4-flash"]
+
+    assert interactive.compact_capabilities(model.capabilities) == "T S U"
+    assert interactive.compact_model_score(model) == "Q4 F5 $5"
 
 
 def test_stop_command_requests_exit_between_turns(tmp_path) -> None:
@@ -263,6 +269,43 @@ def test_lightweight_chat_prompt_avoids_workspace_work() -> None:
     assert interactive.run_lightweight_chat("hii", client) == "hi"
     assert "Do not inspect files" in client.messages[0]["content"]
     assert client.messages[1] == {"role": "user", "content": "hii"}
+
+
+def test_friendly_model_error_summarizes_provider_capacity() -> None:
+    message = interactive.friendly_model_error(
+        RuntimeError("ResourceExhausted: Worker local total request limit reached (32/32)")
+    )
+
+    assert "capacity-limited" in message
+    assert "RuntimeError" in message
+
+
+def test_model_failure_result_uses_error_card(monkeypatch) -> None:
+    calls = []
+    result = AgentRunResult(
+        message="Stopped after a model failure",
+        run_id=12,
+        failed_actions=[
+            {
+                "type": "model_failure",
+                "output": "APIError: ResourceExhausted: Worker local total request limit reached (32/32)",
+            }
+        ],
+        blocked=True,
+    )
+
+    monkeypatch.setattr(
+        interactive,
+        "print_error_card",
+        lambda title, lines, suggestions: calls.append((title, lines, suggestions)),
+    )
+
+    assert interactive.is_model_failure_result(result)
+    interactive.print_model_failure_card(result)
+
+    assert calls[0][0] == "Model Request Failed"
+    assert "capacity-limited" in calls[0][1][1][1]
+    assert "Switch models with /model" in calls[0][2]
 
 
 def test_status_line_and_header_are_compact() -> None:

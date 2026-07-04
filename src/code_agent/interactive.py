@@ -10,6 +10,7 @@ import signal
 import sys
 import threading
 import time
+import traceback
 from typing import Protocol
 
 import typer  # noqa: F401
@@ -146,37 +147,45 @@ def main() -> None:
 
         # Chat vs Execute separation: lightweight chat path for non-workspace questions
         if should_use_lightweight_chat(user_input, transcript, session_state):
-            client = create_chat_client(
-                settings=settings,
-                model=model,
-                profile=profile,
-                stream_model=stream_model,
-            )
-            reporter = StatusReporter()
-            reporter.thinking(1)
+            client: InteractiveAgent | None = None
+            reporter: StatusReporter | None = None
             try:
+                client = create_chat_client(
+                    settings=settings,
+                    model=model,
+                    profile=profile,
+                    stream_model=stream_model,
+                )
+                reporter = StatusReporter()
+                reporter.thinking(1)
                 with active_shortcuts(client):
                     response = run_lightweight_chat(user_input, client)
                 reporter.done()
             except InteractiveExitRequested:
-                reporter.done()
-                client.cancel("interactive exit shortcut")
+                if reporter:
+                    reporter.done()
+                if client:
+                    client.cancel("interactive exit shortcut")
                 print_panel("System", "bye")
                 return
             except KeyboardInterrupt:
-                reporter.done()
-                client.cancel("interactive keyboard interrupt")
+                if reporter:
+                    reporter.done()
+                if client:
+                    client.cancel("interactive keyboard interrupt")
                 print_panel("Stopped", "Current action stopped. Interactive session is still open.")
                 continue
             except Exception as exc:
-                reporter.done()
+                if reporter:
+                    reporter.done()
+                session_state._last_exc = traceback.format_exc()
                 print_error_card(
-                    "Error",
+                    "Model Request Failed",
                     [
-                        ("Model request could not be completed.", ""),
-                        ("Reason:", str(exc)),
+                        ("What failed:", "The lightweight chat request could not be completed."),
+                        ("Reason:", friendly_model_error(exc)),
                     ],
-                    ["Check your credentials", "Use /debug for more info"]
+                    ["Retry in a moment", "Switch models with /model", "Use /debug for the full traceback"]
                 )
                 continue
             print_response("Agent47", response)
@@ -710,42 +719,56 @@ def build_model_selection_table(current_model: str) -> Table:
         show_header=True,
         header_style="bold cyan",
         box=None,
-        padding=(0, 2),
+        padding=(0, 1),
         title=Text(f"Current model: {current_model}", style="muted"),
         title_justify="left",
+        expand=True,
     )
     table.add_column("#", justify="right", style="cyan", no_wrap=True)
-    table.add_column("Preset", style="bold")
-    table.add_column("Provider", style="muted", no_wrap=True)
-    table.add_column("Model", style="cyan", overflow="fold")
-    table.add_column("Context", no_wrap=True)
-    table.add_column("Tools", no_wrap=True)
-    table.add_column("Stream", no_wrap=True)
-    table.add_column("Quality", no_wrap=True)
-    table.add_column("Speed", no_wrap=True)
-    table.add_column("Cost", no_wrap=True)
-    table.add_column("Best for", overflow="fold")
+    table.add_column("Preset", style="bold", overflow="ellipsis", max_width=22)
+    table.add_column("Provider", style="muted", no_wrap=True, max_width=12)
+    table.add_column("Model", style="cyan", overflow="fold", ratio=2, min_width=18)
+    table.add_column("Ctx", no_wrap=True, max_width=8)
+    table.add_column("Caps", no_wrap=True, max_width=14)
+    table.add_column("Score", no_wrap=True, max_width=12)
     for index, preset in enumerate(MODEL_PRESETS.values(), start=1):
         registered = REGISTERED_MODELS.get(preset.name)
         caps = registered.capabilities if registered else None
+        capabilities = compact_capabilities(caps)
+        score = compact_model_score(registered)
         table.add_row(
             str(index),
             preset.name,
             preset.provider,
             preset.model,
             registered.context_window if registered else "unknown",
-            yes_no(caps.json_actions if caps else True),
-            yes_no(caps.streaming if caps else True),
-            stars(registered.quality if registered else 3),
-            stars(registered.speed if registered else 3),
-            stars(registered.cost if registered else 3),
-            preset.description,
+            capabilities,
+            score,
         )
     table.caption = (
-        "Select by number/name, or enter any provider model id. "
-        "Most terminals encode Ctrl+M as Enter; use /models for the picker."
+        "Caps: T=tool actions, S=stream, U=usage. Score: Q quality, F speed, $ cost. "
+        "Select by number/name, or enter any provider model id."
     )
     return table
+
+
+def compact_capabilities(caps) -> str:
+    if caps is None:
+        return "T S J"
+    labels = []
+    if caps.json_actions:
+        labels.append("T")
+    if caps.streaming:
+        labels.append("S")
+    if caps.token_usage:
+        labels.append("U")
+    return " ".join(labels) if labels else "-"
+
+
+def compact_model_score(model) -> str:
+    if model is None:
+        return "Q3 F3 $3"
+    return f"Q{model.quality} F{model.speed} ${model.cost}"
 
 
 def is_casual_greeting(user_input: str) -> bool:
@@ -1126,6 +1149,58 @@ def run_lightweight_chat(user_input: str, client: InteractiveAgent) -> str:
     )
 
 
+def friendly_model_error(exc: Exception) -> str:
+    message = str(exc).strip() or exc.__class__.__name__
+    return friendly_model_error_text(f"{exc.__class__.__name__}: {message}")
+
+
+def friendly_model_error_text(message: str) -> str:
+    cleaned = message.strip() or "Unknown model error."
+    lowered = cleaned.lower()
+    if "resourceexhausted" in lowered or "request limit reached" in lowered or "rate limit" in lowered:
+        return (
+            "The model provider is currently capacity-limited or rate-limited. "
+            f"{cleaned}"
+        )
+    if "insufficient credits" in lowered or "payment required" in lowered:
+        return (
+            "The model provider reported insufficient credits for this request. "
+            f"{cleaned}"
+        )
+    if "api key" in lowered or "unauthorized" in lowered or "authentication" in lowered:
+        return (
+            "The provider rejected the configured credentials. "
+            f"{cleaned}"
+        )
+    return cleaned
+
+
+def is_model_failure_result(result) -> bool:
+    return any(
+        item.get("type") == "model_failure" or item.get("kind") == "model_failure"
+        for item in result.failed_actions
+        if isinstance(item, dict)
+    )
+
+
+def print_model_failure_card(result) -> None:
+    reason = result.message
+    for item in reversed(result.failed_actions):
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "model_failure" or item.get("kind") == "model_failure":
+            reason = str(item.get("output") or result.message)
+            break
+    print_error_card(
+        "Model Request Failed",
+        [
+            ("What failed:", "The model request could not be completed."),
+            ("Reason:", friendly_model_error_text(reason)),
+        ],
+        ["Retry in a moment", "Switch models with /model", "Check provider quota or credits"],
+    )
+
+
 def read_interactive_line(prompt: str) -> str:
     if os.name == "nt" and sys.stdin.isatty():
         return read_windows_line(prompt)
@@ -1225,8 +1300,11 @@ def run_interactive_turn(
 ) -> list[tuple[str, str]]:
     task = task_with_context(user_input, transcript, session_state)
     result = agent.run_detailed(task)
-    print_work_report_panel(result)
-    if not should_show_work_report(result):
+    if is_model_failure_result(result):
+        print_model_failure_card(result)
+    else:
+        print_work_report_panel(result)
+    if not should_show_work_report(result) and not is_model_failure_result(result):
         print_response("Agent47", result.message)
     session_state.update(user_input, result)
     transcript.append((user_input, result.message))
