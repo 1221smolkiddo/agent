@@ -218,7 +218,6 @@ def main() -> None:
             print_panel("Stopped", "Current action stopped. Interactive session is still open.")
             continue
         except Exception as exc:
-            import traceback
             session_state._last_exc = traceback.format_exc()
             print_error_card(
                 "Error",
