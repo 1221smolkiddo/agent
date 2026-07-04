@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import replace
 import re
-from typing import Any, Protocol, TypeVar
+from typing import Any, Literal, Protocol, TypeVar
 
 import openai
 from openai import OpenAI
@@ -18,6 +18,29 @@ T = TypeVar("T")
 
 class InsufficientCreditsError(RuntimeError):
     """Raised when the provider returns 402 and retries with reduced tokens are exhausted."""
+
+
+ModelErrorKind = Literal[
+    "rate_limit",
+    "capacity",
+    "credits",
+    "timeout",
+    "server",
+    "connection",
+    "auth",
+    "bad_request",
+    "not_found",
+    "empty_response",
+    "unknown",
+]
+
+
+@dataclass(frozen=True)
+class ClassifiedModelError:
+    kind: ModelErrorKind
+    retryable: bool
+    fallbackable: bool
+    message: str
 
 
 class ModelClient(Protocol):
@@ -49,6 +72,9 @@ class ModelProviderConfig:
     timeout_seconds: float = 60.0
     input_cost_per_million: float | None = None
     output_cost_per_million: float | None = None
+    credit_retry_count: int = 3
+    min_viable_tokens: int = 64
+    extra_body: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -102,6 +128,9 @@ class OpenAICompatibleChatClient:
     timeout_seconds: float = 60.0
     input_cost_per_million: float | None = None
     output_cost_per_million: float | None = None
+    credit_retry_count: int = 3
+    min_viable_tokens: int = 64
+    extra_body: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         self._usage_records: list[ModelUsageRecord] = []
@@ -114,12 +143,15 @@ class OpenAICompatibleChatClient:
 
     def complete(self, messages: list[ChatMessage]) -> str:
         def _make_request(current_max_tokens: int) -> str:
-            response = self._client.chat.completions.create(
-                model=self.model,
-                messages=messages,  # type: ignore[arg-type]
-                temperature=self.temperature,
-                max_tokens=current_max_tokens,
-            )
+            request: dict[str, Any] = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": self.temperature,
+                "max_tokens": current_max_tokens,
+            }
+            if self.extra_body:
+                request["extra_body"] = self.extra_body
+            response = self._client.chat.completions.create(**request)  # type: ignore[arg-type]
             content = response.choices[0].message.content
             if not content:
                 self._record_failure("Model returned an empty response.")
@@ -145,6 +177,8 @@ class OpenAICompatibleChatClient:
             }
             if self.include_stream_usage:
                 request["stream_options"] = {"include_usage": True}
+            if self.extra_body:
+                request["extra_body"] = self.extra_body
             stream = self._client.chat.completions.create(**request)  # type: ignore[arg-type]
             for event in stream:
                 usage = getattr(event, "usage", None)
@@ -185,14 +219,12 @@ class OpenAICompatibleChatClient:
 
     def _call_with_credit_retry(self, make_request: Callable[[int], T]) -> T:
         current_tokens = self.max_tokens
-        max_retries = 3
-        min_viable_tokens = 64
-
-        for attempt in range(max_retries + 1):
+        for attempt in range(self.credit_retry_count + 1):
             try:
                 return make_request(current_tokens)
             except openai.APIStatusError as exc:
-                if exc.status_code != 402:
+                classified = classify_model_error(exc)
+                if classified.kind != "credits" or not classified.retryable:
                     raise
                 
                 affordable = _parse_affordable_tokens(str(exc))
@@ -201,10 +233,10 @@ class OpenAICompatibleChatClient:
                 else:
                     current_tokens = current_tokens // 2
                 
-                if current_tokens < min_viable_tokens:
+                if current_tokens < self.min_viable_tokens:
                     raise InsufficientCreditsError(
                         f"Insufficient credits: the provider cannot afford even "
-                        f"{min_viable_tokens} output tokens. "
+                        f"{self.min_viable_tokens} output tokens. "
                         f"Visit https://openrouter.ai/settings/credits to add credits."
                     ) from exc
                 
@@ -291,6 +323,7 @@ class FallbackModelClient:
                 content = call(client)
             except Exception as exc:
                 error = f"{type(exc).__name__}: {exc}"
+                classified = classify_model_error(exc)
                 errors.append(f"{client.model}: {error}")
                 drained = client.drain_usage_records()
                 if drained:
@@ -317,6 +350,10 @@ class FallbackModelClient:
                             fallback_from=previous_model,
                         )
                     )
+                if not classified.fallbackable:
+                    raise RuntimeError(
+                        f"Model {client.model} failed with non-fallbackable {classified.kind}: {error}"
+                    ) from exc
                 previous_model = client.model
                 continue
             self.model = client.model
@@ -355,6 +392,9 @@ def create_openai_compatible_client(
         timeout_seconds=provider.timeout_seconds,
         input_cost_per_million=provider.input_cost_per_million,
         output_cost_per_million=provider.output_cost_per_million,
+        credit_retry_count=provider.credit_retry_count,
+        min_viable_tokens=provider.min_viable_tokens,
+        extra_body=provider.extra_body,
     )
 
 
@@ -396,6 +436,45 @@ def _parse_affordable_tokens(error_message: str) -> int | None:
     if match:
         return int(match.group(1))
     return None
+
+
+def classify_model_error(exc: Exception) -> ClassifiedModelError:
+    message = f"{type(exc).__name__}: {exc}"
+    lowered = message.lower()
+    status_code = getattr(exc, "status_code", None)
+
+    if isinstance(exc, InsufficientCreditsError) or status_code == 402 or "insufficient credits" in lowered:
+        return ClassifiedModelError("credits", retryable=True, fallbackable=True, message=message)
+    if isinstance(exc, openai.RateLimitError) or status_code == 429 or "rate limit" in lowered:
+        return ClassifiedModelError("rate_limit", retryable=True, fallbackable=True, message=message)
+    if (
+        "resourceexhausted" in lowered
+        or "request limit reached" in lowered
+        or "capacity" in lowered
+        or "overloaded" in lowered
+    ):
+        return ClassifiedModelError("capacity", retryable=True, fallbackable=True, message=message)
+    if isinstance(exc, (openai.APITimeoutError, TimeoutError)) or "timed out" in lowered or "timeout" in lowered:
+        return ClassifiedModelError("timeout", retryable=True, fallbackable=True, message=message)
+    if isinstance(exc, openai.APIConnectionError) or "connection" in lowered:
+        return ClassifiedModelError("connection", retryable=True, fallbackable=True, message=message)
+    if (
+        isinstance(exc, openai.AuthenticationError)
+        or status_code in {401, 403}
+        or "api key" in lowered
+        or "unauthorized" in lowered
+        or "authentication" in lowered
+    ):
+        return ClassifiedModelError("auth", retryable=False, fallbackable=False, message=message)
+    if isinstance(exc, openai.NotFoundError) or status_code == 404:
+        return ClassifiedModelError("not_found", retryable=False, fallbackable=False, message=message)
+    if isinstance(exc, openai.BadRequestError) or status_code == 400:
+        return ClassifiedModelError("bad_request", retryable=False, fallbackable=False, message=message)
+    if status_code is not None and int(status_code) >= 500:
+        return ClassifiedModelError("server", retryable=True, fallbackable=True, message=message)
+    if "empty response" in lowered or "empty streamed response" in lowered:
+        return ClassifiedModelError("empty_response", retryable=True, fallbackable=True, message=message)
+    return ClassifiedModelError("unknown", retryable=False, fallbackable=True, message=message)
 
 
 OpenAIChatClient = OpenAICompatibleChatClient

@@ -5,9 +5,14 @@ from collections.abc import Callable
 
 from .agent import CodingAgent
 from .config import Settings
-from .model_profiles import resolve_model_profile
+from .model_profiles import ModelProfile, resolve_model_profile
 from .model_presets import resolve_model_preset
-from .model_registry import DEFAULT_CAPABILITIES, find_registered_model, validate_model_selection
+from .model_registry import (
+    DEFAULT_CAPABILITIES,
+    ModelRuntimeDefaults,
+    find_registered_model,
+    validate_model_selection,
+)
 from .models import (
     FallbackModelSpec,
     ModelClient,
@@ -54,14 +59,17 @@ def create_agent(
         preset_name=selected_preset.name if selected_preset else None,
         stream=settings.agent_stream if stream_model is None else stream_model,
     )
-    selected_profile = resolve_model_profile(
-        profile or settings.agent_profile,
-        default_model=default_model,
-        max_tokens=settings.agent_max_tokens,
-        planner_model=None if model or selected_preset else settings.agent_planner_model,
-        coder_model=None if model or selected_preset else settings.agent_coder_model,
-        reviewer_model=None if model or selected_preset else settings.agent_reviewer_model,
-        fast_model=None if model or selected_preset else settings.agent_fast_model,
+    selected_profile = apply_runtime_defaults(
+        resolve_model_profile(
+            profile or settings.agent_profile,
+            default_model=default_model,
+            max_tokens=settings.agent_max_tokens,
+            planner_model=None if model or selected_preset else settings.agent_planner_model,
+            coder_model=None if model or selected_preset else settings.agent_coder_model,
+            reviewer_model=None if model or selected_preset else settings.agent_reviewer_model,
+            fast_model=None if model or selected_preset else settings.agent_fast_model,
+        ),
+        registered_default_model.runtime if registered_default_model else None,
     )
     provider = model_provider_config(
         settings,
@@ -69,11 +77,16 @@ def create_agent(
         registered_default_model.capabilities.stream_usage
         if registered_default_model
         else DEFAULT_CAPABILITIES.stream_usage,
+        registered_default_model.runtime if registered_default_model else None,
     )
     client = create_fallback_client(
         provider,
         selected_profile,
-        fallback_model_specs(settings, settings.fallback_model_list, stream=settings.agent_stream if stream_model is None else stream_model),
+        fallback_model_specs(
+            settings,
+            settings.fallback_model_list,
+            stream=settings.agent_stream if stream_model is None else stream_model,
+        ),
     )
     storage = AgentStorage(settings.agent_db_path)
     index_cache = RepoIndexCache(storage.db_path)
@@ -89,6 +102,10 @@ def create_agent(
             default_model=default_model,
             max_tokens=settings.agent_max_tokens,
             reviewer_model=None if model or selected_preset else settings.agent_reviewer_model,
+        )
+        reviewer_profile = apply_runtime_defaults(
+            reviewer_profile,
+            registered_default_model.runtime if registered_default_model else None,
         )
         resolved_reviewer = create_openai_compatible_client(provider, reviewer_profile)
 
@@ -137,10 +154,13 @@ def create_chat_client(
         preset_name=selected_preset.name if selected_preset else None,
         stream=settings.agent_stream if stream_model is None else stream_model,
     )
-    selected_profile = resolve_model_profile(
-        profile or settings.agent_profile,
-        default_model=default_model,
-        max_tokens=min(settings.agent_max_tokens, 1024),
+    selected_profile = apply_runtime_defaults(
+        resolve_model_profile(
+            profile or settings.agent_profile,
+            default_model=default_model,
+            max_tokens=min(settings.agent_max_tokens, 1024),
+        ),
+        registered_default_model.runtime if registered_default_model else None,
     )
     provider_config = model_provider_config(
         settings,
@@ -148,6 +168,7 @@ def create_chat_client(
         registered_default_model.capabilities.stream_usage
         if registered_default_model
         else DEFAULT_CAPABILITIES.stream_usage,
+        registered_default_model.runtime if registered_default_model else None,
     )
     return create_openai_compatible_client(provider_config, selected_profile)
 
@@ -156,7 +177,9 @@ def model_provider_config(
     settings: Settings,
     provider: str | None,
     include_stream_usage: bool,
+    runtime: ModelRuntimeDefaults | None = None,
 ) -> ModelProviderConfig:
+    runtime = runtime or ModelRuntimeDefaults()
     resolved_provider_name = settings.provider_name_for(provider)
     return ModelProviderConfig(
         api_key=settings.model_api_key_for(provider),
@@ -164,9 +187,12 @@ def model_provider_config(
         name=resolved_provider_name,
         default_headers=settings.model_headers_for(provider),
         include_stream_usage=include_stream_usage,
-        timeout_seconds=settings.agent_model_timeout_seconds,
+        timeout_seconds=runtime.timeout_seconds or settings.agent_model_timeout_seconds,
         input_cost_per_million=settings.agent_input_cost_per_million,
         output_cost_per_million=settings.agent_output_cost_per_million,
+        credit_retry_count=runtime.credit_retry_count,
+        min_viable_tokens=runtime.min_viable_tokens,
+        extra_body=runtime.extra_body or None,
     )
 
 
@@ -186,6 +212,27 @@ def fallback_model_specs(
             settings,
             provider,
             registered.capabilities.stream_usage if registered else DEFAULT_CAPABILITIES.stream_usage,
+            registered.runtime if registered else None,
         )
-        specs.append(FallbackModelSpec(provider=provider_config, model=model))
+        specs.append(
+            FallbackModelSpec(
+                provider=provider_config,
+                model=model,
+                max_tokens=registered.runtime.max_tokens if registered else None,
+            )
+        )
     return specs
+
+
+def apply_runtime_defaults(profile: ModelProfile, runtime: ModelRuntimeDefaults | None) -> ModelProfile:
+    if runtime is None:
+        return profile
+    max_tokens = min(profile.max_tokens, runtime.max_tokens) if runtime.max_tokens else profile.max_tokens
+    temperature = runtime.temperature if runtime.temperature is not None else profile.temperature
+    return profile.__class__(
+        name=profile.name,
+        model=profile.model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        purpose=profile.purpose,
+    )

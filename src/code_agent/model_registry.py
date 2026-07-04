@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 from typing import Literal
 
 
@@ -25,6 +26,16 @@ class ModelCapabilities:
 
 
 @dataclass(frozen=True)
+class ModelRuntimeDefaults:
+    max_tokens: int | None = None
+    temperature: float | None = None
+    timeout_seconds: float | None = None
+    credit_retry_count: int = 3
+    min_viable_tokens: int = 64
+    extra_body: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class RegisteredModel:
     name: str
     provider: ProviderName
@@ -37,6 +48,7 @@ class RegisteredModel:
     speed: int = 3
     cost: int = 3
     reasoning: int = 3
+    runtime: ModelRuntimeDefaults = field(default_factory=ModelRuntimeDefaults)
 
 
 DEFAULT_CAPABILITIES = ModelCapabilities()
@@ -54,6 +66,7 @@ REGISTERED_MODELS: dict[str, RegisteredModel] = {
         speed=4,
         cost=4,
         reasoning=4,
+        runtime=ModelRuntimeDefaults(max_tokens=4096),
     ),
     "gemini-flash": RegisteredModel(
         name="gemini-flash",
@@ -67,6 +80,7 @@ REGISTERED_MODELS: dict[str, RegisteredModel] = {
         speed=5,
         cost=4,
         reasoning=3,
+        runtime=ModelRuntimeDefaults(max_tokens=4096),
     ),
     "gemini-pro": RegisteredModel(
         name="gemini-pro",
@@ -80,6 +94,7 @@ REGISTERED_MODELS: dict[str, RegisteredModel] = {
         speed=3,
         cost=3,
         reasoning=5,
+        runtime=ModelRuntimeDefaults(max_tokens=8192, temperature=0.2),
     ),
     "deepseek-flash": RegisteredModel(
         name="deepseek-flash",
@@ -93,6 +108,7 @@ REGISTERED_MODELS: dict[str, RegisteredModel] = {
         speed=5,
         cost=5,
         reasoning=4,
+        runtime=ModelRuntimeDefaults(max_tokens=4096),
     ),
     "deepseek-pro": RegisteredModel(
         name="deepseek-pro",
@@ -106,6 +122,7 @@ REGISTERED_MODELS: dict[str, RegisteredModel] = {
         speed=3,
         cost=5,
         reasoning=5,
+        runtime=ModelRuntimeDefaults(max_tokens=8192, temperature=0.2),
     ),
     "glm-5.2": RegisteredModel(
         name="glm-5.2",
@@ -119,6 +136,7 @@ REGISTERED_MODELS: dict[str, RegisteredModel] = {
         speed=5,
         cost=5,
         reasoning=4,
+        runtime=ModelRuntimeDefaults(max_tokens=8192, temperature=0.2),
     ),
     "deepseek-v4-flash": RegisteredModel(
         name="deepseek-v4-flash",
@@ -132,6 +150,11 @@ REGISTERED_MODELS: dict[str, RegisteredModel] = {
         speed=5,
         cost=5,
         reasoning=4,
+        runtime=ModelRuntimeDefaults(
+            max_tokens=8192,
+            temperature=0.2,
+            extra_body={"chat_template_kwargs": {"thinking": True, "reasoning_effort": "high"}},
+        ),
     ),
 }
 

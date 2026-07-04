@@ -237,6 +237,12 @@ AGENT_MODEL_PRESET=gemini-flash
 AGENT_FALLBACK_MODELS=z-ai/glm-5.2,qwen/qwen3-coder
 ```
 
+Fallbacks are error-aware. Agent47 falls through to the next configured model for capacity,
+rate-limit, credit, timeout, connection, server, and empty-response failures. Authentication,
+missing-model, and malformed-request errors stop early because another model would hide a
+configuration problem. Registered models also carry runtime defaults such as max tokens,
+stream-usage quirks, credit retry limits, and provider-specific request options.
+
 Preset selection chooses both provider and model. `--model` can still override the model string
 while keeping the preset provider. Use `--provider` with `--model` for custom provider/model pairs.
 If a preset needs a missing key, Agent47 fails with a targeted message such as

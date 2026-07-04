@@ -6,7 +6,13 @@ from code_agent.agent import CodingAgent
 from code_agent.config import Settings
 from code_agent.factory import create_agent
 from code_agent.model_profiles import resolve_model_profile
-from code_agent.models import FallbackModelClient, ModelProviderConfig, ModelUsageRecord, create_fallback_client
+from code_agent.models import (
+    FallbackModelClient,
+    ModelProviderConfig,
+    ModelUsageRecord,
+    classify_model_error,
+    create_fallback_client,
+)
 from code_agent.schema import AgentAction, ToolResult
 from code_agent.storage import AgentStorage
 
@@ -39,6 +45,11 @@ class FakeUsageClient:
         records = self.records
         self.records = []
         return records
+
+
+class FakeAuthErrorClient(FakeUsageClient):
+    def complete(self, _messages):
+        raise PermissionError("authentication failed")
 
 
 class NoopTools:
@@ -169,6 +180,54 @@ def test_factory_uses_registered_fallback_model_provider(tmp_path: Path) -> None
     ]
     assert [client.provider_name for client in agent.model_client.clients] == ["gemini", "nvidia"]
     assert agent.model_client.clients[1].include_stream_usage is False
+
+
+def test_registered_model_runtime_defaults_are_applied(tmp_path: Path) -> None:
+    settings = Settings(
+        _env_file=None,
+        agent_model_preset="deepseek-v4-flash",
+        nvidia_api_key="nvidia-key",
+        agent_max_tokens=16384,
+        agent_reviewer_pass=False,
+        agent_db_path=tmp_path / "agent.db",
+    )
+
+    agent = create_agent(settings=settings, cwd=tmp_path, model=None, dry_run=True, max_steps=1)
+
+    assert agent.model_client.max_tokens == 8192
+    assert agent.model_client.temperature == 0.2
+    assert agent.model_client.include_stream_usage is False
+    assert agent.model_client.extra_body == {
+        "chat_template_kwargs": {"thinking": True, "reasoning_effort": "high"}
+    }
+
+
+def test_fallback_client_stops_on_non_fallbackable_auth_error() -> None:
+    client = FallbackModelClient(
+        [
+            FakeAuthErrorClient("primary"),
+            FakeUsageClient("fallback", responses=['{"type":"final","message":"done"}']),
+        ]
+    )
+
+    try:
+        client.complete([])
+    except RuntimeError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("expected auth failure to stop fallback")
+
+    assert "non-fallbackable" in message
+    assert client.model == "primary"
+
+
+def test_model_error_classifier_marks_capacity_as_fallbackable() -> None:
+    classified = classify_model_error(
+        RuntimeError("ResourceExhausted: Worker local total request limit reached (32/32)")
+    )
+
+    assert classified.kind == "capacity"
+    assert classified.fallbackable is True
 
 
 def test_agent_persists_model_usage_records(tmp_path: Path) -> None:
