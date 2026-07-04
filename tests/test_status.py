@@ -14,7 +14,13 @@ from code_agent.schema import (
     WebSearchAction,
 )
 from code_agent.status import _semantic_stage
-from code_agent.interactive import is_casual_greeting, is_chat_request, task_with_transcript
+from code_agent.interactive import (
+    is_casual_greeting,
+    is_chat_request,
+    should_use_lightweight_chat,
+    task_with_transcript,
+)
+from code_agent.session import SessionState
 
 
 def test_semantic_stage_for_editing() -> None:
@@ -116,6 +122,36 @@ def test_is_casual_greeting() -> None:
     assert is_chat_request("hii")
     assert is_chat_request("so how far away are we to make this an industry agent")
     assert not is_chat_request("hey inspect this project")
+
+
+def test_contextual_repo_followup_uses_workspace_route() -> None:
+    state = SessionState(current_task="inspect the repository", last_run_id=76)
+    transcript = [
+        (
+            "inspect the repository",
+            "I inspected the project and summarized its current state.",
+        )
+    ]
+
+    followup = "how much work is left before this is production ready"
+    assert is_chat_request(followup)
+    assert not should_use_lightweight_chat(
+        followup,
+        transcript,
+        state,
+    )
+
+
+def test_contextual_routing_keeps_greetings_lightweight() -> None:
+    state = SessionState(current_task="read the readme and summarise it", last_run_id=76)
+
+    assert should_use_lightweight_chat("hey", [], state)
+
+
+def test_unrelated_chat_question_stays_lightweight_after_workspace_turn() -> None:
+    state = SessionState(current_task="read the readme and summarise it", last_run_id=76)
+
+    assert should_use_lightweight_chat("what is recursion", [], state)
 
 
 def test_task_with_transcript_includes_recent_turns() -> None:

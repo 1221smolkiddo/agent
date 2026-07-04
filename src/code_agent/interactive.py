@@ -5,6 +5,7 @@ import contextlib
 from importlib.metadata import PackageNotFoundError, version
 import os
 from pathlib import Path
+import re
 import signal
 import sys
 import threading
@@ -144,7 +145,7 @@ def main() -> None:
             continue
 
         # Chat vs Execute separation: lightweight chat path for non-workspace questions
-        if is_chat_request(user_input):
+        if should_use_lightweight_chat(user_input, transcript, session_state):
             client = create_chat_client(
                 settings=settings,
                 model=model,
@@ -819,6 +820,89 @@ def is_chat_request(user_input: str) -> bool:
         return True
 
     return False
+
+
+def should_use_lightweight_chat(
+    user_input: str,
+    transcript: list[tuple[str, str]],
+    session_state: SessionState,
+) -> bool:
+    if not is_chat_request(user_input):
+        return False
+    if is_casual_greeting(user_input):
+        return True
+    if _has_workspace_session_context(transcript, session_state) and _looks_like_contextual_followup(user_input):
+        return False
+    return True
+
+
+def _has_workspace_session_context(
+    transcript: list[tuple[str, str]],
+    session_state: SessionState,
+) -> bool:
+    if (
+        session_state.current_task
+        or session_state.target_files
+        or session_state.last_created_files
+        or session_state.last_edited_files
+        or session_state.last_deleted_files
+        or session_state.last_run_id is not None
+    ):
+        return True
+    transcript_text = " ".join(part for turn in transcript[-3:] for part in turn).lower()
+    return any(term in transcript_text for term in ("project", "repo", "workspace", "readme", "codebase"))
+
+
+def _looks_like_contextual_followup(user_input: str) -> bool:
+    tokens = re.findall(r"[a-z0-9']+", user_input.lower())
+    if not tokens:
+        return False
+
+    deictic_terms = {
+        "this",
+        "that",
+        "these",
+        "those",
+        "it",
+        "its",
+        "we",
+        "us",
+        "our",
+        "ours",
+        "here",
+        "there",
+        "current",
+        "previous",
+        "above",
+        "last",
+        "same",
+    }
+    followup_terms = {
+        "continue",
+        "summarize",
+        "summarise",
+        "explain",
+        "expand",
+        "improve",
+        "compare",
+        "assess",
+        "evaluate",
+        "review",
+        "next",
+        "status",
+        "progress",
+        "ready",
+        "remaining",
+        "gap",
+        "gaps",
+        "closer",
+        "away",
+    }
+
+    has_deictic_reference = any(token in deictic_terms for token in tokens)
+    has_followup_intent = any(token in followup_terms for token in tokens)
+    has_question_context = tokens[0] in {"what", "why", "how", "where", "when", "should", "can", "could"}
+    return has_deictic_reference or (has_question_context and has_followup_intent)
 
 
 def is_persona_instruction(user_input: str) -> bool:
