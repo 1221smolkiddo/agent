@@ -96,6 +96,48 @@ def test_current_model_name_uses_preset_or_override() -> None:
     assert interactive.model_display_name("z-ai/glm-5.2") == "glm-5.2"
 
 
+def test_current_provider_name_uses_registered_agent_model_provider() -> None:
+    settings = Settings(
+        _env_file=None,
+        agent_provider="nvidia",
+        agent_model_preset=None,
+        agent_model="qwen/qwen3-coder",
+    )
+
+    assert interactive.current_provider_name(settings, None) == "openrouter"
+
+
+def test_model_choice_accepts_preset_names() -> None:
+    assert interactive.resolve_model_choice("qwen-coder") == "qwen/qwen3-coder"
+    assert interactive.resolve_model_choice("custom/model") == "custom/model"
+
+
+def test_model_switch_validates_inferred_provider_key(monkeypatch) -> None:
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
+    missing_key = Settings(
+        _env_file=None,
+        agent_provider="nvidia",
+        agent_model_preset=None,
+        agent_model="z-ai/glm-5.2",
+        nvidia_api_key="nvidia-key",
+        openrouter_api_key=None,
+    )
+    ready = Settings(
+        _env_file=None,
+        agent_provider="nvidia",
+        agent_model_preset=None,
+        agent_model="z-ai/glm-5.2",
+        nvidia_api_key="nvidia-key",
+        openrouter_api_key="router-key",
+    )
+
+    assert "OPENROUTER_API_KEY is required" in (
+        interactive.model_switch_error(missing_key, "qwen/qwen3-coder") or ""
+    )
+    assert interactive.model_switch_error(ready, "qwen/qwen3-coder") is None
+
+
 def test_interactive_prompt_contains_repo_model_and_profile(tmp_path) -> None:
     settings = Settings(_env_file=None, agent_model_preset="glm-5.2", agent_profile="coder")
 

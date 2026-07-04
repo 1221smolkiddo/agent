@@ -5,7 +5,7 @@ from typer.testing import CliRunner
 
 from code_agent.cli import app
 from code_agent.config import Settings
-from code_agent.factory import create_agent
+from code_agent.factory import create_agent, create_chat_client
 from code_agent.model_presets import format_model_presets, resolve_model_preset
 
 
@@ -203,6 +203,47 @@ def test_model_override_keeps_preset_provider(tmp_path) -> None:
     )
 
     assert agent.model_client.model == "gemini-custom"
+
+
+def test_registered_agent_model_infers_provider_over_agent_provider(tmp_path) -> None:
+    settings = Settings(
+        _env_file=None,
+        agent_provider="nvidia",
+        agent_model_preset=None,
+        agent_model="qwen/qwen3-coder",
+        openrouter_api_key="router-key",
+        nvidia_api_key="nvidia-key",
+        agent_reviewer_pass=False,
+        agent_db_path=tmp_path / "agent.db",
+    )
+
+    agent = create_agent(
+        settings=settings,
+        cwd=tmp_path,
+        model=None,
+        profile=None,
+        dry_run=True,
+        max_steps=1,
+    )
+
+    assert agent.model_client.model == "qwen/qwen3-coder"
+    assert agent.model_client.provider_name == "openrouter"
+
+
+def test_registered_chat_model_infers_provider_over_agent_provider() -> None:
+    settings = Settings(
+        _env_file=None,
+        agent_provider="nvidia",
+        agent_model_preset=None,
+        agent_model="qwen/qwen3-coder",
+        openrouter_api_key="router-key",
+        nvidia_api_key="nvidia-key",
+    )
+
+    client = create_chat_client(settings=settings)
+
+    assert client.model == "qwen/qwen3-coder"
+    assert client.provider_name == "openrouter"
 
 
 def test_preset_missing_key_has_targeted_error(tmp_path) -> None:

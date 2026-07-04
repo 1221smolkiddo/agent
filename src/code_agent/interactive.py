@@ -20,7 +20,7 @@ from .config import Settings
 from .factory import create_agent, create_chat_client
 from .model_profiles import validate_profile_name
 from .model_presets import MODEL_PRESETS, resolve_model_preset
-from .model_registry import REGISTERED_MODELS, find_registered_model
+from .model_registry import REGISTERED_MODELS, find_registered_model, validate_model_selection
 from .permissions import ApprovalMode, PermissionPolicy, confirm_permission
 from .resume import build_resume_task, format_run_detail
 from .revert import apply_revert_plan, build_revert_plan, format_revert_preview
@@ -339,11 +339,13 @@ def handle_command(
         if value.lower() in {"select", "picker", "list"}:
             selected_model = prompt_model_selection(current_model=current_model_name(settings, model))
             if selected_model:
-                model = selected_model
+                model = switch_model_or_report(settings, selected_model, stream_model=stream_model) or model
             print_panel("Model", current_model_name(settings, model))
         elif value:
-            model = value
-            print_panel("Model", model or settings.agent_model)
+            switched_model = switch_model_or_report(settings, value, stream_model=stream_model)
+            if switched_model:
+                model = switched_model
+                print_panel("Model", model)
         else:
             print_model_status(settings, model, profile)
     elif command == "/profile":
@@ -443,7 +445,7 @@ def handle_command(
     elif command == "/models":
         selected_model = prompt_model_selection(current_model=current_model_name(settings, model))
         if selected_model:
-            model = selected_model
+            model = switch_model_or_report(settings, selected_model, stream_model=stream_model) or model
         print_panel("Model", current_model_name(settings, model))
     elif command == "/settings":
         print_key_values(
@@ -883,12 +885,59 @@ def current_model_name(settings: Settings, model_override: str | None) -> str:
 
 
 def current_provider_name(settings: Settings, model_override: str | None) -> str:
-    if model_override:
-        registered = find_registered_model(model_override)
-        if registered:
-            return registered.provider
+    active_model = current_model_name(settings, model_override)
+    inferred = inferred_provider_for_model(settings, active_model)
+    if inferred:
+        return inferred
     preset = resolve_model_preset(settings.agent_model_preset)
     return settings.provider_name_for(preset.provider if preset else None)
+
+
+def resolve_model_choice(choice: str) -> str:
+    try:
+        preset = resolve_model_preset(choice)
+    except ValueError:
+        return choice
+    return preset.model if preset else choice
+
+
+def inferred_provider_for_model(settings: Settings, model: str) -> str | None:
+    registered = find_registered_model(model)
+    if registered:
+        return registered.provider
+    return None
+
+
+def model_switch_error(settings: Settings, model: str, *, stream_model: bool = True) -> str | None:
+    provider = inferred_provider_for_model(settings, model) or settings.provider_name
+    try:
+        validate_model_selection(provider=provider, model=model, stream=stream_model)
+        settings.model_api_key_for(provider)
+    except RuntimeError as exc:
+        return str(exc)
+    return None
+
+
+def switch_model_or_report(
+    settings: Settings,
+    choice: str,
+    *,
+    stream_model: bool,
+) -> str | None:
+    model = resolve_model_choice(choice)
+    error = model_switch_error(settings, model, stream_model=stream_model)
+    if error:
+        print_error_card(
+            "Model Switch Failed",
+            [("Reason:", error)],
+            [
+                "Set the provider API key in .env",
+                "Use /models to choose a configured preset",
+                "Use /model to inspect the current model",
+            ],
+        )
+        return None
+    return model
 
 
 def model_display_name(model: str) -> str:

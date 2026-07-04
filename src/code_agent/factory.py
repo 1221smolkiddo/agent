@@ -34,8 +34,13 @@ def create_agent(
     workspace = cwd.resolve()
     configured_preset = None if model or provider else settings.agent_model_preset
     selected_preset = resolve_model_preset(preset if preset is not None else configured_preset)
-    selected_provider = provider or (selected_preset.provider if selected_preset else None)
     default_model = model or (selected_preset.model if selected_preset else settings.agent_model)
+    registered_default_model = find_registered_model(default_model)
+    selected_provider = (
+        provider
+        or (selected_preset.provider if selected_preset else None)
+        or (registered_default_model.provider if registered_default_model else None)
+    )
     resolved_provider_name = settings.provider_name_for(selected_provider)
     validate_model_selection(
         provider=resolved_provider_name,
@@ -58,8 +63,8 @@ def create_agent(
         name=resolved_provider_name,
         default_headers=settings.model_headers_for(selected_provider),
         include_stream_usage=(
-            registered_model.capabilities.stream_usage
-            if (registered_model := find_registered_model(default_model))
+            registered_default_model.capabilities.stream_usage
+            if registered_default_model
             else DEFAULT_CAPABILITIES.stream_usage
         ),
         timeout_seconds=settings.agent_model_timeout_seconds,
@@ -115,8 +120,13 @@ def create_chat_client(
 ) -> ModelClient:
     configured_preset = None if model or provider else settings.agent_model_preset
     selected_preset = resolve_model_preset(preset if preset is not None else configured_preset)
-    selected_provider = provider or (selected_preset.provider if selected_preset else None)
     default_model = model or (selected_preset.model if selected_preset else settings.agent_model)
+    registered_default_model = find_registered_model(default_model)
+    selected_provider = (
+        provider
+        or (selected_preset.provider if selected_preset else None)
+        or (registered_default_model.provider if registered_default_model else None)
+    )
     resolved_provider_name = settings.provider_name_for(selected_provider)
     validate_model_selection(
         provider=resolved_provider_name,
@@ -135,8 +145,8 @@ def create_chat_client(
         name=resolved_provider_name,
         default_headers=settings.model_headers_for(selected_provider),
         include_stream_usage=(
-            registered_model.capabilities.stream_usage
-            if (registered_model := find_registered_model(default_model))
+            registered_default_model.capabilities.stream_usage
+            if registered_default_model
             else DEFAULT_CAPABILITIES.stream_usage
         ),
         timeout_seconds=settings.agent_model_timeout_seconds,
