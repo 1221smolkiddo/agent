@@ -8,7 +8,13 @@ from .config import Settings
 from .model_profiles import resolve_model_profile
 from .model_presets import resolve_model_preset
 from .model_registry import DEFAULT_CAPABILITIES, find_registered_model, validate_model_selection
-from .models import ModelClient, ModelProviderConfig, create_fallback_client, create_openai_compatible_client
+from .models import (
+    FallbackModelSpec,
+    ModelClient,
+    ModelProviderConfig,
+    create_fallback_client,
+    create_openai_compatible_client,
+)
 from .repo_index import RepoIndexCache
 from .storage import AgentStorage
 from .status import StatusReporter
@@ -57,21 +63,18 @@ def create_agent(
         reviewer_model=None if model or selected_preset else settings.agent_reviewer_model,
         fast_model=None if model or selected_preset else settings.agent_fast_model,
     )
-    provider = ModelProviderConfig(
-        api_key=settings.model_api_key_for(selected_provider),
-        base_url=settings.model_base_url_for(selected_provider),
-        name=resolved_provider_name,
-        default_headers=settings.model_headers_for(selected_provider),
-        include_stream_usage=(
-            registered_default_model.capabilities.stream_usage
-            if registered_default_model
-            else DEFAULT_CAPABILITIES.stream_usage
-        ),
-        timeout_seconds=settings.agent_model_timeout_seconds,
-        input_cost_per_million=settings.agent_input_cost_per_million,
-        output_cost_per_million=settings.agent_output_cost_per_million,
+    provider = model_provider_config(
+        settings,
+        selected_provider,
+        registered_default_model.capabilities.stream_usage
+        if registered_default_model
+        else DEFAULT_CAPABILITIES.stream_usage,
     )
-    client = create_fallback_client(provider, selected_profile, settings.fallback_model_list)
+    client = create_fallback_client(
+        provider,
+        selected_profile,
+        fallback_model_specs(settings, settings.fallback_model_list, stream=settings.agent_stream if stream_model is None else stream_model),
+    )
     storage = AgentStorage(settings.agent_db_path)
     index_cache = RepoIndexCache(storage.db_path)
 
@@ -139,18 +142,50 @@ def create_chat_client(
         default_model=default_model,
         max_tokens=min(settings.agent_max_tokens, 1024),
     )
-    provider_config = ModelProviderConfig(
-        api_key=settings.model_api_key_for(selected_provider),
-        base_url=settings.model_base_url_for(selected_provider),
+    provider_config = model_provider_config(
+        settings,
+        selected_provider,
+        registered_default_model.capabilities.stream_usage
+        if registered_default_model
+        else DEFAULT_CAPABILITIES.stream_usage,
+    )
+    return create_openai_compatible_client(provider_config, selected_profile)
+
+
+def model_provider_config(
+    settings: Settings,
+    provider: str | None,
+    include_stream_usage: bool,
+) -> ModelProviderConfig:
+    resolved_provider_name = settings.provider_name_for(provider)
+    return ModelProviderConfig(
+        api_key=settings.model_api_key_for(provider),
+        base_url=settings.model_base_url_for(provider),
         name=resolved_provider_name,
-        default_headers=settings.model_headers_for(selected_provider),
-        include_stream_usage=(
-            registered_default_model.capabilities.stream_usage
-            if registered_default_model
-            else DEFAULT_CAPABILITIES.stream_usage
-        ),
+        default_headers=settings.model_headers_for(provider),
+        include_stream_usage=include_stream_usage,
         timeout_seconds=settings.agent_model_timeout_seconds,
         input_cost_per_million=settings.agent_input_cost_per_million,
         output_cost_per_million=settings.agent_output_cost_per_million,
     )
-    return create_openai_compatible_client(provider_config, selected_profile)
+
+
+def fallback_model_specs(
+    settings: Settings,
+    fallback_models: list[str],
+    *,
+    stream: bool,
+) -> list[FallbackModelSpec]:
+    specs: list[FallbackModelSpec] = []
+    for model in fallback_models:
+        registered = find_registered_model(model)
+        provider = registered.provider if registered else None
+        resolved_provider = settings.provider_name_for(provider)
+        validate_model_selection(provider=resolved_provider, model=model, stream=stream)
+        provider_config = model_provider_config(
+            settings,
+            provider,
+            registered.capabilities.stream_usage if registered else DEFAULT_CAPABILITIES.stream_usage,
+        )
+        specs.append(FallbackModelSpec(provider=provider_config, model=model))
+    return specs

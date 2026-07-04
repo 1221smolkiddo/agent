@@ -200,7 +200,7 @@ the interactive session. Between turns, `/stop` and `/exit` also quit normally.
 - `AGENT_MODEL` is optional. The CLI also accepts `--model`.
 - `AGENT_PROFILE` is optional and defaults to `default`. Supported profiles are `default`, `planner`, `coder`, `reviewer`, and `fast`.
 - `AGENT_PLANNER_MODEL`, `AGENT_CODER_MODEL`, `AGENT_REVIEWER_MODEL`, and `AGENT_FAST_MODEL` are optional per-profile model overrides.
-- `AGENT_FALLBACK_MODELS` is optional. Use a comma-separated list of models to try if the primary model/provider call fails.
+- `AGENT_FALLBACK_MODELS` is optional. Use a comma-separated list of models to try if the primary call fails. Registered fallback models infer their own provider, so `AGENT_MODEL_PRESET=gemini-flash` can fall back to `z-ai/glm-5.2` when both `GEMINI_API_KEY` and `NVIDIA_API_KEY` are configured.
 - `OPENROUTER_BASE_URL` is optional and defaults to `https://openrouter.ai/api/v1`.
 - `OPENROUTER_SITE_URL` and `OPENROUTER_APP_NAME` are optional OpenRouter metadata headers.
 - `GEMINI_API_KEY` is required when `AGENT_PROVIDER=gemini`.
@@ -228,6 +228,13 @@ uv run code-agent run --preset deepseek-pro "Refactor the parser"
 uv run code-agent run --preset glm-5.2 "Implement the next coding task"
 uv run code-agent run --preset deepseek-v4-flash "Inspect this repo"
 uv run code-agent run --provider gemini --model gemini-3.5-flash "Inspect this repo"
+```
+
+Cross-provider fallback example:
+
+```bash
+AGENT_MODEL_PRESET=gemini-flash
+AGENT_FALLBACK_MODELS=z-ai/glm-5.2,qwen/qwen3-coder
 ```
 
 Preset selection chooses both provider and model. `--model` can still override the model string

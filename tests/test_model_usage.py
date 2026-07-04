@@ -149,6 +149,28 @@ def test_factory_uses_configured_fallback_models(tmp_path: Path) -> None:
     ]
 
 
+def test_factory_uses_registered_fallback_model_provider(tmp_path: Path) -> None:
+    settings = Settings(
+        _env_file=None,
+        agent_model_preset="gemini-flash",
+        gemini_api_key="gemini-key",
+        nvidia_api_key="nvidia-key",
+        agent_fallback_models="z-ai/glm-5.2",
+        agent_reviewer_pass=False,
+        agent_db_path=tmp_path / "agent.db",
+    )
+
+    agent = create_agent(settings=settings, cwd=tmp_path, model=None, dry_run=True, max_steps=1)
+
+    assert isinstance(agent.model_client, FallbackModelClient)
+    assert [client.model for client in agent.model_client.clients] == [
+        "gemini-3.5-flash",
+        "z-ai/glm-5.2",
+    ]
+    assert [client.provider_name for client in agent.model_client.clients] == ["gemini", "nvidia"]
+    assert agent.model_client.clients[1].include_stream_usage is False
+
+
 def test_agent_persists_model_usage_records(tmp_path: Path) -> None:
     model = FakeUsageClient("primary", responses=['{"type":"final","message":"done"}'])
     storage = AgentStorage(tmp_path / "agent.db")

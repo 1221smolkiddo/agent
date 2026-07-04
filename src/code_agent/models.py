@@ -52,6 +52,13 @@ class ModelProviderConfig:
 
 
 @dataclass(frozen=True)
+class FallbackModelSpec:
+    provider: ModelProviderConfig
+    model: str
+    max_tokens: int | None = None
+
+
+@dataclass(frozen=True)
 class ModelUsageRecord:
     model: str
     ok: bool
@@ -354,18 +361,19 @@ def create_openai_compatible_client(
 def create_fallback_client(
     provider: ModelProviderConfig,
     profile: ModelProfile,
-    fallback_models: list[str],
+    fallback_models: list[str] | list[FallbackModelSpec],
 ) -> UsageTrackingModelClient:
-    clients: list[UsageTrackingModelClient] = [
-        create_openai_compatible_client(provider, profile),
-        *[
-            create_openai_compatible_client(
-                provider,
-                replace(profile, model=model),
+    clients: list[UsageTrackingModelClient] = [create_openai_compatible_client(provider, profile)]
+    for fallback in fallback_models:
+        if isinstance(fallback, FallbackModelSpec):
+            fallback_profile = replace(
+                profile,
+                model=fallback.model,
+                max_tokens=fallback.max_tokens or profile.max_tokens,
             )
-            for model in fallback_models
-        ],
-    ]
+            clients.append(create_openai_compatible_client(fallback.provider, fallback_profile))
+        else:
+            clients.append(create_openai_compatible_client(provider, replace(profile, model=fallback)))
     return clients[0] if len(clients) == 1 else FallbackModelClient(clients)
 
 

@@ -278,6 +278,29 @@ def test_preset_missing_key_has_targeted_error(tmp_path, monkeypatch) -> None:
         )
 
 
+def test_registered_fallback_missing_key_has_targeted_error(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
+    settings = Settings(
+        _env_file=None,
+        agent_model_preset="gemini-flash",
+        gemini_api_key="gemini-key",
+        nvidia_api_key=None,
+        agent_fallback_models="z-ai/glm-5.2",
+        agent_reviewer_pass=False,
+        agent_db_path=tmp_path / "agent.db",
+    )
+
+    with pytest.raises(RuntimeError, match="NVIDIA_API_KEY is required"):
+        create_agent(
+            settings=settings,
+            cwd=tmp_path,
+            model=None,
+            profile=None,
+            dry_run=True,
+            max_steps=1,
+        )
+
+
 def test_provider_override_rejects_mismatched_preset(tmp_path) -> None:
     settings = Settings(
         _env_file=None,
