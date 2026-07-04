@@ -22,6 +22,7 @@ from code_agent.schema import (
     WriteFileAction,
     SymbolIndexAction,
 )
+from code_agent.terminal_ui import console
 from code_agent.tools import BingParser, ToolRegistry
 
 
@@ -250,17 +251,26 @@ def test_permission_preview_uses_patch_summary_before_hidden_diff() -> None:
 
 
 def test_permission_prompt_renders_visible_choice_labels(monkeypatch) -> None:
-    captured: dict[str, str] = {}
+    monkeypatch.setattr(permissions_module.Prompt, "ask", lambda *_args, **_kwargs: "n")
 
-    def fake_ask(prompt: str, **_kwargs) -> str:
-        captured["prompt"] = prompt
-        return "n"
+    with console.capture() as capture:
+        assert confirm_permission("read_file", "README.md") == "n"
 
-    monkeypatch.setattr(permissions_module.Prompt, "ask", fake_ask)
+    rendered = capture.get()
+    assert "Choose:" in rendered
+    assert "approve once" in rendered
+    assert "deny" in rendered
+    assert "view full detail" in rendered
 
-    assert confirm_permission("read_file", "README.md") == "n"
-    assert r"\[y] Approve" in captured["prompt"]
-    assert r"\[n] Deny" in captured["prompt"]
+
+def test_high_risk_permission_rejects_approve_all(monkeypatch) -> None:
+    responses = iter(["a", "n"])
+    monkeypatch.setattr(permissions_module.Prompt, "ask", lambda *_args, **_kwargs: next(responses))
+
+    with console.capture() as capture:
+        assert confirm_permission("run_shell", "uv run pytest") == "n"
+
+    assert "Approve-all is disabled for high-risk actions" in capture.get()
 
 
 def test_write_file_returns_truncated_large_diff_to_model(tmp_path: Path) -> None:

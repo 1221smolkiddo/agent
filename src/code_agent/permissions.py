@@ -115,6 +115,16 @@ def confirm_permission(action: str, detail: str) -> str:
     if preview:
         text.append("Preview:\n", style="muted")
         text.append(f"{preview}\n", style="default")
+    text.append("\nChoose:\n", style="muted")
+    text.append("  y", style="bold green")
+    text.append(" approve once\n", style="default")
+    text.append("  n", style="bold red")
+    text.append(" deny\n", style="default")
+    if action not in MANUAL_APPROVAL_ACTIONS:
+        text.append("  a", style="bold cyan")
+        text.append(" approve all low-risk actions for this task\n", style="default")
+    text.append("  v", style="bold yellow")
+    text.append(" view full detail\n", style="default")
 
     console.print(
         Panel(
@@ -127,10 +137,11 @@ def confirm_permission(action: str, detail: str) -> str:
     # Keep the default prompt compact; full raw detail is explicit via "v".
     while True:
         response = Prompt.ask(
-            r"\[y] Approve  \[n] Deny  \[a] Approve All For Task  \[v] View Full Detail",
+            _permission_prompt(action),
             choices=["y", "n", "a", "v"],
             default="n",
             show_choices=False,
+            show_default=True,
         )
         if response == "v":
             console.print(
@@ -141,7 +152,16 @@ def confirm_permission(action: str, detail: str) -> str:
                 )
             )
             continue
+        if response == "a" and action in MANUAL_APPROVAL_ACTIONS:
+            console.print("Approve-all is disabled for high-risk actions. Choose y or n.", style="warning")
+            continue
         return response
+
+
+def _permission_prompt(action: str) -> str:
+    if action in MANUAL_APPROVAL_ACTIONS:
+        return "[bold yellow]Approve?[/bold yellow] [green]y[/green]/[red]n[/red]/[yellow]v[/yellow]"
+    return "[bold yellow]Approve?[/bold yellow] [green]y[/green]/[red]n[/red]/[cyan]a[/cyan]/[yellow]v[/yellow]"
 
 
 def _format_permission_preview(detail: str, max_lines: int = 6, max_chars: int = 800) -> str:
