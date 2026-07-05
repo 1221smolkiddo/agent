@@ -12,6 +12,8 @@ from .debug_bundle import export_debug_bundle
 from .doctor import run_doctor
 from .eval_reports import (
     DEFAULT_REPORT_DIR,
+    build_capability_dashboard,
+    format_capability_dashboard,
     format_eval_report_index,
     format_eval_report_summary,
     list_eval_reports,
@@ -222,8 +224,35 @@ def eval_reports_command(
     report_dir: Path = typer.Option(DEFAULT_REPORT_DIR, "--report-dir", help="Eval report directory."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
     summary: bool = typer.Option(False, "--summary", help="Group reports by mode, provider, and model."),
+    dashboard: bool = typer.Option(False, "--dashboard", help="Show release-readiness capability dashboard."),
+    min_pass_rate: float = typer.Option(
+        0.8,
+        "--min-pass-rate",
+        min=0.0,
+        max=1.0,
+        help="Minimum latest-live pass rate required by the dashboard gate.",
+    ),
+    min_live_reports: int = typer.Option(
+        1,
+        "--min-live-reports",
+        min=0,
+        help="Minimum saved live reports required by the dashboard gate.",
+    ),
 ) -> None:
-    """List saved eval reports."""
+    """List saved eval reports, summaries, or capability dashboard."""
+    if dashboard:
+        payload = build_capability_dashboard(
+            report_dir,
+            min_pass_rate=min_pass_rate,
+            min_live_reports=min_live_reports,
+        )
+        typer.echo(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True)
+            if json_output
+            else format_capability_dashboard(payload)
+        )
+        return
+
     reports = list_eval_reports(report_dir)
     payload = summarize_eval_reports(reports) if summary else reports
     typer.echo(

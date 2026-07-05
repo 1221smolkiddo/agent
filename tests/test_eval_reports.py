@@ -7,6 +7,8 @@ from typer.testing import CliRunner
 
 from code_agent.cli import app
 from code_agent.eval_reports import (
+    build_capability_dashboard,
+    format_capability_dashboard,
     format_eval_report_index,
     format_eval_report_summary,
     list_eval_reports,
@@ -144,3 +146,100 @@ def test_cli_eval_reports_summary_outputs_grouped_json(tmp_path: Path) -> None:
     payload = json.loads(output.output)
     assert payload[0]["reports"] == 1
     assert payload[0]["pass_rate"] == 1.0
+
+
+def test_capability_dashboard_builds_gate_metrics_and_hotspots(tmp_path: Path) -> None:
+    first = {
+        "created_at": "2026-07-05T10:00:00+00:00",
+        "ok": False,
+        "metrics": {"total": 2, "passed": 1, "failed": 1, "pass_rate": 0.5},
+        "metadata": {"mode": "live", "provider": "provider-a", "model": "model-a"},
+        "results": [
+            {
+                "name": "python_bugfix",
+                "ok": True,
+                "detail": "fixed",
+                "category": "python",
+                "failure_category": None,
+                "metadata": {
+                    "changed_paths": ["stats.py"],
+                    "commands": [{"command": "pytest", "ok": True}],
+                    "verification": [{"command": "pytest", "ok": True}],
+                    "blocked": False,
+                },
+            },
+            {
+                "name": "node_bugfix",
+                "ok": False,
+                "detail": "tests failed",
+                "category": "node",
+                "failure_category": "verification_failed",
+                "metadata": {"changed_paths": ["total.js"], "commands": [], "verification": []},
+            },
+        ],
+    }
+    second = {
+        "created_at": "2026-07-05T11:00:00+00:00",
+        "ok": True,
+        "metrics": {"total": 2, "passed": 2, "failed": 0, "pass_rate": 1.0},
+        "metadata": {"mode": "live", "provider": "provider-a", "model": "model-a"},
+        "results": [
+            {
+                "name": "python_bugfix",
+                "ok": True,
+                "detail": "fixed",
+                "category": "python",
+                "failure_category": None,
+                "metadata": {
+                    "changed_paths": ["stats.py"],
+                    "commands": [{"command": "pytest", "ok": True}],
+                    "verification": [{"command": "pytest", "ok": True}],
+                },
+            },
+            {
+                "name": "node_bugfix",
+                "ok": True,
+                "detail": "fixed",
+                "category": "node",
+                "failure_category": None,
+                "metadata": {
+                    "changed_paths": ["total.js"],
+                    "commands": [{"command": "npm test", "ok": True}],
+                    "verification": [{"command": "npm test", "ok": True}],
+                },
+            },
+        ],
+    }
+    (tmp_path / "20260705-100000-live.json").write_text(json.dumps(first), encoding="utf-8")
+    (tmp_path / "20260705-110000-live.json").write_text(json.dumps(second), encoding="utf-8")
+
+    dashboard = build_capability_dashboard(tmp_path, min_pass_rate=0.8)
+
+    assert dashboard["gate"]["status"] == "pass"
+    assert dashboard["reports"]["latest_delta"]["pass_rate_delta"] == 0.5
+    assert dashboard["capability"]["cases"] == 4
+    assert dashboard["capability"]["verification_rate"] == 0.75
+    assert dashboard["capability"]["categories"]["node"]["pass_rate"] == 0.5
+    assert dashboard["failure_hotspots"][0]["failure_category"] == "verification_failed"
+    formatted = format_capability_dashboard(dashboard)
+    assert "Agent47 capability dashboard:" in formatted
+    assert "verification_failed" in formatted
+
+
+def test_cli_eval_reports_dashboard_outputs_json(tmp_path: Path) -> None:
+    result = EvalSuiteResult(
+        results=[EvalResult(name="case", ok=True, detail="good", category="live")],
+        metadata={"mode": "live", "model": "model-a", "provider": "provider-a"},
+    )
+    save_eval_report(result, report_dir=tmp_path, label="live")
+
+    runner = CliRunner()
+    output = runner.invoke(
+        app,
+        ["eval-reports", "--report-dir", str(tmp_path), "--dashboard", "--json"],
+    )
+
+    assert output.exit_code == 0, output.output
+    payload = json.loads(output.output)
+    assert payload["gate"]["status"] == "pass"
+    assert payload["reports"]["live"] == 1

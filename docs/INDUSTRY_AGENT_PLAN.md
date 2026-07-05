@@ -73,6 +73,8 @@ To-do:
 - Add benchmark categories for Python, Node, docs, CLI, and mixed multi-file work. Status: started with a broader CLI live benchmark catalog.
 - Add prompt-injection and dirty-worktree scenarios. Status: started in live evals.
 - Add model/provider comparison summaries. Status: started with `code-agent eval-reports --summary`.
+- Add a capability dashboard and release-readiness gate over saved reports. Status: first pass done with
+  `code-agent eval-reports --dashboard`.
 
 Implementation plan:
 
@@ -87,6 +89,8 @@ Acceptance criteria:
 - `code-agent evals` remains offline and deterministic by default.
 - `code-agent evals --live` can evaluate a configured model on real tasks.
 - Eval output shows pass/fail plus capability metrics.
+- Saved eval reports can be rolled up into a dashboard with latest-run deltas, category pass rates,
+  verification/change rates, failure hotspots, and release-gate recommendations.
 
 ## Priority 3: Observability And Debug Bundles
 
