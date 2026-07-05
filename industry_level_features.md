@@ -41,7 +41,9 @@ The next major capabilities should be prioritized by dashboard results:
 
 ## Next Serious Build
 
-After the dashboard has several saved live reports, the next best build is failure analytics:
+After the dashboard has several saved live reports, the next best build is failure analytics.
+
+Implemented second pass:
 
 - persist tool/model timing
 - classify retry paths
@@ -49,3 +51,13 @@ After the dashboard has several saved live reports, the next best build is failu
 - compare latest failures against previous runs
 - make release-smoke optionally require a passing capability dashboard
 
+Commands:
+
+```bash
+uv run code-agent eval-reports --analytics
+uv run code-agent eval-reports --analytics --json
+uv run code-agent release-smoke --require-dashboard
+```
+
+This moves Agent47 from "the benchmark failed" to "the benchmark failed for this specific class
+of reason, here is the compact trace, and here is whether it is a new regression."

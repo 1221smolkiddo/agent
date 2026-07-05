@@ -165,6 +165,7 @@ def build_capability_dashboard(
     report_metrics = [_report_capability_metrics(item["path"], item["payload"]) for item in payloads]
     aggregate = _aggregate_capability_metrics(report_metrics)
     failure_hotspots = _failure_hotspots(payloads)
+    failure_analytics = build_failure_analytics(report_dir)
     gate = _capability_gate(
         reports=reports,
         latest_live=latest_live,
@@ -188,6 +189,7 @@ def build_capability_dashboard(
             "latest_delta": _latest_delta(latest, previous),
         },
         "capability": aggregate,
+        "failure_analytics": failure_analytics,
         "models": summaries,
         "failure_hotspots": failure_hotspots,
         "recommendations": _dashboard_recommendations(
@@ -199,6 +201,78 @@ def build_capability_dashboard(
         ),
     }
     return dashboard
+
+
+def build_failure_analytics(report_dir: Path = DEFAULT_REPORT_DIR) -> dict[str, Any]:
+    payloads = load_eval_report_payloads(report_dir)
+    latest = payloads[0] if payloads else None
+    previous = payloads[1] if len(payloads) > 1 else None
+    latest_traces = _case_traces(latest["payload"], latest["path"]) if latest else []
+    previous_traces = _case_traces(previous["payload"], previous["path"]) if previous else []
+    return {
+        "report_dir": str(report_dir),
+        "latest": _report_identity(latest),
+        "previous": _report_identity(previous),
+        "summary": _trace_summary(latest_traces),
+        "regressions": _trace_regressions(latest_traces, previous_traces),
+        "cases": latest_traces,
+    }
+
+
+def format_failure_analytics(analytics: dict[str, Any]) -> str:
+    latest = analytics.get("latest") or {}
+    summary = analytics.get("summary") or {}
+    lines = ["Agent47 eval failure analytics:"]
+    if isinstance(latest, dict) and latest:
+        lines.append(
+            "- Latest: "
+            f"{latest.get('created_at', '<unknown>')} "
+            f"mode={latest.get('mode') or '<unknown>'} "
+            f"provider={latest.get('provider') or '<default>'} "
+            f"model={latest.get('model') or '<default>'}"
+        )
+    lines.append(
+        "- Summary: "
+        f"cases={summary.get('cases', 0)} "
+        f"failed={summary.get('failed', 0)} "
+        f"blocked={summary.get('blocked', 0)} "
+        f"verified={summary.get('verified', 0)} "
+        f"changed={summary.get('changed', 0)}"
+    )
+    failure_classes = dict(summary.get("failure_classes", {}))
+    if failure_classes:
+        lines.append(
+            "- Failure classes: "
+            + ", ".join(f"{name}:{count}" for name, count in sorted(failure_classes.items()))
+        )
+    regressions = analytics.get("regressions") or {}
+    if isinstance(regressions, dict):
+        new_failures = list(regressions.get("new_failures", []))
+        fixed = list(regressions.get("fixed", []))
+        persistent = list(regressions.get("persistent_failures", []))
+        lines.append(
+            "- Report diff: "
+            f"new_failures={len(new_failures)} "
+            f"fixed={len(fixed)} "
+            f"persistent_failures={len(persistent)}"
+        )
+        if new_failures:
+            lines.append("- New failures: " + ", ".join(str(item) for item in new_failures[:8]))
+    cases = list(analytics.get("cases", []))
+    failures = [case for case in cases if case.get("ok") is not True]
+    if failures:
+        lines.append("- Failed case traces:")
+        for case in failures[:10]:
+            lines.append(
+                f"  - {case['name']}: class={case['failure_class']} "
+                f"verification={case['verification_status']} "
+                f"commands={case['command_count']} "
+                f"changed={case['changed_path_count']} "
+                f"blocked={str(case['blocked']).lower()}"
+            )
+            if case.get("diagnostic"):
+                lines.append(f"    {case['diagnostic']}")
+    return "\n".join(lines)
 
 
 def format_capability_dashboard(dashboard: dict[str, Any]) -> str:
@@ -363,15 +437,15 @@ def _report_capability_metrics(path: str, payload: dict[str, Any]) -> dict[str, 
             item["failed"] += 1
 
         result_metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
-        commands = result_metadata.get("commands") or []
-        verification = result_metadata.get("verification") or []
+        commands = _as_list(result_metadata.get("commands"))
+        verification = _as_list(result_metadata.get("verification"))
         if commands or verification:
             verification_cases += 1
         if result_metadata.get("changed_paths"):
             changed_cases += 1
         if result_metadata.get("blocked") is True:
             blocked_cases += 1
-        for usage in result_metadata.get("model_usage") or []:
+        for usage in _as_list(result_metadata.get("model_usage")):
             if not isinstance(usage, dict):
                 continue
             model_usage_tokens += int(usage.get("total_tokens") or 0)
@@ -401,6 +475,230 @@ def _report_capability_metrics(path: str, payload: dict[str, Any]) -> dict[str, 
         "estimated_cost_usd": round(model_usage_cost, 6),
         "categories": category_rates,
     }
+
+
+def _case_traces(payload: dict[str, Any], path: str) -> list[dict[str, Any]]:
+    metadata = dict(payload.get("metadata", {}))
+    traces: list[dict[str, Any]] = []
+    for result in payload.get("results", []):
+        if not isinstance(result, dict):
+            continue
+        result_metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+        commands = [item for item in _as_list(result_metadata.get("commands")) if isinstance(item, dict)]
+        verification = [
+            item for item in _as_list(result_metadata.get("verification")) if isinstance(item, dict)
+        ]
+        model_usage = [
+            item for item in _as_list(result_metadata.get("model_usage")) if isinstance(item, dict)
+        ]
+        changed_paths = [str(item) for item in _as_list(result_metadata.get("changed_paths"))]
+        failed_actions = [
+            item for item in _as_list(result_metadata.get("failed_actions")) if isinstance(item, dict)
+        ]
+        denied_actions = [
+            item for item in _as_list(result_metadata.get("denied_actions")) if isinstance(item, dict)
+        ]
+        failure_class = _classify_case_failure(result, result_metadata)
+        traces.append(
+            {
+                "name": str(result.get("name") or "<unnamed>"),
+                "ok": bool(result.get("ok") is True),
+                "category": str(result.get("category") or "uncategorized"),
+                "failure_category": result.get("failure_category"),
+                "failure_class": failure_class,
+                "detail": _compact_detail(str(result.get("detail") or "")),
+                "diagnostic": _case_diagnostic(result, result_metadata, failure_class),
+                "blocked": bool(result_metadata.get("blocked") is True)
+                or failure_class in {"provider_blocked", "safety_blocked", "timeout"},
+                "changed_paths": changed_paths[:20],
+                "changed_path_count": len(changed_paths),
+                "commands": _compact_commands_for_trace(commands),
+                "command_count": len(commands),
+                "verification_status": _verification_status(verification),
+                "verification": _compact_verification_for_trace(verification),
+                "model": str(result_metadata.get("model") or metadata.get("model") or ""),
+                "provider": str(result_metadata.get("provider") or metadata.get("provider") or ""),
+                "model_usage": _compact_model_usage_for_trace(model_usage),
+                "failed_action_count": len(failed_actions),
+                "denied_action_count": len(denied_actions),
+                "report_path": path,
+            }
+        )
+    return traces
+
+
+def _trace_summary(traces: list[dict[str, Any]]) -> dict[str, Any]:
+    failure_classes: dict[str, int] = {}
+    for trace in traces:
+        if trace.get("ok") is True:
+            continue
+        failure_class = str(trace.get("failure_class") or "unknown")
+        failure_classes[failure_class] = failure_classes.get(failure_class, 0) + 1
+    return {
+        "cases": len(traces),
+        "passed": sum(1 for trace in traces if trace.get("ok") is True),
+        "failed": sum(1 for trace in traces if trace.get("ok") is not True),
+        "blocked": sum(1 for trace in traces if trace.get("blocked") is True),
+        "verified": sum(1 for trace in traces if trace.get("verification_status") != "not_run"),
+        "changed": sum(1 for trace in traces if int(trace.get("changed_path_count", 0)) > 0),
+        "failure_classes": failure_classes,
+    }
+
+
+def _trace_regressions(
+    latest_traces: list[dict[str, Any]],
+    previous_traces: list[dict[str, Any]],
+) -> dict[str, Any]:
+    latest_by_name = {str(trace["name"]): trace for trace in latest_traces}
+    previous_by_name = {str(trace["name"]): trace for trace in previous_traces}
+    new_failures = sorted(
+        name
+        for name, trace in latest_by_name.items()
+        if trace.get("ok") is not True
+        and (name not in previous_by_name or previous_by_name[name].get("ok") is True)
+    )
+    fixed = sorted(
+        name
+        for name, trace in latest_by_name.items()
+        if trace.get("ok") is True
+        and name in previous_by_name
+        and previous_by_name[name].get("ok") is not True
+    )
+    persistent = sorted(
+        name
+        for name, trace in latest_by_name.items()
+        if trace.get("ok") is not True
+        and name in previous_by_name
+        and previous_by_name[name].get("ok") is not True
+    )
+    class_changes = []
+    for name in persistent:
+        latest_class = str(latest_by_name[name].get("failure_class") or "unknown")
+        previous_class = str(previous_by_name[name].get("failure_class") or "unknown")
+        if latest_class != previous_class:
+            class_changes.append(
+                {"name": name, "previous": previous_class, "latest": latest_class}
+            )
+    return {
+        "new_failures": new_failures,
+        "fixed": fixed,
+        "persistent_failures": persistent,
+        "failure_class_changes": class_changes,
+    }
+
+
+def _classify_case_failure(result: dict[str, Any], metadata: dict[str, Any]) -> str:
+    if result.get("ok") is True:
+        return "passed"
+    category = str(result.get("failure_category") or "").lower()
+    detail = str(result.get("detail") or "")
+    lowered = detail.lower()
+    if category == "model_error" or any(
+        token in lowered
+        for token in [
+            "ratelimiterror",
+            "rate limit",
+            "quota",
+            "resource_exhausted",
+            "resourceexhausted",
+            "insufficientcreditserror",
+            "authentication",
+            "api key",
+            "provider unavailable",
+        ]
+    ):
+        return "provider_blocked"
+    if category in {"verification_failed", "verification_missing"}:
+        return category
+    if "pytest did not pass" in lowered or "assertionerror" in lowered or "tests failed" in lowered:
+        return "verification_failed"
+    if "command fragment was not recorded" in lowered or "command was not recorded" in lowered:
+        return "verification_missing"
+    if category == "validator_failed" or "missing" in lowered or "did not contain" in lowered:
+        return "validator_failed"
+    if category == "safety_blocked" or metadata.get("denied_actions"):
+        return "safety_blocked"
+    if category == "timeout" or "timed out" in lowered or "timeout" in lowered:
+        return "timeout"
+    return category or "unknown"
+
+
+def _case_diagnostic(result: dict[str, Any], metadata: dict[str, Any], failure_class: str) -> str:
+    detail = _compact_detail(str(result.get("detail") or ""), max_chars=220)
+    if failure_class == "provider_blocked":
+        return "Model/provider infrastructure blocked the eval; switch provider/model or wait for quota."
+    if failure_class == "verification_failed":
+        return "Verification ran but failed; inspect test output and the changed implementation path."
+    if failure_class == "verification_missing":
+        return "Expected verification command evidence was not recorded."
+    if failure_class == "validator_failed":
+        return "Post-run validator did not observe the expected file or content state."
+    if failure_class == "safety_blocked":
+        return "The run was blocked by safety or approval policy."
+    if failure_class == "timeout":
+        return "The run exceeded its time budget."
+    return detail
+
+
+def _verification_status(verification: list[dict[str, Any]]) -> str:
+    if not verification:
+        return "not_run"
+    if any(item.get("ok") is False or item.get("status") == "failed" for item in verification):
+        return "failed"
+    if all(item.get("ok") is True or item.get("status") == "passed" for item in verification):
+        return "passed"
+    return "unknown"
+
+
+def _compact_commands_for_trace(commands: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "command": str(item.get("command", "")),
+            "ok": item.get("ok"),
+            "status": item.get("status"),
+        }
+        for item in commands[:10]
+    ]
+
+
+def _compact_verification_for_trace(verification: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "purpose": item.get("purpose"),
+            "command": str(item.get("command", "")),
+            "ok": item.get("ok"),
+            "status": item.get("status"),
+            "automatic": item.get("automatic"),
+        }
+        for item in verification[:10]
+    ]
+
+
+def _compact_model_usage_for_trace(model_usage: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "attempts": len(model_usage),
+        "failed_attempts": sum(1 for item in model_usage if item.get("ok") is False),
+        "total_tokens": sum(int(item.get("total_tokens") or 0) for item in model_usage),
+        "estimated_cost_usd": round(
+            sum(float(item.get("estimated_cost_usd") or 0.0) for item in model_usage),
+            6,
+        ),
+        "latency_ms": round(
+            sum(float(item.get("latency_ms") or 0.0) for item in model_usage),
+            2,
+        ),
+    }
+
+
+def _compact_detail(value: str, *, max_chars: int = 500) -> str:
+    normalized = " ".join(value.split())
+    if len(normalized) <= max_chars:
+        return normalized
+    return normalized[:max_chars].rstrip() + f"... <truncated {len(normalized) - max_chars} chars>"
+
+
+def _as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
 
 
 def _aggregate_capability_metrics(report_metrics: list[dict[str, Any]]) -> dict[str, Any]:

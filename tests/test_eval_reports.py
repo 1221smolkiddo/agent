@@ -8,7 +8,9 @@ from typer.testing import CliRunner
 from code_agent.cli import app
 from code_agent.eval_reports import (
     build_capability_dashboard,
+    build_failure_analytics,
     format_capability_dashboard,
+    format_failure_analytics,
     format_eval_report_index,
     format_eval_report_summary,
     list_eval_reports,
@@ -288,3 +290,49 @@ def test_capability_dashboard_marks_all_model_errors_as_blocked(tmp_path: Path) 
     assert any("provider quota" in item for item in dashboard["recommendations"])
     assert not any("Increase eval validators" in item for item in dashboard["recommendations"])
     assert "Gate: BLOCKED" in formatted
+
+
+def test_failure_analytics_reports_case_traces_and_regressions(tmp_path: Path) -> None:
+    previous = {
+        "created_at": "2026-07-05T10:00:00+00:00",
+        "ok": True,
+        "metrics": {"total": 2, "passed": 2, "failed": 0, "pass_rate": 1.0},
+        "metadata": {"mode": "live", "provider": "provider-a", "model": "model-a"},
+        "results": [
+            {"name": "python_bugfix", "ok": True, "detail": "good", "category": "python"},
+            {"name": "docs_task", "ok": True, "detail": "good", "category": "docs"},
+        ],
+    }
+    latest = {
+        "created_at": "2026-07-05T11:00:00+00:00",
+        "ok": False,
+        "metrics": {"total": 2, "passed": 1, "failed": 1, "pass_rate": 0.5},
+        "metadata": {"mode": "live", "provider": "provider-a", "model": "model-a"},
+        "results": [
+            {
+                "name": "python_bugfix",
+                "ok": False,
+                "detail": "pytest did not pass after recovery",
+                "category": "python",
+                "failure_category": "verification_failed",
+                "metadata": {
+                    "changed_paths": ["stats.py"],
+                    "commands": [{"command": "pytest", "ok": False}],
+                    "verification": [{"command": "pytest", "ok": False, "status": "failed"}],
+                    "model_usage": [{"total_tokens": 120, "estimated_cost_usd": 0.01, "latency_ms": 250}],
+                },
+            },
+            {"name": "docs_task", "ok": True, "detail": "good", "category": "docs"},
+        ],
+    }
+    (tmp_path / "20260705-100000-live.json").write_text(json.dumps(previous), encoding="utf-8")
+    (tmp_path / "20260705-110000-live.json").write_text(json.dumps(latest), encoding="utf-8")
+
+    analytics = build_failure_analytics(tmp_path)
+    formatted = format_failure_analytics(analytics)
+
+    assert analytics["summary"]["failure_classes"] == {"verification_failed": 1}
+    assert analytics["regressions"]["new_failures"] == ["python_bugfix"]
+    assert analytics["cases"][0]["verification_status"] == "failed"
+    assert analytics["cases"][0]["model_usage"]["latency_ms"] == 250
+    assert "New failures: python_bugfix" in formatted

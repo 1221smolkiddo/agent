@@ -115,6 +115,7 @@ uv run code-agent evals --live --limit 3 --save-report
 uv run code-agent eval-reports
 uv run code-agent eval-reports --summary
 uv run code-agent eval-reports --dashboard
+uv run code-agent eval-reports --analytics
 ```
 
 The eval suite runs deterministic safety regressions plus fixture coding tasks for file creation,
@@ -131,16 +132,21 @@ Use `eval-reports --dashboard` as the first capability dashboard: it rolls saved
 release-readiness gate, latest-run delta, aggregate verification/change rates, category pass rates,
 failure hotspots, and next recommended actions. For automation, use
 `eval-reports --dashboard --json`.
+Use `eval-reports --analytics` when a report fails: it produces compact per-case traces, failure
+classes, command/verification evidence, model usage timing when available, and latest-vs-previous
+regression lists.
 
 Release smoke gate:
 
 ```bash
 uv run code-agent release-smoke
 uv run code-agent release-smoke --json
+uv run code-agent release-smoke --require-dashboard
 ```
 
 The release smoke gate runs unit tests, lint, strict doctor checks, offline evals, and package
-build in one repeatable command.
+build in one repeatable command. Add `--require-dashboard` when saved live eval capacity is stable
+and releases should also require the eval capability dashboard gate to pass.
 
 Debug bundles:
 

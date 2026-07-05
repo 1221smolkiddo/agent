@@ -90,3 +90,45 @@ def test_cli_release_smoke_command_exits_nonzero_when_blocked(monkeypatch, tmp_p
     assert result.exit_code == 1
     payload = json.loads(result.output)
     assert payload["ok"] is False
+
+
+def test_cli_release_smoke_can_require_dashboard_gate(monkeypatch, tmp_path: Path) -> None:
+    report = SmokeReport(
+        checks=[
+            SmokeCheck(
+                name="unit-tests",
+                command=["uv", "run", "pytest"],
+                ok=True,
+                returncode=0,
+                output="passed",
+            )
+        ]
+    )
+    dashboard = {
+        "gate": {"status": "blocked", "reasons": ["provider quota"]},
+        "reports": {"total": 1, "live": 1, "offline": 0},
+        "capability": {"cases": 3, "pass_rate": 0.0},
+        "failure_hotspots": [],
+        "recommendations": ["switch model"],
+    }
+    monkeypatch.setattr(cli_module, "run_release_smoke", lambda cwd, include_build=True: report)
+    monkeypatch.setattr(cli_module, "build_capability_dashboard", lambda report_dir: dashboard)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "release-smoke",
+            "--cwd",
+            str(tmp_path),
+            "--require-dashboard",
+            "--report-dir",
+            str(tmp_path / "reports"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["ok"] is False
+    assert payload["capability_dashboard"]["gate"]["status"] == "blocked"

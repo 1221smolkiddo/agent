@@ -216,6 +216,27 @@ def test_agent_recovers_after_failed_tool_result(tmp_path: Path) -> None:
     assert "recovery_instruction" in model.messages_seen[1][-1]["content"]
 
 
+def test_agent_records_tool_elapsed_ms_in_saved_steps(tmp_path: Path) -> None:
+    model = FakeModel(
+        [
+            '{"type":"list_files","path":"."}',
+            '{"type":"final","message":"done"}',
+        ]
+    )
+    tools = RecoveringTools()
+    agent = make_agent(tmp_path, model, tools)
+
+    result = agent.run_detailed("inspect this project")
+    tool_steps = [
+        item["payload"]
+        for item in agent.storage.run_steps_payloads(result.run_id)
+        if item["payload"].get("type") == "tool_result"
+    ]
+
+    assert tool_steps
+    assert tool_steps[0]["elapsed_ms"] >= 0
+
+
 def test_agent_marks_tool_output_as_untrusted_model_context(tmp_path: Path) -> None:
     model = FakeModel(
         [

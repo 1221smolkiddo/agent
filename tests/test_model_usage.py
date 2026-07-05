@@ -247,19 +247,21 @@ def test_agent_persists_model_usage_records(tmp_path: Path) -> None:
     result = agent.run_detailed("hello")
     stored = storage.model_usage(result.run_id)
 
-    assert result.model_usage_records == [
-        {
-            "provider": "openai-compatible",
-            "model": "primary",
-            "ok": True,
-            "prompt_tokens": 10,
-            "completion_tokens": 5,
-            "total_tokens": 15,
-            "estimated_cost_usd": None,
-            "error": None,
-            "fallback_from": None,
-        }
-    ]
+    assert len(result.model_usage_records) == 1
+    usage_without_latency = dict(result.model_usage_records[0])
+    latency_ms = usage_without_latency.pop("latency_ms")
+    assert usage_without_latency == {
+        "provider": "openai-compatible",
+        "model": "primary",
+        "ok": True,
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "total_tokens": 15,
+        "estimated_cost_usd": None,
+        "error": None,
+        "fallback_from": None,
+    }
+    assert latency_ms >= 0
     assert stored[0]["payload"] == result.model_usage_records[0]
 
 

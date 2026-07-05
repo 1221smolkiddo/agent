@@ -13,7 +13,9 @@ from .doctor import run_doctor
 from .eval_reports import (
     DEFAULT_REPORT_DIR,
     build_capability_dashboard,
+    build_failure_analytics,
     format_capability_dashboard,
+    format_failure_analytics,
     format_eval_report_index,
     format_eval_report_summary,
     list_eval_reports,
@@ -225,6 +227,7 @@ def eval_reports_command(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
     summary: bool = typer.Option(False, "--summary", help="Group reports by mode, provider, and model."),
     dashboard: bool = typer.Option(False, "--dashboard", help="Show release-readiness capability dashboard."),
+    analytics: bool = typer.Option(False, "--analytics", help="Show per-case failure analytics and regressions."),
     min_pass_rate: float = typer.Option(
         0.8,
         "--min-pass-rate",
@@ -239,7 +242,7 @@ def eval_reports_command(
         help="Minimum saved live reports required by the dashboard gate.",
     ),
 ) -> None:
-    """List saved eval reports, summaries, or capability dashboard."""
+    """List saved eval reports, summaries, dashboard, or failure analytics."""
     if dashboard:
         payload = build_capability_dashboard(
             report_dir,
@@ -250,6 +253,14 @@ def eval_reports_command(
             json.dumps(payload, ensure_ascii=False, sort_keys=True)
             if json_output
             else format_capability_dashboard(payload)
+        )
+        return
+    if analytics:
+        payload = build_failure_analytics(report_dir)
+        typer.echo(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True)
+            if json_output
+            else format_failure_analytics(payload)
         )
         return
 
@@ -269,11 +280,31 @@ def release_smoke_command(
     cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
     skip_build: bool = typer.Option(False, "--skip-build", help="Skip package build gate."),
+    require_dashboard: bool = typer.Option(
+        False,
+        "--require-dashboard",
+        help="Also require the saved eval capability dashboard gate to pass.",
+    ),
+    report_dir: Path = typer.Option(DEFAULT_REPORT_DIR, "--report-dir", help="Eval report directory."),
 ) -> None:
     """Run the local release-readiness gate."""
+    dashboard_payload = None
     report = run_release_smoke(cwd.resolve(), include_build=not skip_build)
-    typer.echo(report.to_json() if json_output else report.format_text())
-    if not report.ok:
+    if require_dashboard:
+        dashboard_payload = build_capability_dashboard(report_dir)
+    dashboard_ok = dashboard_payload is None or dashboard_payload.get("gate", {}).get("status") == "pass"
+    if json_output:
+        payload = report.as_dict()
+        if dashboard_payload is not None:
+            payload["capability_dashboard"] = dashboard_payload
+            payload["ok"] = bool(payload["ok"] and dashboard_ok)
+        typer.echo(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        typer.echo(report.format_text())
+        if dashboard_payload is not None:
+            typer.echo("")
+            typer.echo(format_capability_dashboard(dashboard_payload))
+    if not report.ok or not dashboard_ok:
         raise typer.Exit(code=1)
 
 

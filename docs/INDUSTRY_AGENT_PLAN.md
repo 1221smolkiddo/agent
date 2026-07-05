@@ -75,6 +75,8 @@ To-do:
 - Add model/provider comparison summaries. Status: started with `code-agent eval-reports --summary`.
 - Add a capability dashboard and release-readiness gate over saved reports. Status: first pass done with
   `code-agent eval-reports --dashboard`.
+- Add failure analytics with per-case traces and latest-vs-previous regression lists. Status: done with
+  `code-agent eval-reports --analytics`.
 
 Implementation plan:
 
@@ -91,6 +93,8 @@ Acceptance criteria:
 - Eval output shows pass/fail plus capability metrics.
 - Saved eval reports can be rolled up into a dashboard with latest-run deltas, category pass rates,
   verification/change rates, failure hotspots, and release-gate recommendations.
+- Failed eval reports can be diagnosed without reading raw output by using compact case traces,
+  failure classes, verification evidence, timing metadata, and regression lists.
 
 ## Priority 3: Observability And Debug Bundles
 
@@ -99,7 +103,8 @@ Goal: make every failed run explainable.
 To-do:
 
 - Track tool timing.
-- Track model latency.
+- Track tool timing. Status: baseline done in saved tool-result payloads.
+- Track model latency. Status: baseline done in model usage payloads when usage records are drained.
 - Track retry counts and failure categories.
 - Export a debug bundle for one run. Status: done with `code-agent history export`.
 - Include redacted prompts, actions, tool results, diffs, verification output, and model usage. Status: done for saved run payloads, work reports, and model usage.

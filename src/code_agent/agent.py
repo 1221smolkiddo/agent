@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import hashlib
+from time import perf_counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -387,7 +388,9 @@ class CodingAgent:
                 deletes = [p for p in preview_paths if action.type == "delete_file"]
                 self.reporter.mutation_preview(creates, modifies, deletes)
             self._report_action(action)
+            tool_started = perf_counter()
             result = self._run_tool(action)
+            tool_elapsed_ms = round((perf_counter() - tool_started) * 1000, 2)
             new_mutation_records = self._mutation_records_from_action(action, result, before_mutation)
             changed_paths = self._successful_mutation_paths(new_mutation_records)
             mutation_records.extend(new_mutation_records)
@@ -423,6 +426,7 @@ class CodingAgent:
                 "step": step,
                 "ok": result.ok,
                 "output": result.output,
+                "elapsed_ms": tool_elapsed_ms,
                 "recovery_instruction": self._recovery_instruction(result)
                 if not result.ok
                 else "Continue with the task.",
@@ -609,6 +613,7 @@ class CodingAgent:
     ) -> str:
         stream_complete = getattr(self.model_client, "stream_complete", None)
         stream_started = False
+        started = perf_counter()
         try:
             if not self.stream_model or stream_complete is None:
                 return self.model_client.complete(messages)
@@ -618,7 +623,8 @@ class CodingAgent:
                 stream_started = True
             return stream_complete(messages, self._report_model_stream_chunk)
         finally:
-            self._drain_model_usage(run_id, model_usage_records)
+            latency_ms = round((perf_counter() - started) * 1000, 2)
+            self._drain_model_usage(run_id, model_usage_records, latency_ms=latency_ms)
             if self.reporter and stream_started:
                 self.reporter.model_stream_end()
 
@@ -628,12 +634,15 @@ class CodingAgent:
         model_usage_records: list[dict[str, Any]],
         *,
         client: ModelClient | None = None,
+        latency_ms: float | None = None,
     ) -> None:
         drain = getattr(client or self.model_client, "drain_usage_records", None)
         if drain is None:
             return
         for record in drain():
             payload = record.as_dict()
+            if latency_ms is not None:
+                payload["latency_ms"] = latency_ms
             model_usage_records.append(payload)
             self.storage.add_model_usage(run_id, payload)
 
