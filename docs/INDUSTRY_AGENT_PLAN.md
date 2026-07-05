@@ -231,11 +231,12 @@ Goal: support real engineering workflows around code changes.
 
 To-do:
 
-- Add branch helper.
-- Add commit helper.
-- Add PR summary helper.
+- Add branch helper. Status: first pass done with `code-agent collab branch`.
+- Add commit helper. Status: first pass done with `code-agent collab commit` and
+  `code-agent collab commit-message`.
+- Add PR summary helper. Status: first pass done with `code-agent collab pr-summary`.
 - Add review mode command.
-- Add changelog/release-note generation.
+- Add changelog/release-note generation. Status: first pass done with `code-agent collab changelog`.
 
 Implementation plan:
 
@@ -248,6 +249,7 @@ Acceptance criteria:
 
 - Agent47 can prepare a commit message from verified changes.
 - Agent47 can generate a PR summary with tests run and risks.
+- Branch and commit mutations are previewed by default and approval-gated when applied.
 - Review mode leads with bugs, regressions, missing tests, and security issues.
 
 ## Priority 8: Terminal UX Upgrade

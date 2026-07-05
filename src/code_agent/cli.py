@@ -7,6 +7,16 @@ from typing import Optional
 
 import typer
 
+from .collaboration import (
+    build_changelog_entry,
+    build_collaboration_context,
+    build_commit_message,
+    build_pr_summary,
+    commit_changes,
+    create_branch,
+    format_collaboration_status,
+    load_pr_template,
+)
 from .config import Settings
 from .debug_bundle import export_debug_bundle
 from .doctor import run_doctor
@@ -57,8 +67,10 @@ history_app = typer.Typer(
     no_args_is_help=False,
 )
 sandbox_app = typer.Typer(help="Inspect and promote sandbox workspace changes.")
+collab_app = typer.Typer(help="Branch, commit, PR, changelog, and collaboration helpers.")
 app.add_typer(history_app, name="history")
 app.add_typer(sandbox_app, name="sandbox")
+app.add_typer(collab_app, name="collab")
 
 
 def validate_profile_option(value: Optional[str]) -> Optional[str]:
@@ -580,6 +592,119 @@ def revert_command(
     )
     typer.echo(result.output)
     typer.echo(f"Revert run id: {result.run_id}")
+    if not result.ok:
+        raise typer.Exit(code=1)
+
+
+@collab_app.command("status")
+def collab_status_command(
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    run_id: Optional[int] = typer.Option(None, "--run-id", help="Use a saved Agent47 run as context."),
+) -> None:
+    """Show git and run-history collaboration state."""
+    storage = AgentStorage(Settings().agent_db_path) if run_id is not None else None
+    try:
+        context = build_collaboration_context(cwd.resolve(), storage, run_id=run_id)
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1)
+    typer.echo(format_collaboration_status(context))
+
+
+@collab_app.command("commit-message")
+def collab_commit_message_command(
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    run_id: Optional[int] = typer.Option(None, "--run-id", help="Use a saved Agent47 run as context."),
+) -> None:
+    """Generate a reviewable commit message from git state and optional run history."""
+    storage = AgentStorage(Settings().agent_db_path) if run_id is not None else None
+    try:
+        context = build_collaboration_context(cwd.resolve(), storage, run_id=run_id)
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1)
+    typer.echo(build_commit_message(context))
+
+
+@collab_app.command("pr-summary")
+def collab_pr_summary_command(
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    run_id: Optional[int] = typer.Option(None, "--run-id", help="Use a saved Agent47 run as context."),
+    use_template: bool = typer.Option(True, "--template/--no-template", help="Use .github PR template when available."),
+) -> None:
+    """Generate a PR summary from git state, run history, and the local PR template."""
+    storage = AgentStorage(Settings().agent_db_path) if run_id is not None else None
+    try:
+        context = build_collaboration_context(cwd.resolve(), storage, run_id=run_id)
+        template = load_pr_template(cwd.resolve()) if use_template else None
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1)
+    typer.echo(build_pr_summary(context, template))
+
+
+@collab_app.command("changelog")
+def collab_changelog_command(
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    run_id: Optional[int] = typer.Option(None, "--run-id", help="Use a saved Agent47 run as context."),
+    version: str = typer.Option("Unreleased", "--version", help="Changelog heading."),
+) -> None:
+    """Generate a changelog entry from git state and optional run history."""
+    storage = AgentStorage(Settings().agent_db_path) if run_id is not None else None
+    try:
+        context = build_collaboration_context(cwd.resolve(), storage, run_id=run_id)
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1)
+    typer.echo(build_changelog_entry(context, version=version))
+
+
+@collab_app.command("branch")
+def collab_branch_command(
+    branch: str = typer.Argument(..., help="Branch name to create."),
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    apply: bool = typer.Option(False, "--apply", help="Actually create and switch to the branch."),
+) -> None:
+    """Preview or create a work branch with approval."""
+    try:
+        result = create_branch(
+            cwd.resolve(),
+            branch,
+            approval_callback=confirm_permission,
+            apply=apply,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1)
+    typer.echo(result.output)
+    if not result.ok:
+        raise typer.Exit(code=1)
+
+
+@collab_app.command("commit")
+def collab_commit_command(
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    run_id: Optional[int] = typer.Option(None, "--run-id", help="Use a saved Agent47 run as context."),
+    message: Optional[str] = typer.Option(None, "--message", "-m", help="Commit message override."),
+    path: list[str] = typer.Option(None, "--path", help="Limit commit to workspace-relative path."),
+    commit: bool = typer.Option(False, "--commit", help="Actually stage and commit after approval."),
+) -> None:
+    """Preview or create a git commit from changed files and run history."""
+    storage = AgentStorage(Settings().agent_db_path) if run_id is not None else None
+    try:
+        context = build_collaboration_context(cwd.resolve(), storage, run_id=run_id)
+        commit_message = message or build_commit_message(context).splitlines()[0]
+        result = commit_changes(
+            cwd.resolve(),
+            commit_message,
+            paths=path or None,
+            approval_callback=confirm_permission,
+            commit=commit,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1)
+    typer.echo(result.output)
     if not result.ok:
         raise typer.Exit(code=1)
 

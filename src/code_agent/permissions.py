@@ -105,6 +105,8 @@ def confirm_permission(action: str, detail: str) -> str:
         "update_memory": "Update project memory",
         "detect_verification": "Detect verification commands",
         "suggest_verification": "Suggest verification",
+        "git_branch": "Create git branch",
+        "git_commit": "Create git commit",
     }
     label = action_labels.get(action, action.replace("_", " ").title())
 

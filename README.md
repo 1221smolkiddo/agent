@@ -87,6 +87,12 @@ code-agent history show 12
 code-agent history export 12
 code-agent resume 12 "Continue from the failed verification"
 code-agent revert 12
+code-agent collab status
+code-agent collab commit-message --run-id 12
+code-agent collab pr-summary --run-id 12
+code-agent collab changelog --run-id 12
+code-agent collab branch feature/my-work --apply
+code-agent collab commit --run-id 12 --commit
 code-agent sandbox diff .code-agent/sandboxes/sandbox-20260619-120000
 code-agent sandbox apply .code-agent/sandboxes/sandbox-20260619-120000
 ```
@@ -156,6 +162,24 @@ uv run code-agent history export 12
 
 The export command writes a redacted JSON bundle with the saved run, steps, work report, model
 usage, and summary metrics under `.code-agent/debug-bundles/` by default.
+
+Collaboration helpers:
+
+```bash
+uv run code-agent collab status
+uv run code-agent collab commit-message --run-id 12
+uv run code-agent collab pr-summary --run-id 12
+uv run code-agent collab changelog --run-id 12
+uv run code-agent collab branch feature/agent-work
+uv run code-agent collab branch feature/agent-work --apply
+uv run code-agent collab commit --run-id 12
+uv run code-agent collab commit --run-id 12 --commit
+```
+
+The `collab` commands reuse git state plus saved Agent47 run history. They generate commit
+messages, PR summaries that honor `.github/PULL_REQUEST_TEMPLATE.md`, and changelog entries from
+recorded mutations, verification, failed actions, and denied actions. Branch and commit commands
+preview by default; `--apply` and `--commit` require explicit approval before mutating git state.
 
 Interactive mode:
 

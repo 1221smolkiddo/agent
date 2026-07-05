@@ -61,3 +61,18 @@ uv run code-agent release-smoke --require-dashboard
 
 This moves Agent47 from "the benchmark failed" to "the benchmark failed for this specific class
 of reason, here is the compact trace, and here is whether it is a new regression."
+
+## Collaboration Workflow Pass
+
+Implemented first serious collaboration layer:
+
+- `code-agent collab status`
+- `code-agent collab commit-message`
+- `code-agent collab pr-summary`
+- `code-agent collab changelog`
+- `code-agent collab branch`
+- `code-agent collab commit`
+
+The helpers combine git state with saved Agent47 run history so generated artifacts include changed
+files, mutation records, verification evidence, failed actions, denied actions, and PR template
+sections. Git mutations preview by default and require explicit flags plus approval.
