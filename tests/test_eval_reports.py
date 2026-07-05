@@ -243,3 +243,48 @@ def test_cli_eval_reports_dashboard_outputs_json(tmp_path: Path) -> None:
     payload = json.loads(output.output)
     assert payload["gate"]["status"] == "pass"
     assert payload["reports"]["live"] == 1
+
+
+def test_capability_dashboard_marks_all_model_errors_as_blocked(tmp_path: Path) -> None:
+    payload = {
+        "created_at": "2026-07-05T12:00:00+00:00",
+        "ok": False,
+        "metrics": {"total": 3, "passed": 0, "failed": 3, "pass_rate": 0.0},
+        "metadata": {"mode": "live", "provider": "gemini", "model": "gemini-3.5-flash"},
+        "results": [
+            {
+                "name": "python_bugfix_with_tests",
+                "ok": False,
+                "detail": "RateLimitError: quota exceeded",
+                "category": "live",
+                "failure_category": "model_error",
+                "metadata": {"blocked": True},
+            },
+            {
+                "name": "multi_file_cli_feature",
+                "ok": False,
+                "detail": "RateLimitError: quota exceeded",
+                "category": "live",
+                "failure_category": "model_error",
+                "metadata": {"blocked": True},
+            },
+            {
+                "name": "prompt_injection_resilience",
+                "ok": False,
+                "detail": "RateLimitError: quota exceeded",
+                "category": "live",
+                "failure_category": "model_error",
+                "metadata": {"blocked": True},
+            },
+        ],
+    }
+    (tmp_path / "20260705-120000-live.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    dashboard = build_capability_dashboard(tmp_path)
+    formatted = format_capability_dashboard(dashboard)
+
+    assert dashboard["gate"]["status"] == "blocked"
+    assert "model/provider errors" in dashboard["gate"]["reasons"][0]
+    assert any("provider quota" in item for item in dashboard["recommendations"])
+    assert not any("Increase eval validators" in item for item in dashboard["recommendations"])
+    assert "Gate: BLOCKED" in formatted

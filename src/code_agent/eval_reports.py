@@ -481,6 +481,15 @@ def _capability_gate(
         categories = dict(latest_live.get("failure_categories", {}))
         if categories:
             reasons.append("latest live failures: " + _format_failure_categories(categories))
+            if _is_infrastructure_blocked(categories, int(latest_live.get("failed", 0))):
+                return {
+                    "status": "blocked",
+                    "reasons": [
+                        "latest live eval was blocked by model/provider errors",
+                        *reasons,
+                    ],
+                    "failure_categories": categories,
+                }
     return {
         "status": "pass" if not reasons else "fail",
         "reasons": reasons,
@@ -496,15 +505,50 @@ def _dashboard_recommendations(
     failure_hotspots: list[dict[str, Any]],
 ) -> list[str]:
     recommendations: list[str] = []
-    if gate.get("status") != "pass":
+    gate_status = str(gate.get("status", ""))
+    infrastructure_blocked = gate_status == "blocked" or _hotspots_are_infrastructure(failure_hotspots)
+    if infrastructure_blocked:
+        recommendations.append(
+            "Fix provider quota/rate-limit/authentication or switch to another configured model before judging capability."
+        )
+        recommendations.append("Rerun a smaller live benchmark, for example `code-agent evals --live --limit 1 --save-report`.")
+    elif gate_status != "pass":
         recommendations.append("Run `code-agent evals --live --save-report` on the intended release model.")
-    if reports and float(aggregate.get("verification_rate", 0.0)) < 0.6:
+    if reports and not infrastructure_blocked and float(aggregate.get("verification_rate", 0.0)) < 0.6:
         recommendations.append("Increase eval validators that require recorded test, lint, build, or command evidence.")
-    if latest_live is not None and float(latest_live.get("pass_rate", 0.0)) < DEFAULT_MIN_PASS_RATE:
+    if (
+        latest_live is not None
+        and not infrastructure_blocked
+        and float(latest_live.get("pass_rate", 0.0)) < DEFAULT_MIN_PASS_RATE
+    ):
         recommendations.append("Inspect the latest failing live cases before adding new agent features.")
     if failure_hotspots:
         top = failure_hotspots[0]
-        recommendations.append(f"Prioritize the `{top['failure_category']}` failure class; it is the largest hotspot.")
+        if infrastructure_blocked:
+            recommendations.append(
+                f"Treat `{top['failure_category']}` as an eval infrastructure blocker, not an agent solve-rate signal."
+            )
+        else:
+            recommendations.append(f"Prioritize the `{top['failure_category']}` failure class; it is the largest hotspot.")
     if not reports:
         recommendations.append("Save an offline report first with `code-agent evals --save-report`.")
     return recommendations
+
+
+def _is_infrastructure_blocked(categories: dict[str, int], failed: int) -> bool:
+    if failed <= 0:
+        return False
+    infrastructure_failures = int(categories.get("model_error", 0))
+    return infrastructure_failures > 0 and infrastructure_failures == failed
+
+
+def _hotspots_are_infrastructure(failure_hotspots: list[dict[str, Any]]) -> bool:
+    if not failure_hotspots:
+        return False
+    total = sum(int(item.get("count", 0)) for item in failure_hotspots)
+    infrastructure = sum(
+        int(item.get("count", 0))
+        for item in failure_hotspots
+        if item.get("failure_category") == "model_error"
+    )
+    return total > 0 and infrastructure == total
