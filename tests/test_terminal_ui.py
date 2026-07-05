@@ -77,13 +77,12 @@ def test_interactive_mode_starts_write_enabled() -> None:
 def test_read_prompt_propagates_click_abort(monkeypatch) -> None:
     monkeypatch.setattr(interactive.typer, "echo", lambda *_args, **_kwargs: None)
 
-    def abort_input(_prompt):
-        raise Abort()
-
-    monkeypatch.setattr("builtins.input", abort_input)
+    class DummySession:
+        def prompt(self, *args, **kwargs):
+            raise Abort()
 
     with pytest.raises(Abort):
-        read_prompt()
+        read_prompt(DummySession())
 
 
 def test_model_selection_preview_lists_presets_and_shortcut_note() -> None:
@@ -409,9 +408,9 @@ def test_status_line_and_header_are_compact() -> None:
         )
 
     rendered = capture.get()
-    assert "Agent47 v0.1.0" in rendered
-    assert "glm-5.2" in rendered
-    assert "Git main" in rendered
+    assert "AGENT47" in rendered or "___  ____" in rendered or "/ _ \\" in rendered
+    assert "Tips for getting started" in rendered
+    assert "1. Ask questions" in rendered
 
 
 def test_status_reporter_uses_single_thinking_spinner(monkeypatch) -> None:

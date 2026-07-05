@@ -18,6 +18,10 @@ from rich.prompt import Prompt
 from rich.table import Table
 from typer._click.exceptions import Abort
 
+from prompt_toolkit import PromptSession
+from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit.formatted_text import HTML
+
 from .config import Settings
 from .factory import create_agent, create_chat_client
 from .model_profiles import validate_profile_name
@@ -92,14 +96,12 @@ def main() -> None:
     )
     workspace_summary = analyze_workspace(cwd)
     StatusReporter.mark_workspace_seen(workspace_summary)
-    console.print(f"[bold cyan]WORKSPACE[/bold cyan]   {workspace_summary.splitlines()[0]}")
-    for line in workspace_summary.splitlines()[1:]:
-        console.print(line)
-    console.print()
 
+    session = PromptSession()
     while True:
         try:
-            user_input = read_prompt(settings, cwd, model, profile)
+            with patch_stdout():
+                user_input = read_prompt(session, settings, cwd, model, profile)
         except InteractiveExitRequested:
             print_panel("System", "bye")
             return
@@ -957,18 +959,34 @@ def is_persona_instruction(user_input: str) -> bool:
         f" {term} " in f" {normalized} " for term in task_terms
     )
 
-
-def read_prompt(
+def read_prompt(
+    session: PromptSession,
     settings: Settings | None = None,
     cwd: Path | None = None,
     model: str | None = None,
     profile: str | None = None,
 ) -> str:
     if settings is None:
-        prompt = "agent47 > "
+        status_line = "Agent47"
     else:
-        prompt = format_interactive_prompt(settings, cwd or Path.cwd(), model, profile)
-    return read_interactive_line(prompt).strip()
+        branch = git_branch(cwd) or (cwd.name if cwd else "unknown")
+        model_label = model_display_name(current_model_name(settings, model))
+        active_profile = profile or settings.agent_profile
+        status_line = f"Using: {branch} branch | {model_label} | {active_profile} profile"
+
+    message = HTML(f'<style color="gray">{status_line}</style>\n<b>&gt;</b> ')
+    placeholder = HTML('<style color="gray">Type your message or /help...</style>')
+
+    # Catch Ctrl-C (KeyboardInterrupt) specifically to map it to our custom behavior
+    try:
+        line = session.prompt(message, placeholder=placeholder)
+        if line == CTRL_E:
+            raise InteractiveExitRequested
+        return line.strip()
+    except KeyboardInterrupt:
+        # PromptSession raises KeyboardInterrupt when user hits Ctrl-C
+        # which our loop handles to skip/reset
+        raise
 
 
 def format_interactive_prompt(

@@ -113,21 +113,44 @@ def print_startup_header(
     print_session_header(header, mode=mode)
 
 
+def blend_colors(color1: tuple[int, int, int], color2: tuple[int, int, int], ratio: float) -> str:
+    r = int(color1[0] + (color2[0] - color1[0]) * ratio)
+    g = int(color1[1] + (color2[1] - color1[1]) * ratio)
+    b = int(color1[2] + (color2[2] - color1[2]) * ratio)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
 def print_session_header(header: SessionHeader, *, mode: str) -> None:
-    table = Table.grid(expand=True, padding=(0, 3))
-    table.add_column(no_wrap=True)
-    table.add_column(ratio=1)
-    table.add_column(no_wrap=True)
-    title = Text(f"Agent47 v{header.version}", style="bold cyan")
-    mode_text = Text("write" if mode == "write-enabled" else "dry-run")
-    mode_text.stylize("green" if mode == "write-enabled" else "yellow")
-    table.add_row(title, Text(header.workspace, style="muted"), mode_text)
-    table.add_row("Model", Text(header.model, style="cyan"), Text(f"Provider {header.provider}", style="muted"))
-    table.add_row("Profile", Text(header.profile, style="default"), Text(f"Approval {header.approval}", style="muted"))
-    git_value = header.git_branch or "none"
-    table.add_row("Sandbox", Text(header.sandbox, style="default"), Text(f"Git {git_value}", style="muted"))
-    console.print(table)
-    console.print()
+    ascii_art = """
+    _    ____ _____ _   _ _____ _  _  _____ 
+   / \\  / ___| ____| \\ | |_   _| || ||___  |
+  / _ \\| |  _|  _| |  \\| | | | | || |_  / / 
+ / ___ \\ |_| | |___| |\\  | | | |__   _|/ /  
+/_/   \\_\\____|_____|_| \\_| |_|    |_| /_/   
+"""
+    start_color = (100, 150, 255) # light blue
+    end_color = (255, 100, 150)   # pinkish
+
+    rich_text = Text()
+    lines = ascii_art.strip("\n").splitlines()
+    for line in lines:
+        for i, char in enumerate(line):
+            ratio = i / max(1, len(line) - 1)
+            hex_color = blend_colors(start_color, end_color, ratio)
+            rich_text.append(char, style=f"bold {hex_color}")
+        rich_text.append("\n")
+
+    console.print(rich_text)
+    
+    tips = Text()
+    tips.append("Tips for getting started:\n", style="muted")
+    tips.append("1. Ask questions, edit files, or run commands.\n", style="default")
+    tips.append("2. Be specific for the best results.\n", style="default")
+    tips.append("3. ", style="default")
+    tips.append("/help", style="bold cyan")
+    tips.append(" for more information.\n", style="default")
+    
+    console.print(tips)
+
 
 
 def format_status_line(
@@ -180,16 +203,9 @@ def print_work_report_panel(result: AgentRunResult) -> None:
             modified_paths.append(path)
 
     sections: list[object] = []
-    summary = Table.grid(expand=True)
-    summary.add_column(ratio=1)
-    summary.add_column(justify="right", no_wrap=True)
-    summary.add_row(Text("Finished Work", style="bold green"), Text(f"Run #{result.run_id}", style="muted"))
+    
     if result.message:
-        summary.add_row(Text(_single_line(result.message, max_chars=120), style="default"), Text(""))
-    duration = getattr(result, "duration", None)
-    if duration is not None:
-        summary.add_row(Text(f"Duration: {duration}s", style="muted"), Text(""))
-    sections.append(summary)
+        sections.append(Text(_single_line(result.message, max_chars=900), style="default"))
 
     if created_paths or modified_paths or deleted_paths:
         changes = Table(show_header=True, header_style="bold cyan", box=box.SIMPLE, padding=(0, 2), expand=True)
@@ -215,10 +231,12 @@ def print_work_report_panel(result: AgentRunResult) -> None:
             verification.add_row(str(label), status_text, str(v.get("command") or ""))
         sections.extend([Text("Verification", style="bold underline"), verification])
 
-    if not created_paths and not modified_paths and not deleted_paths and not result.verification_results:
-        sections.append(Text(_single_line(result.message, max_chars=900), style="default"))
+    title = f"Finished Work (Run #{result.run_id})"
+    duration = getattr(result, "duration", None)
+    if duration is not None:
+        title += f" [{duration}s]"
 
-    print_renderable_panel("Finished Work", Group(*_with_spacers(sections)), style="green")
+    print_renderable_panel(title, Group(*_with_spacers(sections)), style="green")
 
 def print_error_card(title: str, lines: list[tuple[str, str]], suggestions: list[str]) -> None:
     text = Text()
