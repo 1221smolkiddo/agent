@@ -4,6 +4,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
+import re
 
 from .storage import AgentStorage
 
@@ -68,6 +69,24 @@ class CommitResult:
     message: str
     output: str
     committed: bool = False
+
+
+@dataclass(frozen=True)
+class ReviewFinding:
+    severity: str
+    title: str
+    detail: str
+    path: str | None = None
+    line: int | None = None
+
+
+@dataclass(frozen=True)
+class ReviewReport:
+    ok: bool
+    findings: list[ReviewFinding]
+    checked_files: list[str]
+    verification_summary: list[str]
+    risk_summary: list[str]
 
 
 def build_collaboration_context(
@@ -216,6 +235,49 @@ def build_changelog_entry(context: CollaborationContext, *, version: str = "Unre
     return "\n".join(lines)
 
 
+def build_review_report(context: CollaborationContext) -> ReviewReport:
+    findings: list[ReviewFinding] = []
+    findings.extend(_verification_findings(context))
+    findings.extend(_workflow_findings(context))
+    findings.extend(_diff_findings(context.snapshot.cwd))
+    findings.extend(_untracked_file_findings(context.snapshot))
+    findings = sorted(findings, key=lambda item: _severity_rank(item.severity))
+    return ReviewReport(
+        ok=not any(item.severity in {"critical", "high"} for item in findings),
+        findings=findings,
+        checked_files=context.changed_paths,
+        verification_summary=[_verification_line(item) for item in context.verification_results],
+        risk_summary=_risk_lines(context),
+    )
+
+
+def format_review_report(report: ReviewReport) -> str:
+    lines = ["Agent47 review report:"]
+    if not report.findings:
+        lines.append("- No blocking findings found.")
+    else:
+        lines.append("- Findings:")
+        for finding in report.findings:
+            location = ""
+            if finding.path:
+                location = finding.path
+                if finding.line is not None:
+                    location += f":{finding.line}"
+                location = f" [{location}]"
+            lines.append(f"  - {finding.severity.upper()}: {finding.title}{location}")
+            lines.append(f"    {finding.detail}")
+    if report.verification_summary:
+        lines.append("- Verification:")
+        lines.extend(f"  - {item}" for item in report.verification_summary)
+    else:
+        lines.append("- Verification: not recorded")
+    if report.risk_summary:
+        lines.append("- Residual risk:")
+        lines.extend(f"  - {item}" for item in report.risk_summary)
+    lines.append(f"Result: {'ready for human review' if report.ok else 'blocked'}")
+    return "\n".join(lines)
+
+
 def create_branch(
     cwd: Path,
     branch: str,
@@ -271,6 +333,188 @@ def commit_changes(
         output=_combined_output(completed),
         committed=completed.returncode == 0,
     )
+
+
+def _verification_findings(context: CollaborationContext) -> list[ReviewFinding]:
+    findings: list[ReviewFinding] = []
+    if not context.changed_paths:
+        return findings
+    if not context.verification_results:
+        findings.append(
+            ReviewFinding(
+                severity="high",
+                title="No verification evidence recorded",
+                detail="Changed files are present but no test, lint, typecheck, or build result was recorded.",
+            )
+        )
+        return findings
+    failed = [item for item in context.verification_results if item.get("ok") is False or item.get("status") == "failed"]
+    for item in failed:
+        findings.append(
+            ReviewFinding(
+                severity="high",
+                title="Verification failed",
+                detail=_verification_line(item),
+            )
+        )
+    source_changed = any(_is_source_path(path) for path in context.changed_paths)
+    test_changed = any(_is_test_path(path) for path in context.changed_paths)
+    if source_changed and not test_changed and not failed:
+        findings.append(
+            ReviewFinding(
+                severity="medium",
+                title="Source changed without test changes",
+                detail="Runtime code changed but no test file changed. Confirm existing tests cover the new behavior.",
+            )
+        )
+    return findings
+
+
+def _workflow_findings(context: CollaborationContext) -> list[ReviewFinding]:
+    findings: list[ReviewFinding] = []
+    if context.denied_actions:
+        findings.append(
+            ReviewFinding(
+                severity="high",
+                title="Denied actions during run",
+                detail=f"{len(context.denied_actions)} action(s) were denied. Verify the final change did not assume denied work succeeded.",
+            )
+        )
+    if context.failed_actions:
+        findings.append(
+            ReviewFinding(
+                severity="medium",
+                title="Failed actions during run",
+                detail=f"{len(context.failed_actions)} failed action(s) were recorded before completion.",
+            )
+        )
+    if context.snapshot.untracked_files:
+        findings.append(
+            ReviewFinding(
+                severity="medium",
+                title="Untracked files present",
+                detail="Untracked files need an explicit include/exclude decision: "
+                + ", ".join(context.snapshot.untracked_files[:8]),
+            )
+        )
+    return findings
+
+
+def _diff_findings(cwd: Path) -> list[ReviewFinding]:
+    completed = _git(cwd, ["diff", "--cached", "--unified=0"], check=False)
+    staged_diff = completed.stdout if completed.returncode == 0 else ""
+    completed = _git(cwd, ["diff", "--unified=0"], check=False)
+    unstaged_diff = completed.stdout if completed.returncode == 0 else ""
+    return _scan_added_lines_for_risks(staged_diff + "\n" + unstaged_diff)
+
+
+def _untracked_file_findings(snapshot: GitSnapshot) -> list[ReviewFinding]:
+    findings: list[ReviewFinding] = []
+    for relative in snapshot.untracked_files:
+        path = snapshot.cwd / relative
+        if not path.is_file() or path.stat().st_size > 500_000:
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        for index, line in enumerate(lines, start=1):
+            findings.extend(_line_findings(relative, index, line))
+    return findings
+
+
+def _scan_added_lines_for_risks(diff: str) -> list[ReviewFinding]:
+    findings: list[ReviewFinding] = []
+    path: str | None = None
+    new_line = 0
+    for raw in diff.splitlines():
+        if raw.startswith("+++ "):
+            candidate = raw[4:].strip()
+            path = None if candidate == "/dev/null" else candidate.removeprefix("b/")
+            continue
+        if raw.startswith("@@"):
+            new_line = _hunk_new_start(raw)
+            continue
+        if raw.startswith("+") and not raw.startswith("+++"):
+            line = raw[1:]
+            findings.extend(_line_findings(path, new_line, line))
+            new_line += 1
+            continue
+        if not raw.startswith("-") and path is not None and raw:
+            new_line += 1
+    return findings
+
+
+def _line_findings(path: str | None, line_number: int, line: str) -> list[ReviewFinding]:
+    stripped = line.strip()
+    code_view = _line_without_string_literals(stripped)
+    lowered_code = code_view.lower()
+    findings: list[ReviewFinding] = []
+    if not stripped:
+        return findings
+    if re_search_secret(stripped):
+        findings.append(
+            ReviewFinding(
+                severity="critical",
+                title="Possible secret introduced",
+                detail="Added line resembles a credential or token. Remove secrets before committing.",
+                path=path,
+                line=line_number,
+            )
+        )
+    if re.search(r"\bshell\s*=\s*true\b", lowered_code):
+        findings.append(
+            ReviewFinding(
+                severity="high",
+                title="Shell execution risk",
+                detail="Added subprocess shell=True usage. Prefer argv lists or justify the shell boundary.",
+                path=path,
+                line=line_number,
+            )
+        )
+    if re.search(r"\b(eval|exec)\s*\(", lowered_code):
+        findings.append(
+            ReviewFinding(
+                severity="high",
+                title="Dynamic code execution risk",
+                detail="Added eval/exec usage. Verify input cannot be user- or repo-controlled.",
+                path=path,
+                line=line_number,
+            )
+        )
+    if stripped in {"pass", "..."} and path and _is_source_path(path):
+        findings.append(
+            ReviewFinding(
+                severity="medium",
+                title="Placeholder code added",
+                detail="Added placeholder implementation in source code.",
+                path=path,
+                line=line_number,
+            )
+        )
+    return findings
+
+
+def _line_without_string_literals(line: str) -> str:
+    output: list[str] = []
+    quote: str | None = None
+    escaped = False
+    for char in line:
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            output.append(" ")
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            output.append(" ")
+        else:
+            output.append(char)
+    return "".join(output)
 
 
 def load_pr_template(cwd: Path) -> str | None:
@@ -445,6 +689,44 @@ def _friendly_action(record: dict[str, Any]) -> str:
         "apply_patch": "Patched",
         "delete_file": "Deleted",
     }.get(str(record.get("action", "")), "Changed")
+
+
+def _severity_rank(severity: str) -> int:
+    return {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(severity, 4)
+
+
+def _is_source_path(path: str) -> bool:
+    normalized = path.replace("\\", "/")
+    if _is_test_path(normalized):
+        return False
+    return normalized.endswith((".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".cs"))
+
+
+def _is_test_path(path: str) -> bool:
+    normalized = path.replace("\\", "/").lower()
+    return (
+        normalized.startswith("tests/")
+        or "/tests/" in normalized
+        or normalized.endswith(("_test.py", ".test.js", ".test.ts", ".spec.ts", ".spec.js"))
+        or normalized.startswith("test_")
+    )
+
+
+def _hunk_new_start(line: str) -> int:
+    match = re.search(r"\+(\d+)(?:,\d+)?", line)
+    if not match:
+        return 0
+    return int(match.group(1))
+
+
+def re_search_secret(line: str) -> bool:
+    secret_patterns = [
+        r"(?i)(api[_-]?key|secret|token|password)\s*=\s*['\"][^'\"]{12,}['\"]",
+        r"(?i)(api[_-]?key|secret|token|password)\s*:\s*['\"][^'\"]{12,}['\"]",
+        r"sk-[A-Za-z0-9_-]{20,}",
+        r"ghp_[A-Za-z0-9_]{20,}",
+    ]
+    return any(re.search(pattern, line) for pattern in secret_patterns)
 
 
 def _validate_branch_name(root: Path, branch: str) -> None:

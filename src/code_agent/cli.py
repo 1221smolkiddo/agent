@@ -12,9 +12,11 @@ from .collaboration import (
     build_collaboration_context,
     build_commit_message,
     build_pr_summary,
+    build_review_report,
     commit_changes,
     create_branch,
     format_collaboration_status,
+    format_review_report,
     load_pr_template,
 )
 from .config import Settings
@@ -657,6 +659,25 @@ def collab_changelog_command(
         typer.echo(str(exc))
         raise typer.Exit(code=1)
     typer.echo(build_changelog_entry(context, version=version))
+
+
+@collab_app.command("review")
+def collab_review_command(
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    run_id: Optional[int] = typer.Option(None, "--run-id", help="Use a saved Agent47 run as context."),
+    strict: bool = typer.Option(False, "--strict", help="Exit nonzero for high or critical findings."),
+) -> None:
+    """Review changed work for bugs, regressions, missing tests, and security risks."""
+    storage = AgentStorage(Settings().agent_db_path) if run_id is not None else None
+    try:
+        context = build_collaboration_context(cwd.resolve(), storage, run_id=run_id)
+        report = build_review_report(context)
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1)
+    typer.echo(format_review_report(report))
+    if strict and not report.ok:
+        raise typer.Exit(code=1)
 
 
 @collab_app.command("branch")

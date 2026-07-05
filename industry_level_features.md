@@ -70,9 +70,15 @@ Implemented first serious collaboration layer:
 - `code-agent collab commit-message`
 - `code-agent collab pr-summary`
 - `code-agent collab changelog`
+- `code-agent collab review`
 - `code-agent collab branch`
 - `code-agent collab commit`
 
 The helpers combine git state with saved Agent47 run history so generated artifacts include changed
 files, mutation records, verification evidence, failed actions, denied actions, and PR template
 sections. Git mutations preview by default and require explicit flags plus approval.
+
+Review mode is deterministic and merge-risk oriented. It flags missing verification, failed checks,
+denied or failed actions, untracked file decisions, secret-looking additions, shell execution,
+dynamic code execution, and placeholder source code. `--strict` makes high/critical findings fail
+the command for CI or pre-merge use.

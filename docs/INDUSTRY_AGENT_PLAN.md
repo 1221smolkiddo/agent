@@ -235,7 +235,7 @@ To-do:
 - Add commit helper. Status: first pass done with `code-agent collab commit` and
   `code-agent collab commit-message`.
 - Add PR summary helper. Status: first pass done with `code-agent collab pr-summary`.
-- Add review mode command.
+- Add review mode command. Status: first pass done with `code-agent collab review`.
 - Add changelog/release-note generation. Status: first pass done with `code-agent collab changelog`.
 
 Implementation plan:

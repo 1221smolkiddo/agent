@@ -91,6 +91,7 @@ code-agent collab status
 code-agent collab commit-message --run-id 12
 code-agent collab pr-summary --run-id 12
 code-agent collab changelog --run-id 12
+code-agent collab review --run-id 12
 code-agent collab branch feature/my-work --apply
 code-agent collab commit --run-id 12 --commit
 code-agent sandbox diff .code-agent/sandboxes/sandbox-20260619-120000
@@ -170,6 +171,8 @@ uv run code-agent collab status
 uv run code-agent collab commit-message --run-id 12
 uv run code-agent collab pr-summary --run-id 12
 uv run code-agent collab changelog --run-id 12
+uv run code-agent collab review --run-id 12
+uv run code-agent collab review --run-id 12 --strict
 uv run code-agent collab branch feature/agent-work
 uv run code-agent collab branch feature/agent-work --apply
 uv run code-agent collab commit --run-id 12
@@ -180,6 +183,10 @@ The `collab` commands reuse git state plus saved Agent47 run history. They gener
 messages, PR summaries that honor `.github/PULL_REQUEST_TEMPLATE.md`, and changelog entries from
 recorded mutations, verification, failed actions, and denied actions. Branch and commit commands
 preview by default; `--apply` and `--commit` require explicit approval before mutating git state.
+`collab review` is deterministic review mode: it leads with blocking bugs and merge risks such as
+missing verification, failed checks, denied actions, untracked files, introduced secret-looking
+lines, shell execution, dynamic code execution, and placeholder source code. Use `--strict` to exit
+nonzero on high or critical findings.
 
 Interactive mode:
 

@@ -10,8 +10,10 @@ from code_agent.collaboration import (
     build_collaboration_context,
     build_commit_message,
     build_pr_summary,
+    build_review_report,
     commit_changes,
     create_branch,
+    format_review_report,
 )
 from code_agent.patches import git_style_unified_diff
 from code_agent.storage import AgentStorage
@@ -110,6 +112,56 @@ def test_cli_collab_status_reports_git_files(tmp_path: Path) -> None:
     assert "notes.md" in result.output
 
 
+def test_review_report_blocks_missing_verification(tmp_path: Path) -> None:
+    workspace = _git_repo(tmp_path)
+    (workspace / "app.py").write_text("print('new')\n", encoding="utf-8")
+    context = build_collaboration_context(workspace)
+
+    report = build_review_report(context)
+    rendered = format_review_report(report)
+
+    assert not report.ok
+    assert report.findings[0].title == "No verification evidence recorded"
+    assert "Result: blocked" in rendered
+
+
+def test_review_report_detects_risky_added_lines(tmp_path: Path) -> None:
+    workspace = _git_repo(tmp_path)
+    (workspace / "runner.py").write_text(
+        "import subprocess\nsubprocess.run('rm -rf tmp', shell=True)\n",
+        encoding="utf-8",
+    )
+    context = build_collaboration_context(workspace)
+
+    report = build_review_report(context)
+
+    assert any(finding.title == "Shell execution risk" for finding in report.findings)
+    assert not report.ok
+
+
+def test_review_report_uses_run_verification_and_flags_failed_checks(tmp_path: Path) -> None:
+    workspace = _git_repo(tmp_path)
+    storage = AgentStorage(tmp_path / "agent.db")
+    run_id = _record_agent_run(storage, workspace, verification_ok=False)
+    context = build_collaboration_context(workspace, storage, run_id=run_id)
+
+    report = build_review_report(context)
+
+    assert any(finding.title == "Verification failed" for finding in report.findings)
+    assert not report.ok
+
+
+def test_cli_collab_review_strict_exits_nonzero_for_blockers(tmp_path: Path) -> None:
+    workspace = _git_repo(tmp_path)
+    (workspace / "app.py").write_text("print('new')\n", encoding="utf-8")
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["collab", "review", "--cwd", str(workspace), "--strict"])
+
+    assert result.exit_code == 1
+    assert "No verification evidence recorded" in result.output
+
+
 def _git_repo(tmp_path: Path) -> Path:
     workspace = tmp_path / "repo"
     workspace.mkdir()
@@ -122,7 +174,7 @@ def _git_repo(tmp_path: Path) -> Path:
     return workspace
 
 
-def _record_agent_run(storage: AgentStorage, workspace: Path) -> int:
+def _record_agent_run(storage: AgentStorage, workspace: Path, *, verification_ok: bool = True) -> int:
     run_id = storage.create_run("add collaboration workflow", "fake-model", workspace)
     storage.add_step(run_id, "assistant", {"type": "apply_patch", "patch": "forward"})
     storage.add_step(
@@ -152,8 +204,8 @@ def _record_agent_run(storage: AgentStorage, workspace: Path) -> int:
                 {
                     "purpose": "test",
                     "command": "uv run pytest",
-                    "ok": True,
-                    "status": "passed",
+                    "ok": verification_ok,
+                    "status": "passed" if verification_ok else "failed",
                 }
             ],
         },
