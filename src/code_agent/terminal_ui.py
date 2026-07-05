@@ -127,8 +127,8 @@ def print_session_header(header: SessionHeader, *, mode: str) -> None:
  / ___ \\ |_| | |___| |\\  | | | |__   _|/ /  
 /_/   \\_\\____|_____|_| \\_| |_|    |_| /_/   
 """
-    start_color = (100, 150, 255) # light blue
-    end_color = (255, 100, 150)   # pinkish
+    start_color = (0, 215, 130) # Cyber Green
+    end_color = (0, 180, 255)   # Bright Cyan
 
     rich_text = Text()
     lines = ascii_art.strip("\n").splitlines()
