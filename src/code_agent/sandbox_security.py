@@ -1,0 +1,389 @@
+from __future__ import annotations
+
+import fnmatch
+import json
+import shutil
+import subprocess
+import time
+import tomllib
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from .processes import CancellationToken, ProcessSupervisor, ShellProcessResult
+from .safety import ShellPolicy
+
+
+POLICY_PATH = ".code-agent/policy.toml"
+DISK_USAGE_IGNORES = {
+    ".code-agent",
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "node_modules",
+}
+
+
+@dataclass(frozen=True)
+class SandboxResourceLimits:
+    timeout_seconds: int | None = None
+    cpus: float = 1.0
+    memory_mb: int = 1024
+    disk_mb: int = 2048
+    pids: int = 128
+
+
+@dataclass(frozen=True)
+class CommandPolicy:
+    allow: tuple[str, ...] = ()
+    deny: tuple[str, ...] = ()
+    allow_install: bool = False
+    allow_git_mutation: bool = False
+    offline: bool = True
+    domain_allowlist: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class SandboxPolicy:
+    backend: str = "local"
+    container_image: str = "python:3.13-slim"
+    rootless_required: bool = True
+    resources: SandboxResourceLimits = field(default_factory=SandboxResourceLimits)
+    commands: CommandPolicy = field(default_factory=CommandPolicy)
+    audit_enabled: bool = True
+    cleanup: bool = True
+
+    @classmethod
+    def from_workspace(
+        cls,
+        workspace: Path,
+        *,
+        backend: str = "local",
+        container_image: str = "python:3.13-slim",
+    ) -> "SandboxPolicy":
+        path = workspace.resolve() / POLICY_PATH
+        if not path.exists():
+            return cls(backend=backend, container_image=container_image)
+        payload = tomllib.loads(path.read_text(encoding="utf-8"))
+        sandbox = _dict(payload.get("sandbox"))
+        resources = _dict(payload.get("resources"))
+        commands = _dict(payload.get("commands"))
+        network = _dict(payload.get("network"))
+        return cls(
+            backend=str(sandbox.get("backend", backend)).strip().lower() or backend,
+            container_image=str(
+                sandbox.get("container_image", container_image)
+            ).strip()
+            or container_image,
+            rootless_required=bool(sandbox.get("rootless_required", True)),
+            resources=SandboxResourceLimits(
+                timeout_seconds=_optional_int(resources.get("timeout_seconds")),
+                cpus=float(resources.get("cpus", 1.0)),
+                memory_mb=int(resources.get("memory_mb", 1024)),
+                disk_mb=int(resources.get("disk_mb", 2048)),
+                pids=int(resources.get("pids", 128)),
+            ),
+            commands=CommandPolicy(
+                allow=tuple(str(item) for item in commands.get("allow", []) or []),
+                deny=tuple(str(item) for item in commands.get("deny", []) or []),
+                allow_install=bool(commands.get("allow_install", False)),
+                allow_git_mutation=bool(commands.get("allow_git_mutation", False)),
+                offline=bool(network.get("offline", True)),
+                domain_allowlist=tuple(str(item) for item in network.get("domain_allowlist", []) or []),
+            ),
+            audit_enabled=bool(sandbox.get("audit_enabled", True)),
+            cleanup=bool(sandbox.get("cleanup", True)),
+        )
+
+    def command_rejection(self, command: str, shell_policy: ShellPolicy) -> str | None:
+        for pattern in self.commands.deny:
+            if _matches_command(pattern, command):
+                return f"Sandbox policy denied command by pattern `{pattern}`."
+        if shell_policy.category == "install/network" and not self.commands.allow_install:
+            return (
+                "Sandbox policy blocked install/network command. Add an explicit policy allow "
+                "or enable commands.allow_install only for trusted projects."
+            )
+        if shell_policy.category == "git" and _looks_like_git_mutation(command) and not self.commands.allow_git_mutation:
+            return "Sandbox policy blocked git mutation command inside the sandbox."
+        if self.commands.allow:
+            if not any(_matches_command(pattern, command) for pattern in self.commands.allow):
+                return "Sandbox policy allowlist did not include this command."
+        return None
+
+    def effective_timeout(self, shell_policy: ShellPolicy) -> int:
+        if self.resources.timeout_seconds is not None:
+            return min(shell_policy.timeout_seconds, self.resources.timeout_seconds)
+        return shell_policy.timeout_seconds
+
+
+@dataclass(frozen=True)
+class SandboxHealth:
+    backend: str
+    available: bool
+    isolation: str
+    runtime: str | None = None
+    detail: str = ""
+
+    def format_text(self) -> str:
+        lines = [
+            "Sandbox health:",
+            f"- backend: {self.backend}",
+            f"- available: {'yes' if self.available else 'no'}",
+            f"- isolation: {self.isolation}",
+        ]
+        if self.runtime:
+            lines.append(f"- runtime: {self.runtime}")
+        if self.detail:
+            lines.append(f"- detail: {self.detail}")
+        return "\n".join(lines)
+
+
+class SandboxAuditLog:
+    def __init__(self, workspace: Path, *, enabled: bool = True) -> None:
+        self.workspace = workspace.resolve()
+        self.enabled = enabled
+        self.path = self.workspace / ".code-agent" / "audit" / "sandbox.jsonl"
+
+    def record(self, event: str, **payload: Any) -> None:
+        if not self.enabled:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "event": event,
+            **payload,
+        }
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+class SandboxRunner:
+    def __init__(
+        self,
+        workspace: Path,
+        policy: SandboxPolicy,
+        process_supervisor: ProcessSupervisor,
+        audit_log: SandboxAuditLog,
+    ) -> None:
+        self.workspace = workspace.resolve()
+        self.policy = policy
+        self.process_supervisor = process_supervisor
+        self.audit_log = audit_log
+
+    def run_shell(
+        self,
+        command: str,
+        *,
+        timeout_seconds: int,
+        env: dict[str, str],
+        cancellation_token: CancellationToken | None = None,
+    ) -> ShellProcessResult:
+        self.audit_log.record(
+            "command_started",
+            command=command,
+            backend=self.policy.backend,
+            timeout_seconds=timeout_seconds,
+            network="offline" if self.policy.commands.offline else "allow",
+            resources=self.policy.resources.__dict__,
+        )
+        start = time.monotonic()
+        if self.policy.backend in {"docker", "podman", "container"}:
+            runtime = "podman" if self.policy.backend == "podman" else "docker"
+            result = self._run_container(
+                runtime,
+                command,
+                timeout_seconds=timeout_seconds,
+                env=env,
+                cancellation_token=cancellation_token,
+            )
+        else:
+            result = self.process_supervisor.run_shell(
+                command,
+                cwd=self.workspace,
+                timeout_seconds=timeout_seconds,
+                env=env,
+                cancellation_token=cancellation_token,
+            )
+        elapsed_ms = round((time.monotonic() - start) * 1000, 2)
+        self.audit_log.record(
+            "command_finished",
+            command=command,
+            backend=self.policy.backend,
+            returncode=result.completed.returncode,
+            timed_out=result.timed_out,
+            cancelled=result.cancelled,
+            cleanup_attempted=result.cleanup_attempted,
+            elapsed_ms=elapsed_ms,
+        )
+        return result
+
+    def _run_container(
+        self,
+        runtime: str,
+        command: str,
+        *,
+        timeout_seconds: int,
+        env: dict[str, str],
+        cancellation_token: CancellationToken | None,
+    ) -> ShellProcessResult:
+        if shutil.which(runtime) is None:
+            completed = subprocess.CompletedProcess(
+                [runtime],
+                127,
+                "",
+                f"{runtime} is not available. Install {runtime} or set AGENT_SANDBOX_BACKEND=local.",
+            )
+            return ShellProcessResult(completed=completed)
+
+        network = "none" if self.policy.commands.offline else "bridge"
+        container_command = [
+            runtime,
+            "run",
+            "--rm",
+            "--network",
+            network,
+            "--cpus",
+            str(self.policy.resources.cpus),
+            "--memory",
+            f"{self.policy.resources.memory_mb}m",
+            "--pids-limit",
+            str(self.policy.resources.pids),
+            "--read-only",
+            "--tmpfs",
+            "/tmp:rw,noexec,nosuid,size=256m",
+            "-v",
+            f"{self.workspace}:/workspace:rw",
+            "-w",
+            "/workspace",
+        ]
+        for key, value in env.items():
+            container_command.extend(["-e", f"{key}={value}"])
+        container_command.extend([self.policy.container_image, "sh", "-lc", command])
+
+        process = subprocess.Popen(
+            container_command,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={},
+        )
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            if cancellation_token is not None and cancellation_token.cancelled:
+                process.kill()
+                stdout, stderr = process.communicate()
+                return ShellProcessResult(
+                    completed=subprocess.CompletedProcess(container_command, process.returncode, stdout, stderr),
+                    cancelled=True,
+                    output="\n".join(part for part in [stdout, stderr] if part),
+                    cleanup_attempted=True,
+                )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                process.kill()
+                stdout, stderr = process.communicate()
+                return ShellProcessResult(
+                    completed=subprocess.CompletedProcess(container_command, process.returncode, stdout, stderr),
+                    timed_out=True,
+                    output="\n".join(part for part in [stdout, stderr] if part),
+                    cleanup_attempted=True,
+                )
+            try:
+                stdout, stderr = process.communicate(timeout=min(0.2, remaining))
+                return ShellProcessResult(
+                    completed=subprocess.CompletedProcess(container_command, process.returncode, stdout, stderr),
+                )
+            except subprocess.TimeoutExpired:
+                continue
+
+
+def sandbox_health(policy: SandboxPolicy) -> SandboxHealth:
+    if policy.backend in {"docker", "podman", "container"}:
+        runtime = "podman" if policy.backend == "podman" else "docker"
+        available = shutil.which(runtime) is not None
+        return SandboxHealth(
+            backend=policy.backend,
+            available=available,
+            runtime=runtime,
+            isolation="container process, filesystem, env, network, pid, CPU, and memory boundaries",
+            detail=(
+                "Container backend uses read-only rootfs, isolated env, offline network by default, "
+                "resource limits, and a writable workspace mount."
+                if available
+                else f"{runtime} executable was not found on PATH."
+            ),
+        )
+    return SandboxHealth(
+        backend=policy.backend,
+        available=True,
+        isolation="hardened local subprocess policy, not an OS security boundary",
+        detail=(
+            "Local backend enforces workspace paths, env scrubbing, policy checks, timeouts, "
+            "process-tree cleanup, audit logs, and sandbox copy-on-write promotion."
+        ),
+    )
+
+
+def validate_workspace_boundary(path: Path, workspace: Path) -> None:
+    resolved = path.resolve()
+    root = workspace.resolve()
+    if resolved != root and root not in resolved.parents:
+        raise ValueError(f"Path escapes workspace: {path}")
+    for parent in [resolved, *resolved.parents]:
+        if parent == root.parent:
+            break
+        if parent.is_symlink():
+            raise ValueError(f"Refusing symlinked workspace path: {path}")
+
+
+def workspace_disk_usage_bytes(workspace: Path) -> int:
+    total = 0
+    for path in workspace.rglob("*"):
+        if any(part in DISK_USAGE_IGNORES for part in path.relative_to(workspace).parts):
+            continue
+        if path.is_file() and not path.is_symlink():
+            try:
+                total += path.stat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def _matches_command(pattern: str, command: str) -> bool:
+    normalized = " ".join(command.strip().split())
+    return fnmatch.fnmatch(normalized, pattern) or normalized.startswith(pattern.rstrip("*"))
+
+
+def _looks_like_git_mutation(command: str) -> bool:
+    lowered = command.lower()
+    return any(
+        token in lowered
+        for token in [
+            "git add",
+            "git commit",
+            "git merge",
+            "git rebase",
+            "git push",
+            "git reset",
+            "git clean",
+            "git checkout",
+            "git switch",
+        ]
+    )
+
+
+def _dict(value: object) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _optional_int(value: object) -> int | None:
+    if value in {None, ""}:
+        return None
+    return int(value)

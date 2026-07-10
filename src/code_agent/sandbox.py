@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .schema import ApplyPatchAction
+from .sandbox_security import SandboxPolicy, sandbox_health
 from .tools import ToolRegistry
 from .patches import git_style_unified_diff
 
@@ -33,6 +34,7 @@ SANDBOX_FILE_EXCLUDES = {
 class SandboxWorkspace:
     source: Path
     path: Path
+    policy: SandboxPolicy = SandboxPolicy()
 
 
 @dataclass(frozen=True)
@@ -56,8 +58,18 @@ class SandboxApplyResult:
     metadata: dict[str, Any]
 
 
-def create_sandbox_workspace(source: Path) -> SandboxWorkspace:
+def create_sandbox_workspace(
+    source: Path,
+    *,
+    backend: str = "local",
+    container_image: str = "python:3.13-slim",
+) -> SandboxWorkspace:
     resolved_source = source.resolve()
+    policy = SandboxPolicy.from_workspace(
+        resolved_source,
+        backend=backend,
+        container_image=container_image,
+    )
     sandbox_root = resolved_source / ".code-agent" / "sandboxes"
     sandbox_root.mkdir(parents=True, exist_ok=True)
     sandbox_name = datetime.now(timezone.utc).strftime("sandbox-%Y%m%d-%H%M%S")
@@ -68,7 +80,7 @@ def create_sandbox_workspace(source: Path) -> SandboxWorkspace:
         sandbox_path,
         ignore=_ignore_sandbox_entries,
     )
-    return SandboxWorkspace(source=resolved_source, path=sandbox_path)
+    return SandboxWorkspace(source=resolved_source, path=sandbox_path, policy=policy)
 
 
 def diff_sandbox_workspace(
@@ -152,15 +164,24 @@ def format_sandbox_diff(diff: SandboxDiff) -> str:
     return "\n".join(lines)
 
 
-def format_sandbox_limits() -> str:
+def format_sandbox_limits(policy: SandboxPolicy | None = None) -> str:
+    policy = policy or SandboxPolicy()
+    health = sandbox_health(policy)
     return "\n".join(
         [
             "Sandbox limits:",
-            "- uses a copied workspace, not OS-level process isolation",
-            "- excludes local state such as .env, .git, .venv, caches, node_modules, and .code-agent",
-            "- shell commands still run as local processes inside the sandbox path",
-            "- network access follows normal shell policy unless --deny-network-shell or AGENT_SHELL_NETWORK=deny is used",
-            "- base workspace files change only after explicit sandbox apply promotion",
+            f"- backend: {policy.backend}",
+            f"- isolation: {health.isolation}",
+            "- filesystem: copied workspace with sensitive/local state excluded; base repo is read-only by design",
+            "- promotion: base workspace files change only after explicit sandbox apply promotion",
+            "- symlinks: skipped when creating sandbox copies to avoid escaping the workspace",
+            f"- network: {'offline by default' if policy.commands.offline else 'allowed by policy'}",
+            (
+                "- resources: "
+                f"cpus={policy.resources.cpus}, memory={policy.resources.memory_mb}MB, "
+                f"disk={policy.resources.disk_mb}MB, pids={policy.resources.pids}"
+            ),
+            "- shell: command risk classification, approval prompts, env isolation, timeouts, and audit logs apply",
         ]
     )
 
@@ -219,10 +240,14 @@ def promote_sandbox_changes(
     )
 
 
-def _ignore_sandbox_entries(_directory: str, names: list[str]) -> set[str]:
+def _ignore_sandbox_entries(directory: str, names: list[str]) -> set[str]:
     ignored: set[str] = set()
+    root = Path(directory)
     for name in names:
         if name in SANDBOX_EXCLUDES or name in SANDBOX_FILE_EXCLUDES:
+            ignored.add(name)
+            continue
+        if (root / name).is_symlink():
             ignored.add(name)
     return ignored
 

@@ -57,6 +57,7 @@ from .sandbox import (
     format_sandbox_limits,
     promote_sandbox_changes,
 )
+from .sandbox_security import SandboxPolicy, sandbox_health
 from .storage import AgentStorage
 from .status import StatusReporter
 from .terminal_ui import print_work_report_panel
@@ -143,6 +144,11 @@ def run(
         "--deny-network-shell",
         help="Block shell commands classified as install/network for this run.",
     ),
+    sandbox_backend: Optional[str] = typer.Option(
+        None,
+        "--sandbox-backend",
+        help="Sandbox execution backend override: local, docker, podman, or container.",
+    ),
     max_steps: int = typer.Option(12, "--max-steps", min=1, help="Maximum agent loop steps."),
     max_failures: Optional[int] = typer.Option(
         None,
@@ -154,11 +160,20 @@ def run(
     """Run the coding agent on a task."""
     settings = Settings()
     workspace = cwd.resolve()
+    sandbox_policy = SandboxPolicy.from_workspace(
+        workspace,
+        backend=sandbox_backend or settings.sandbox_backend,
+        container_image=settings.agent_sandbox_image,
+    )
     if sandbox:
-        sandbox_workspace = create_sandbox_workspace(workspace)
+        sandbox_workspace = create_sandbox_workspace(
+            workspace,
+            backend=sandbox_policy.backend,
+            container_image=sandbox_policy.container_image,
+        )
         workspace = sandbox_workspace.path
         typer.echo(f"Sandbox: {workspace}")
-        typer.echo(format_sandbox_limits())
+        typer.echo(format_sandbox_limits(sandbox_workspace.policy))
 
     agent = create_agent(
         settings=settings,
@@ -174,6 +189,7 @@ def run(
         provider=provider,
         preset=preset,
         shell_network_policy="deny" if deny_network_shell else None,
+        sandbox_backend=sandbox_policy.backend,
     )
     try:
         result = agent.run_detailed(task)
@@ -352,6 +368,25 @@ def sandbox_diff_command(
         raise typer.Exit(code=1)
 
 
+@sandbox_app.command("health")
+def sandbox_health_command(
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    backend: Optional[str] = typer.Option(
+        None,
+        "--backend",
+        help="Sandbox backend to check: local, docker, podman, or container.",
+    ),
+) -> None:
+    """Show sandbox backend availability and isolation guarantees."""
+    settings = Settings()
+    policy = SandboxPolicy.from_workspace(
+        cwd.resolve(),
+        backend=backend or settings.sandbox_backend,
+        container_image=settings.agent_sandbox_image,
+    )
+    typer.echo(sandbox_health(policy).format_text())
+
+
 @sandbox_app.command("apply")
 def sandbox_apply_command(
     sandbox: Path = typer.Argument(..., help="Sandbox workspace path."),
@@ -407,6 +442,11 @@ def run_json(
         "--deny-network-shell",
         help="Block shell commands classified as install/network for this run.",
     ),
+    sandbox_backend: Optional[str] = typer.Option(
+        None,
+        "--sandbox-backend",
+        help="Sandbox execution backend override: local, docker, podman, or container.",
+    ),
     max_steps: int = typer.Option(12, "--max-steps", min=1, help="Maximum agent loop steps."),
     max_failures: Optional[int] = typer.Option(
         None,
@@ -436,13 +476,22 @@ def run_json(
         raise typer.Exit(code=2)
     settings = Settings()
     workspace = cwd.resolve()
+    sandbox_policy = SandboxPolicy.from_workspace(
+        workspace,
+        backend=sandbox_backend or settings.sandbox_backend,
+        container_image=settings.agent_sandbox_image,
+    )
     agent = None
     try:
         if sandbox:
-            sandbox_workspace = create_sandbox_workspace(workspace)
+            sandbox_workspace = create_sandbox_workspace(
+                workspace,
+                backend=sandbox_policy.backend,
+                container_image=sandbox_policy.container_image,
+            )
             workspace = sandbox_workspace.path
             emitter.emit("sandbox_created", path=str(workspace), source=str(cwd.resolve()))
-            emitter.emit("sandbox_limits", detail=format_sandbox_limits())
+            emitter.emit("sandbox_limits", detail=format_sandbox_limits(sandbox_workspace.policy))
 
         emit_run_started(
             emitter,
@@ -473,6 +522,7 @@ def run_json(
             provider=provider,
             preset=preset,
             shell_network_policy="deny" if deny_network_shell else None,
+            sandbox_backend=sandbox_policy.backend,
         )
         result = agent.run_detailed(task)
     except KeyboardInterrupt:
@@ -520,6 +570,11 @@ def resume(
         "--deny-network-shell",
         help="Block shell commands classified as install/network for this run.",
     ),
+    sandbox_backend: Optional[str] = typer.Option(
+        None,
+        "--sandbox-backend",
+        help="Sandbox execution backend override: local, docker, podman, or container.",
+    ),
     max_steps: int = typer.Option(12, "--max-steps", min=1, help="Maximum agent loop steps."),
     max_failures: Optional[int] = typer.Option(
         None,
@@ -537,11 +592,20 @@ def resume(
         raise typer.Exit(code=1)
 
     workspace = (cwd or Path(run_row["cwd"])).resolve()
+    sandbox_policy = SandboxPolicy.from_workspace(
+        workspace,
+        backend=sandbox_backend or settings.sandbox_backend,
+        container_image=settings.agent_sandbox_image,
+    )
     if sandbox:
-        sandbox_workspace = create_sandbox_workspace(workspace)
+        sandbox_workspace = create_sandbox_workspace(
+            workspace,
+            backend=sandbox_policy.backend,
+            container_image=sandbox_policy.container_image,
+        )
         workspace = sandbox_workspace.path
         typer.echo(f"Sandbox: {workspace}")
-        typer.echo(format_sandbox_limits())
+        typer.echo(format_sandbox_limits(sandbox_workspace.policy))
 
     task = build_resume_task(
         run_row,
@@ -563,6 +627,7 @@ def resume(
         provider=provider,
         preset=preset,
         shell_network_policy="deny" if deny_network_shell else None,
+        sandbox_backend=sandbox_policy.backend,
     )
     try:
         result = agent.run_detailed(task)

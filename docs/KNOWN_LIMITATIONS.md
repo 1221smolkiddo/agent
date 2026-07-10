@@ -16,9 +16,15 @@ Agent47 is a credible alpha CLI coding agent, not a finished industry product.
 ## Current Limits
 
 - Live benchmark quality depends on configured provider credits and model capability.
-- The sandbox is a copied workspace, not OS-level isolation.
+- The default `local` sandbox backend is a copied workspace plus hardened subprocess policy, not
+  OS-level isolation, and is not OS-level isolation in the security-boundary sense. Use
+  `--sandbox-backend docker` or `--sandbox-backend podman` when a container
+  runtime is available and OS-level process, network, pid, CPU, memory, and root-filesystem
+  isolation is required.
 - Shell commands can still execute local project code after approval.
-- Shell network-deny mode blocks commands classified as install/network, but it is not an OS firewall.
+- Shell network-deny mode and the default sandbox policy block commands classified as
+  install/network before approval. Container sandbox backends also run with network disabled by
+  default.
 - Shell timeout and Ctrl+C cancellation paths attempt process-tree cleanup, but Agent47 still does
   not provide a container, VM, seccomp/AppArmor profile, Windows Job Object policy, or macOS seatbelt.
 - Project memory is approval-gated and secret-scanned on writes, but users should still review it like any

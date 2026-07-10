@@ -10,6 +10,9 @@ from code_agent.sandbox import (
     format_sandbox_limits,
     promote_sandbox_changes,
 )
+from code_agent.sandbox_security import SandboxPolicy, sandbox_health
+from code_agent.schema import RunShellAction
+from code_agent.tools import ToolRegistry
 
 
 def test_create_sandbox_workspace_copies_project_files(tmp_path: Path) -> None:
@@ -34,6 +37,20 @@ def test_create_sandbox_workspace_excludes_local_state(tmp_path: Path) -> None:
     assert not (sandbox.path / ".env").exists()
     assert not (sandbox.path / ".git").exists()
     assert not (sandbox.path / ".venv").exists()
+
+
+def test_create_sandbox_workspace_skips_symlinks(tmp_path: Path) -> None:
+    target = tmp_path / "outside.txt"
+    target.write_text("outside", encoding="utf-8")
+    link = tmp_path / "linked.txt"
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError):
+        return
+
+    sandbox = create_sandbox_workspace(tmp_path)
+
+    assert not (sandbox.path / "linked.txt").exists()
 
 
 def test_sandbox_diff_reports_update_create_and_delete(tmp_path: Path) -> None:
@@ -116,7 +133,91 @@ def test_sandbox_diff_cli_outputs_patch(tmp_path: Path) -> None:
 def test_format_sandbox_limits_describes_process_and_network_boundaries() -> None:
     output = format_sandbox_limits()
 
-    assert "not OS-level process isolation" in output
-    assert "shell commands still run as local processes" in output
-    assert "--deny-network-shell" in output
+    assert "backend: local" in output
+    assert "hardened local subprocess policy" in output
+    assert "offline by default" in output
     assert "explicit sandbox apply promotion" in output
+
+
+def test_sandbox_policy_file_blocks_denied_command(tmp_path: Path) -> None:
+    policy_dir = tmp_path / ".code-agent"
+    policy_dir.mkdir()
+    (policy_dir / "policy.toml").write_text(
+        "[commands]\nallow = [\"uv run pytest\"]\ndeny = [\"uv run ruff*\"]\n",
+        encoding="utf-8",
+    )
+    tools = ToolRegistry(
+        workspace=tmp_path,
+        dry_run=False,
+        approval_callback=lambda _action, _detail: True,
+    )
+
+    result = tools.run(RunShellAction(type="run_shell", command="uv run ruff check src"))
+
+    assert not result.ok
+    assert "Sandbox policy denied command" in result.output
+
+
+def test_sandbox_policy_allowlist_rejects_unlisted_command(tmp_path: Path) -> None:
+    policy_dir = tmp_path / ".code-agent"
+    policy_dir.mkdir()
+    (policy_dir / "policy.toml").write_text(
+        "[commands]\nallow = [\"uv run pytest\"]\n",
+        encoding="utf-8",
+    )
+    tools = ToolRegistry(
+        workspace=tmp_path,
+        dry_run=False,
+        approval_callback=lambda _action, _detail: True,
+    )
+
+    result = tools.run(RunShellAction(type="run_shell", command="npm run test"))
+
+    assert not result.ok
+    assert "allowlist did not include" in result.output or "install/network" in result.output
+
+
+def test_sandbox_policy_allows_install_when_trusted_project_opts_in(tmp_path: Path, monkeypatch) -> None:
+    policy_dir = tmp_path / ".code-agent"
+    policy_dir.mkdir()
+    (policy_dir / "policy.toml").write_text(
+        "[commands]\nallow_install = true\n",
+        encoding="utf-8",
+    )
+    captured: list[str] = []
+    tools = ToolRegistry(
+        workspace=tmp_path,
+        dry_run=False,
+        approval_callback=lambda _action, detail: captured.append(detail) or False,
+    )
+
+    result = tools.run(RunShellAction(type="run_shell", command="npm install"))
+
+    assert not result.ok
+    assert result.output == "Permission denied for run_shell."
+    assert "Sandbox backend: local" in captured[0]
+    assert "Resource limits:" in captured[0]
+
+
+def test_sandbox_audit_log_records_shell_command(tmp_path: Path, monkeypatch) -> None:
+    tools = ToolRegistry(
+        workspace=tmp_path,
+        dry_run=False,
+        approval_callback=lambda _action, _detail: True,
+    )
+
+    result = tools.run(RunShellAction(type="run_shell", command="git --version"))
+
+    assert result.ok
+    audit_path = tmp_path / ".code-agent" / "audit" / "sandbox.jsonl"
+    assert audit_path.exists()
+    audit_text = audit_path.read_text(encoding="utf-8")
+    assert "command_started" in audit_text
+    assert "command_finished" in audit_text
+
+
+def test_sandbox_health_reports_container_availability() -> None:
+    health = sandbox_health(SandboxPolicy(backend="docker"))
+
+    assert health.backend == "docker"
+    assert "container" in health.isolation

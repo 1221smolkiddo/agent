@@ -54,6 +54,13 @@ from .repo_index import (
     rank_context,
 )
 from .safety import classify_network_url, classify_shell_command, is_sensitive_path, redact_secrets
+from .sandbox_security import (
+    SandboxAuditLog,
+    SandboxPolicy,
+    SandboxRunner,
+    validate_workspace_boundary,
+    workspace_disk_usage_bytes,
+)
 from .verification import detect_verification_commands, suggest_verification_commands
 
 IGNORED_NAMES = {
@@ -110,6 +117,7 @@ class ToolRegistry:
         index_cache: RepoIndexCache | None = None,
         cancellation_token: CancellationToken | None = None,
         process_supervisor: ProcessSupervisor | None = None,
+        sandbox_policy: SandboxPolicy | None = None,
     ) -> None:
         self.workspace = workspace.resolve()
         self.dry_run = dry_run
@@ -118,6 +126,17 @@ class ToolRegistry:
         self.index_cache = index_cache
         self.cancellation_token = cancellation_token or CancellationToken()
         self.process_supervisor = process_supervisor or ProcessSupervisor()
+        self.sandbox_policy = sandbox_policy or SandboxPolicy.from_workspace(self.workspace)
+        self.audit_log = SandboxAuditLog(
+            self.workspace,
+            enabled=self.sandbox_policy.audit_enabled,
+        )
+        self.sandbox_runner = SandboxRunner(
+            self.workspace,
+            self.sandbox_policy,
+            self.process_supervisor,
+            self.audit_log,
+        )
         if self.shell_network_policy not in {"allow", "deny"}:
             raise ValueError("shell_network_policy must be one of: allow, deny")
 
@@ -171,8 +190,7 @@ class ToolRegistry:
 
     def resolve_inside_workspace(self, requested_path: str | None = None) -> Path:
         target = (self.workspace / (requested_path or ".")).resolve()
-        if target != self.workspace and self.workspace not in target.parents:
-            raise ValueError(f"Path escapes workspace: {requested_path}")
+        validate_workspace_boundary(target, self.workspace)
         return target
 
     def _list_files(self, requested_path: str | None) -> ToolResult:
@@ -338,26 +356,58 @@ class ToolRegistry:
                     "shell_network_policy": self.shell_network_policy,
                 },
             )
+        sandbox_rejection = self.sandbox_policy.command_rejection(command, policy)
+        if sandbox_rejection:
+            return ToolResult(
+                ok=False,
+                output=sandbox_rejection,
+                metadata={
+                    "category": policy.category,
+                    "risk": policy.risk,
+                    "sandbox_backend": self.sandbox_policy.backend,
+                },
+            )
         approval_detail = (
             f"Risk: {policy.risk}\n"
             f"Category: {policy.category}\n"
             f"Reason: {policy.reason}\n"
+            f"Sandbox backend: {self.sandbox_policy.backend}\n"
             f"May write files: {'yes' if policy.may_write else 'no'}\n"
             f"May access network: {'yes' if policy.may_network else 'no'}\n"
             f"Shell network policy: {self.shell_network_policy}\n"
+            f"Sandbox network: {'offline' if self.sandbox_policy.commands.offline else 'allow'}\n"
             f"Arbitrary code: {'yes' if policy.arbitrary_code else 'no'}\n"
-            f"Timeout: {policy.timeout_seconds}s\n"
+            f"Timeout: {self.sandbox_policy.effective_timeout(policy)}s\n"
+            f"Resource limits: cpus={self.sandbox_policy.resources.cpus}, "
+            f"memory={self.sandbox_policy.resources.memory_mb}MB, "
+            f"disk={self.sandbox_policy.resources.disk_mb}MB, "
+            f"pids={self.sandbox_policy.resources.pids}\n"
             f"Command: {command}"
         )
         if not self._approve("run_shell", approval_detail):
             return ToolResult(ok=False, output="Permission denied for run_shell.")
         if self._is_python_test_command(command):
             self._clear_python_bytecode_cache()
+        disk_usage = workspace_disk_usage_bytes(self.workspace)
+        disk_limit = self.sandbox_policy.resources.disk_mb * 1024 * 1024
+        if disk_usage > disk_limit:
+            return ToolResult(
+                ok=False,
+                output=(
+                    "Sandbox disk usage limit exceeded before command execution: "
+                    f"{disk_usage} bytes used, limit {disk_limit} bytes."
+                ),
+                metadata={
+                    "sandbox_backend": self.sandbox_policy.backend,
+                    "disk_usage_bytes": disk_usage,
+                    "disk_limit_bytes": disk_limit,
+                },
+            )
         self.reset_cancellation()
         process_result = self._normalize_shell_process_result(
             self._run_shell_process(
                 command,
-                timeout_seconds=policy.timeout_seconds,
+                timeout_seconds=self.sandbox_policy.effective_timeout(policy),
                 env=self._safe_shell_env(python_no_bytecode=self._is_python_test_command(command)),
             )
         )
@@ -377,10 +427,12 @@ class ToolRegistry:
                 metadata={
                     "category": policy.category,
                     "risk": policy.risk,
-                    "timeout_seconds": policy.timeout_seconds,
+                    "timeout_seconds": self.sandbox_policy.effective_timeout(policy),
                     "cancelled": True,
                     "process_tree_cleanup": cleanup_attempted,
                     "shell_network_policy": self.shell_network_policy,
+                    "sandbox_backend": self.sandbox_policy.backend,
+                    "audit_log": str(self.audit_log.path),
                 },
             )
         if timed_out:
@@ -394,10 +446,12 @@ class ToolRegistry:
                 metadata={
                     "category": policy.category,
                     "risk": policy.risk,
-                    "timeout_seconds": policy.timeout_seconds,
+                    "timeout_seconds": self.sandbox_policy.effective_timeout(policy),
                     "cancelled": False,
                     "process_tree_cleanup": cleanup_attempted,
                     "shell_network_policy": self.shell_network_policy,
+                    "sandbox_backend": self.sandbox_policy.backend,
+                    "audit_log": str(self.audit_log.path),
                 },
             )
         output = "\n".join(part for part in [completed.stdout, completed.stderr] if part).strip()
@@ -407,10 +461,12 @@ class ToolRegistry:
             metadata={
                 "category": policy.category,
                 "risk": policy.risk,
-                "timeout_seconds": policy.timeout_seconds,
+                "timeout_seconds": self.sandbox_policy.effective_timeout(policy),
                 "cancelled": False,
                 "process_tree_cleanup": cleanup_attempted,
                 "shell_network_policy": self.shell_network_policy,
+                "sandbox_backend": self.sandbox_policy.backend,
+                "audit_log": str(self.audit_log.path),
             },
         )
 
@@ -761,9 +817,8 @@ class ToolRegistry:
         timeout_seconds: int,
         env: dict[str, str],
     ) -> tuple[subprocess.CompletedProcess[str], bool, str, bool, bool]:
-        result = self.process_supervisor.run_shell(
+        result = self.sandbox_runner.run_shell(
             command,
-            cwd=self.workspace,
             timeout_seconds=timeout_seconds,
             env=env,
             cancellation_token=self.cancellation_token,

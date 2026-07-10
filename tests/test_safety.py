@@ -120,6 +120,12 @@ def test_run_shell_blocks_destructive_command_without_prompt(tmp_path: Path) -> 
 
 
 def test_run_shell_permission_detail_includes_risk_label(tmp_path: Path) -> None:
+    policy_dir = tmp_path / ".code-agent"
+    policy_dir.mkdir()
+    (policy_dir / "policy.toml").write_text(
+        "[commands]\nallow_install = true\n",
+        encoding="utf-8",
+    )
     approval_details: list[str] = []
     tools = ToolRegistry(
         workspace=tmp_path,
@@ -133,12 +139,28 @@ def test_run_shell_permission_detail_includes_risk_label(tmp_path: Path) -> None
     assert result.output == "Permission denied for run_shell."
     assert "Risk: high" in approval_details[0]
     assert "Category: install/network" in approval_details[0]
+    assert "Sandbox backend: local" in approval_details[0]
     assert "May write files: yes" in approval_details[0]
     assert "May access network: yes" in approval_details[0]
     assert "Shell network policy: allow" in approval_details[0]
     assert "Arbitrary code: no" in approval_details[0]
     assert "Timeout: 180s" in approval_details[0]
     assert "Command: npm install" in approval_details[0]
+
+
+def test_run_shell_blocks_install_by_default_sandbox_policy(tmp_path: Path) -> None:
+    approvals: list[str] = []
+    tools = ToolRegistry(
+        workspace=tmp_path,
+        dry_run=False,
+        approval_callback=lambda action, _detail: approvals.append(action) or True,
+    )
+
+    result = tools.run(RunShellAction(type="run_shell", command="npm install"))
+
+    assert not result.ok
+    assert "Sandbox policy blocked install/network command" in result.output
+    assert approvals == []
 
 
 def test_run_shell_network_deny_blocks_install_network_without_prompt(tmp_path: Path) -> None:

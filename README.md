@@ -73,6 +73,7 @@ code-agent run --profile coder "Implement the next roadmap item"
 code-agent run --profile reviewer "Review the latest changes for regressions"
 code-agent run --dry-run "Refactor the CLI argument parser"
 code-agent run --sandbox "Try a risky refactor in an isolated copy"
+code-agent run --sandbox --sandbox-backend docker "Try a risky refactor with container isolation"
 code-agent run --deny-network-shell "Run checks without install/network shell commands"
 code-agent run --no-stream "Run without compact model streaming progress"
 code-agent run --max-failures 5 "Fix the issue and recover from failed attempts"
@@ -96,6 +97,7 @@ code-agent collab branch feature/my-work --apply
 code-agent collab commit --run-id 12 --commit
 code-agent sandbox diff .code-agent/sandboxes/sandbox-20260619-120000
 code-agent sandbox apply .code-agent/sandboxes/sandbox-20260619-120000
+code-agent sandbox health --backend docker
 ```
 
 With `uv`:
@@ -257,6 +259,8 @@ the interactive session. Between turns, `/stop` and `/exit` also quit normally.
 - `AGENT_DB_PATH` is optional and defaults to `.code-agent/agent.db`.
 - `AGENT_STREAM` is optional and defaults to `true`. It enables compact model streaming progress without printing raw JSON action tokens.
 - `AGENT_SHELL_NETWORK` is optional and defaults to `allow`. Set it to `deny` to block shell commands classified as install/network; the CLI also supports `--deny-network-shell`.
+- `AGENT_SANDBOX_BACKEND` is optional and defaults to `local`. Supported values are `local`, `docker`, `podman`, and `container`.
+- `AGENT_SANDBOX_IMAGE` is optional and defaults to `python:3.13-slim` for container-backed sandbox execution.
 - `OPENAI_API_KEY` and `OPENAI_BASE_URL` are still accepted as a temporary fallback.
 
 `--model` always wins over profile-specific model environment variables for that run. Profiles still control temperature and token defaults.
@@ -355,7 +359,7 @@ workspace tasks and can update it only after approval. Use it for stable, secret
 formatters, package manager, test commands, architecture rules, user project preferences, pitfalls,
 glossary terms, dependencies, release notes, and successful implementation patterns.
 
-Shell commands are classified before approval. Destructive commands such as `git reset --hard`, recursive force deletes, and aggressive `git clean` forms are blocked by policy; install/network commands are labeled high risk; verification and read-only commands get lower-risk labels. Tool outputs are redacted for common secret patterns before they are returned to the model or stored. Large approval previews and mutation diffs are bounded so long generated files do not flood the terminal or model context.
+Shell commands are classified before approval. Destructive commands such as `git reset --hard`, recursive force deletes, and aggressive `git clean` forms are blocked by policy; install/network commands are blocked by the default sandbox policy unless the project opts in; verification and read-only commands get lower-risk labels. Tool outputs are redacted for common secret patterns before they are returned to the model or stored. Large approval previews and mutation diffs are bounded so long generated files do not flood the terminal or model context.
 
 Set `AGENT_SHELL_NETWORK=deny` or pass `--deny-network-shell` to block shell commands classified
 as install/network before approval. This does not create an OS firewall; it is an Agent47 command
@@ -436,8 +440,40 @@ agent47: /sandbox apply
 agent47: /sandbox off
 ```
 
-Sandboxes are copied into `.code-agent/sandboxes/` and exclude `.env`, `.git`, `.venv`, caches, and other local state.
+Sandboxes are copied into `.code-agent/sandboxes/` and exclude `.env`, `.git`, `.venv`, caches, symlinks, and other local state.
 Use `code-agent sandbox diff <sandbox-path>` to inspect changed files and unified diffs. Use `code-agent sandbox apply <sandbox-path>` to promote approved sandbox changes back to the base workspace through the same patch approval and verification pipeline as normal edits.
+
+Sandbox execution has two backend families:
+
+- `local`: hardened local subprocess execution with workspace-bound paths, secret-scrubbed environment, command policy, timeouts, process-tree cleanup, disk-usage checks, and audit logs under `.code-agent/audit/sandbox.jsonl`. This is useful everywhere, but it is not an OS security boundary.
+- `docker`/`podman`: container-backed execution with offline network by default, read-only container root filesystem, a writable sandbox workspace mount, isolated environment, CPU/memory/pid limits, timeouts, and command audit logging.
+
+Run `code-agent sandbox health --backend docker` or `code-agent sandbox health --backend podman` to check whether a container backend is available.
+
+Projects can add `.code-agent/policy.toml` to narrow trusted commands and resource limits:
+
+```toml
+[sandbox]
+backend = "docker"
+container_image = "python:3.13-slim"
+
+[resources]
+timeout_seconds = 120
+cpus = 1.0
+memory_mb = 1024
+disk_mb = 2048
+pids = 128
+
+[network]
+offline = true
+domain_allowlist = []
+
+[commands]
+allow = ["uv run pytest*", "uv run ruff check*"]
+deny = ["git reset*", "git clean*"]
+allow_install = false
+allow_git_mutation = false
+```
 
 ## Project Shape
 
@@ -455,7 +491,8 @@ src/
     prompts.py          System prompt
     protocol.py         Versioned JSON event protocol for future frontends
     resume.py           Run detail formatting and resume context
-    sandbox.py          Local workspace sandbox copies
+    sandbox.py          Workspace sandbox copies and promotion
+    sandbox_security.py Sandbox policy, audit, health, and execution backends
     session.py          Interactive session state
     schema.py           Shared action/result models
     storage.py          SQLite run history

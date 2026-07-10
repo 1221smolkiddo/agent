@@ -24,6 +24,7 @@ from .repo_index import RepoIndexCache
 from .storage import AgentStorage
 from .status import StatusReporter
 from .tools import ToolRegistry
+from .sandbox_security import SandboxPolicy
 
 
 def create_agent(
@@ -41,6 +42,7 @@ def create_agent(
     preset: str | None = None,
     reviewer_client: ModelClient | None = None,
     shell_network_policy: str | None = None,
+    sandbox_backend: str | None = None,
 ) -> CodingAgent:
     workspace = cwd.resolve()
     configured_preset = None if model or provider else settings.agent_model_preset
@@ -90,6 +92,11 @@ def create_agent(
     )
     storage = AgentStorage(settings.agent_db_path)
     index_cache = RepoIndexCache(storage.db_path)
+    sandbox_policy = SandboxPolicy.from_workspace(
+        workspace,
+        backend=sandbox_backend or settings.sandbox_backend,
+        container_image=settings.agent_sandbox_image,
+    )
 
     # Build reviewer client when the reviewer pass is enabled and no explicit
     # client was supplied (e.g. by tests). The reviewer uses its own profile
@@ -121,6 +128,7 @@ def create_agent(
             approval_callback=approval_callback,
             shell_network_policy=shell_network_policy or settings.shell_network_policy,
             index_cache=index_cache,
+            sandbox_policy=sandbox_policy,
         ),
         storage=storage,
         reporter=reporter,
