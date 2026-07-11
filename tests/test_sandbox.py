@@ -299,3 +299,18 @@ def test_container_runner_fails_fast_when_daemon_unavailable(tmp_path: Path, mon
     assert "daemon is not available" in result.completed.stderr
     assert "virtualization support not detected" in result.completed.stderr
     assert popen_called == []
+
+
+def test_container_env_uses_linux_path_and_drops_windows_shell_keys() -> None:
+    env = sandbox_security_module._container_env(
+        {
+            "PATH": "C:\\Windows\\System32",
+            "COMSPEC": "C:\\Windows\\System32\\cmd.exe",
+            "AGENT47_SANDBOXED_SHELL": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+    )
+
+    assert env["PATH"] == "/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
+    assert "COMSPEC" not in env
+    assert env["PYTHONDONTWRITEBYTECODE"] == "1"

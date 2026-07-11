@@ -290,9 +290,10 @@ class SandboxRunner:
             "-w",
             "/workspace",
         ]
-        for key, value in env.items():
+        container_env = _container_env(env)
+        for key, value in container_env.items():
             container_command.extend(["-e", f"{key}={value}"])
-        container_command.extend([self.policy.container_image, "sh", "-lc", command])
+        container_command.extend([self.policy.container_image, "/bin/sh", "-lc", command])
 
         process = subprocess.Popen(
             container_command,
@@ -445,6 +446,21 @@ def windows_virtualization_diagnostic(*, timeout_seconds: int = 5) -> str:
     if not lines:
         return ""
     return "Windows virtualization: " + "; ".join(lines[:6])
+
+
+def _container_env(env: dict[str, str]) -> dict[str, str]:
+    clean: dict[str, str] = {
+        "PATH": "/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "AGENT47_SANDBOXED_SHELL": "1",
+    }
+    for key, value in env.items():
+        upper = key.upper()
+        if upper in {"PATH", "PATHEXT", "COMSPEC", "PSMODULEPATH"}:
+            continue
+        if upper.startswith(("PROGRAMFILES", "SYSTEM", "WINDIR")):
+            continue
+        clean[key] = value
+    return clean
 
 
 def validate_workspace_boundary(path: Path, workspace: Path) -> None:
