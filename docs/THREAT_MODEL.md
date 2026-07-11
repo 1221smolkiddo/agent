@@ -30,6 +30,7 @@ This document describes the security assumptions for Agent47 as a public alpha C
 | False success claims | Mutations are verified against disk state; final answers that claim blocked or failed mutations succeeded are rejected. |
 | Unsafe patch paths | Patch paths are validated as workspace-relative before preview/apply. |
 | Accidental base-workspace edits | `--dry-run` disables writes and shell commands; `--sandbox` copies the workspace and requires explicit promotion. |
+| Local shell workspace escape | Local backend shell commands reject obvious absolute paths outside the workspace before approval and again before process launch; each local command also receives private HOME/TMP/cache directories. |
 | Unwanted install/network shell commands | `AGENT_SHELL_NETWORK=deny` and `--deny-network-shell` block commands classified as install/network before approval. |
 | Unsafe web targets | Web access blocks local/private/reserved/link-local/multicast targets, checks DNS resolution before fetch, and enforces configured domain allowlists. |
 | Unpinned or unexpected container images | Container sandbox execution refuses images outside policy and validates configured or reference-level `sha256` digest pins against local image metadata before launch. |
@@ -44,7 +45,7 @@ This document describes the security assumptions for Agent47 as a public alpha C
 - Redaction is pattern-based and may miss unusual secret formats.
 - Local `.code-agent/` state can contain sensitive project metadata even after redaction.
 - Live evals and model calls send selected prompt/tool context to configured providers.
-- The sandbox is a workspace copy, not an OS jail.
+- The local sandbox backend is a workspace copy plus hardened local subprocess policy, not an OS jail.
 - Shell network-deny mode is command-policy enforcement, not an OS firewall.
 - DNS checks happen before fetch but cannot prevent all time-of-check/time-of-use changes by remote infrastructure.
 

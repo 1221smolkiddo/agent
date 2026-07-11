@@ -16,7 +16,7 @@ from code_agent.sandbox import (
     promote_sandbox_changes,
 )
 from code_agent.sandbox_security import SandboxPolicy, SandboxResourceLimits, sandbox_health
-from code_agent.sandbox_security import SandboxAuditLog, SandboxRunner
+from code_agent.sandbox_security import SandboxAuditLog, SandboxRunner, local_command_path_rejection
 from code_agent.processes import ProcessSupervisor
 from code_agent.schema import RunShellAction
 from code_agent.tools import ToolRegistry
@@ -290,6 +290,93 @@ def test_sandbox_disk_guard_fails_command_that_grows_workspace_past_budget(
     finished = [record for record in audit_records if record["event"] == "command_finished"]
     assert finished[0]["returncode"] == 125
     assert finished[0]["disk"]["original_returncode"] == 0
+
+
+def test_local_runner_uses_private_home_temp_and_cache(tmp_path: Path) -> None:
+    captured_env: dict[str, str] = {}
+
+    class CapturingSupervisor:
+        def run_shell(self, command: str, **kwargs) -> ShellProcessResult:
+            captured_env.update(kwargs["env"])
+            for key in ["HOME", "TEMP", "XDG_CACHE_HOME"]:
+                path = Path(captured_env[key])
+                assert path.exists()
+                path.joinpath("probe.txt").write_text(key, encoding="utf-8")
+            return ShellProcessResult(
+                completed=subprocess.CompletedProcess(command, 0, "ok", ""),
+            )
+
+    runner = SandboxRunner(
+        tmp_path,
+        SandboxPolicy(),
+        CapturingSupervisor(),  # type: ignore[arg-type]
+        SandboxAuditLog(tmp_path),
+    )
+
+    result = runner.run_shell("git --version", timeout_seconds=30, env={"PATH": "safe-path"})
+
+    assert result.completed.returncode == 0
+    assert result.metadata is not None
+    assert result.metadata["local_isolation"] is True
+    assert captured_env["AGENT47_LOCAL_SANDBOX"] == "1"
+    assert captured_env["AGENT47_SANDBOXED_SHELL"] == "1"
+    assert captured_env["PATH"] == "safe-path"
+    assert Path(captured_env["HOME"]).is_relative_to(tmp_path)
+    assert Path(captured_env["TEMP"]).is_relative_to(tmp_path)
+    assert Path(captured_env["XDG_CACHE_HOME"]).is_relative_to(tmp_path)
+    assert not Path(result.metadata["local_runtime_root"]).exists()
+    audit_text = (tmp_path / ".code-agent" / "audit" / "sandbox.jsonl").read_text(
+        encoding="utf-8"
+    )
+    assert "local_runtime_created" in audit_text
+
+
+def test_local_runner_blocks_absolute_paths_outside_workspace(tmp_path: Path) -> None:
+    outside = tmp_path.parent / "outside-secret.txt"
+    outside.write_text("secret", encoding="utf-8")
+
+    class FailingSupervisor:
+        def run_shell(self, *_args, **_kwargs) -> ShellProcessResult:
+            raise AssertionError("process should not start for path escape")
+
+    runner = SandboxRunner(
+        tmp_path,
+        SandboxPolicy(),
+        FailingSupervisor(),  # type: ignore[arg-type]
+        SandboxAuditLog(tmp_path),
+    )
+
+    result = runner.run_shell(f"cat {outside}", timeout_seconds=30, env={})
+
+    assert result.completed.returncode == 126
+    assert "blocked an absolute path outside the workspace" in result.completed.stderr
+    assert result.metadata is not None
+    assert result.metadata["local_command_path_rejected"] is True
+
+
+def test_tool_registry_blocks_local_absolute_path_escape_before_approval(tmp_path: Path) -> None:
+    outside = tmp_path.parent / "outside-secret.txt"
+    outside.write_text("secret", encoding="utf-8")
+    approvals: list[str] = []
+    tools = ToolRegistry(
+        workspace=tmp_path,
+        dry_run=False,
+        approval_callback=lambda action, _detail: approvals.append(action) or True,
+    )
+
+    result = tools.run(RunShellAction(type="run_shell", command=f"cat {outside}"))
+
+    assert not result.ok
+    assert "blocked an absolute path outside the workspace" in result.output
+    assert result.metadata["local_command_path_rejected"] is True
+    assert approvals == []
+
+
+def test_local_command_path_rejection_allows_absolute_workspace_paths(tmp_path: Path) -> None:
+    inside = tmp_path / "inside.txt"
+    inside.write_text("ok", encoding="utf-8")
+
+    assert local_command_path_rejection(f"cat {inside}", tmp_path) is None
 
 
 def test_sandbox_audit_log_redacts_secret_looking_command_text(tmp_path: Path) -> None:

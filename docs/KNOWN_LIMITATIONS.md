@@ -16,15 +16,17 @@ Agent47 is a credible alpha CLI coding agent, not a finished industry product.
 ## Current Limits
 
 - Live benchmark quality depends on configured provider credits and model capability.
-- The default `local` sandbox backend is a copied workspace plus hardened subprocess policy, not
-  OS-level isolation, and is not OS-level isolation in the security-boundary sense. Use
+- The default `local` sandbox backend is a copied workspace plus hardened subprocess policy,
+  including private per-command HOME/TMP/cache directories and obvious absolute-path escape
+  blocking. It is still not OS-level isolation in the security-boundary sense. Use
   `--sandbox-backend docker` or `--sandbox-backend podman` when a container
   runtime is available and OS-level process, network, pid, CPU, memory, and root-filesystem
   isolation is required.
 - Docker Desktop still requires host virtualization support. Agent47 can detect an installed Docker
   CLI separately from a running daemon and report diagnostics, but it cannot enable BIOS/firmware
   virtualization from inside the terminal.
-- Shell commands can still execute local project code after approval.
+- Shell commands can still execute local project code after approval, and a local process may still
+  use operating-system APIs that are outside Agent47's command parser model.
 - Shell network-deny mode and the default sandbox policy block commands classified as
   install/network before approval. Container sandbox backends also run with network disabled by
   default.

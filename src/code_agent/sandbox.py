@@ -181,7 +181,8 @@ def format_sandbox_limits(policy: SandboxPolicy | None = None) -> str:
                 f"cpus={policy.resources.cpus}, memory={policy.resources.memory_mb}MB, "
                 f"disk={policy.resources.disk_mb}MB, pids={policy.resources.pids}"
             ),
-            "- shell: command risk classification, approval prompts, env isolation, timeouts, and audit logs apply",
+            "- shell: command risk classification, workspace path checks, approval prompts, "
+            "private HOME/TMP/cache dirs, timeouts, and audit logs apply",
         ]
     )
 

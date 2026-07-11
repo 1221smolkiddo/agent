@@ -58,6 +58,7 @@ from .sandbox_security import (
     SandboxAuditLog,
     SandboxPolicy,
     SandboxRunner,
+    local_command_path_rejection,
     validate_workspace_boundary,
 )
 from .verification import detect_verification_commands, suggest_verification_commands
@@ -366,6 +367,19 @@ class ToolRegistry:
                     "sandbox_backend": self.sandbox_policy.backend,
                 },
             )
+        if self.sandbox_policy.backend == "local":
+            local_path_rejection = local_command_path_rejection(command, self.workspace)
+            if local_path_rejection:
+                return ToolResult(
+                    ok=False,
+                    output=local_path_rejection,
+                    metadata={
+                        "category": policy.category,
+                        "risk": policy.risk,
+                        "sandbox_backend": self.sandbox_policy.backend,
+                        "local_command_path_rejected": True,
+                    },
+                )
         approval_detail = (
             f"Risk: {policy.risk}\n"
             f"Category: {policy.category}\n"

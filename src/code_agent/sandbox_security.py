@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import os
 import platform
+import re
+import shlex
 import shutil
 import subprocess
 import time
 import tomllib
+import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,6 +32,11 @@ DISK_USAGE_IGNORES = {
     "build",
     "dist",
     "node_modules",
+}
+LOCAL_RUNTIME_ROOT = Path(".code-agent") / "runtime" / "local"
+LOCAL_ENV_OVERRIDES = {
+    "AGENT47_LOCAL_SANDBOX": "1",
+    "AGENT47_SANDBOXED_SHELL": "1",
 }
 
 
@@ -293,6 +302,80 @@ class SandboxDiskGuard:
         )
 
 
+@dataclass(frozen=True)
+class LocalRuntimeIsolation:
+    run_id: str
+    root: Path
+    home: Path
+    temp: Path
+    cache: Path
+    cleanup_enabled: bool
+
+    @classmethod
+    def create(cls, workspace: Path, *, cleanup_enabled: bool) -> "LocalRuntimeIsolation":
+        run_id = uuid.uuid4().hex
+        root = workspace.resolve() / LOCAL_RUNTIME_ROOT / run_id
+        home = root / "home"
+        temp = root / "tmp"
+        cache = root / "cache"
+        for path in (home, temp, cache):
+            path.mkdir(parents=True, exist_ok=True)
+        return cls(
+            run_id=run_id,
+            root=root,
+            home=home,
+            temp=temp,
+            cache=cache,
+            cleanup_enabled=cleanup_enabled,
+        )
+
+    def env(self, base_env: dict[str, str]) -> dict[str, str]:
+        clean = dict(base_env)
+        home = str(self.home)
+        temp = str(self.temp)
+        cache = str(self.cache)
+        clean.update(LOCAL_ENV_OVERRIDES)
+        clean.update(
+            {
+                "HOME": home,
+                "USERPROFILE": home,
+                "TMP": temp,
+                "TEMP": temp,
+                "TMPDIR": temp,
+                "XDG_CACHE_HOME": cache,
+                "PIP_CACHE_DIR": str(self.cache / "pip"),
+                "NPM_CONFIG_CACHE": str(self.cache / "npm"),
+                "npm_config_cache": str(self.cache / "npm"),
+                "PYTHONPYCACHEPREFIX": str(self.cache / "pycache"),
+            }
+        )
+        if os.name == "nt":
+            drive = self.home.drive or str(self.home.anchor).rstrip("\\/")
+            clean["HOMEDRIVE"] = drive
+            try:
+                clean["HOMEPATH"] = "\\" + str(self.home.relative_to(Path(drive + "\\")))
+            except (ValueError, OSError):
+                clean["HOMEPATH"] = str(self.home)
+            clean["APPDATA"] = str(self.home / "AppData" / "Roaming")
+            clean["LOCALAPPDATA"] = str(self.home / "AppData" / "Local")
+        return clean
+
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "local_isolation": True,
+            "local_runtime_id": self.run_id,
+            "local_runtime_root": str(self.root),
+            "local_home": str(self.home),
+            "local_temp": str(self.temp),
+            "local_cache": str(self.cache),
+            "local_runtime_cleanup": self.cleanup_enabled,
+        }
+
+    def cleanup(self) -> None:
+        if self.cleanup_enabled:
+            shutil.rmtree(self.root, ignore_errors=True)
+
+
 class SandboxRunner:
     def __init__(
         self,
@@ -350,13 +433,48 @@ class SandboxRunner:
                 cancellation_token=cancellation_token,
             )
         else:
-            result = self.process_supervisor.run_shell(
-                command,
-                cwd=self.workspace,
-                timeout_seconds=timeout_seconds,
-                env=env,
-                cancellation_token=cancellation_token,
-            )
+            path_rejection = local_command_path_rejection(command, self.workspace)
+            if path_rejection:
+                result = ShellProcessResult(
+                    completed=subprocess.CompletedProcess(command, 126, "", path_rejection),
+                    metadata={
+                        "local_isolation": True,
+                        "local_command_path_rejected": True,
+                    },
+                )
+            else:
+                runtime = LocalRuntimeIsolation.create(
+                    self.workspace,
+                    cleanup_enabled=self.policy.cleanup,
+                )
+                self.audit_log.record(
+                    "local_runtime_created",
+                    command=command,
+                    backend=self.policy.backend,
+                    **runtime.metadata(),
+                )
+                try:
+                    local_env = runtime.env(env)
+                    result = self.process_supervisor.run_shell(
+                        command,
+                        cwd=self.workspace,
+                        timeout_seconds=timeout_seconds,
+                        env=local_env,
+                        cancellation_token=cancellation_token,
+                    )
+                    result = ShellProcessResult(
+                        completed=result.completed,
+                        timed_out=result.timed_out,
+                        cancelled=result.cancelled,
+                        output=result.output,
+                        cleanup_attempted=result.cleanup_attempted,
+                        metadata={
+                            **(result.metadata or {}),
+                            **runtime.metadata(),
+                        },
+                    )
+                finally:
+                    runtime.cleanup()
         elapsed_ms = round((time.monotonic() - start) * 1000, 2)
         post_run_disk = disk_guard.post_run(
             command=command,
@@ -567,8 +685,9 @@ def sandbox_health(policy: SandboxPolicy) -> SandboxHealth:
         daemon_available=None,
         isolation="hardened local subprocess policy, not an OS security boundary",
         detail=(
-            "Local backend enforces workspace paths, env scrubbing, policy checks, timeouts, "
-            "process-tree cleanup, audit logs, and sandbox copy-on-write promotion."
+            "Local backend enforces workspace paths, per-command private HOME/TMP/cache "
+            "directories, env scrubbing, policy checks, timeouts, process-tree cleanup, "
+            "audit logs, and sandbox copy-on-write promotion."
         ),
     )
 
@@ -802,6 +921,51 @@ def workspace_disk_usage_bytes(workspace: Path) -> int:
             except OSError:
                 continue
     return total
+
+
+def local_command_path_rejection(command: str, workspace: Path) -> str | None:
+    for raw_token in _command_path_tokens(command):
+        token = _clean_command_path_token(raw_token)
+        if not token or _looks_like_option(token):
+            continue
+        if not _looks_like_absolute_path(token):
+            continue
+        path = Path(token)
+        try:
+            validate_workspace_boundary(path, workspace)
+        except (OSError, ValueError):
+            return (
+                "Sandbox local backend blocked an absolute path outside the workspace: "
+                f"{raw_token}. Use a workspace-relative path or the container backend."
+            )
+    return None
+
+
+def _command_path_tokens(command: str) -> tuple[str, ...]:
+    try:
+        return tuple(shlex.split(command, posix=False))
+    except ValueError:
+        return tuple(command.split())
+
+
+def _clean_command_path_token(token: str) -> str:
+    cleaned = token.strip().strip("'\"")
+    cleaned = cleaned.rstrip(".,;)")
+    if cleaned.startswith(("'", '"')):
+        cleaned = cleaned[1:]
+    return cleaned
+
+
+def _looks_like_option(token: str) -> bool:
+    return token.startswith("-") and not _looks_like_absolute_path(token)
+
+
+def _looks_like_absolute_path(token: str) -> bool:
+    if re.match(r"^[A-Za-z]:[\\/]", token):
+        return True
+    if token.startswith("\\\\"):
+        return True
+    return token.startswith("/")
 
 
 def _matches_command(pattern: str, command: str) -> bool:
