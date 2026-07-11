@@ -16,6 +16,7 @@ class ShellProcessResult:
     cancelled: bool = False
     output: str = ""
     cleanup_attempted: bool = False
+    metadata: dict[str, Any] | None = None
 
 
 class CancellationToken:

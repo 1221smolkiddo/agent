@@ -171,6 +171,53 @@ class SandboxHealth:
         return "\n".join(lines)
 
 
+@dataclass(frozen=True)
+class SandboxDiskSnapshot:
+    before_bytes: int
+    limit_bytes: int
+    after_bytes: int | None = None
+    stage: str = "preflight"
+
+    @property
+    def growth_bytes(self) -> int | None:
+        if self.after_bytes is None:
+            return None
+        return self.after_bytes - self.before_bytes
+
+    @property
+    def measured_bytes(self) -> int:
+        return self.before_bytes if self.after_bytes is None else self.after_bytes
+
+    @property
+    def exceeded(self) -> bool:
+        return self.measured_bytes > self.limit_bytes
+
+    def failure_message(self) -> str:
+        if self.stage == "preflight":
+            return (
+                "Sandbox disk usage limit exceeded before command execution: "
+                f"{self.before_bytes} bytes used, limit {self.limit_bytes} bytes."
+            )
+        growth = self.growth_bytes
+        growth_detail = "" if growth is None else f", growth {growth} bytes"
+        return (
+            "Sandbox disk usage limit exceeded after command execution: "
+            f"{self.measured_bytes} bytes used, limit {self.limit_bytes} bytes"
+            f"{growth_detail}."
+        )
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "disk_before_bytes": self.before_bytes,
+            "disk_after_bytes": self.after_bytes,
+            "disk_growth_bytes": self.growth_bytes,
+            "disk_limit_bytes": self.limit_bytes,
+            "disk_measured_bytes": self.measured_bytes,
+            "disk_budget_stage": self.stage,
+            "disk_limit_exceeded": self.exceeded,
+        }
+
+
 class SandboxAuditLog:
     def __init__(self, workspace: Path, *, enabled: bool = True) -> None:
         self.workspace = workspace.resolve()
@@ -188,6 +235,62 @@ class SandboxAuditLog:
         }
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+class SandboxDiskGuard:
+    def __init__(
+        self,
+        workspace: Path,
+        *,
+        limit_bytes: int,
+        audit_log: SandboxAuditLog,
+    ) -> None:
+        self.workspace = workspace.resolve()
+        self.limit_bytes = limit_bytes
+        self.audit_log = audit_log
+
+    def preflight(self, *, command: str, backend: str) -> SandboxDiskSnapshot:
+        snapshot = SandboxDiskSnapshot(
+            before_bytes=workspace_disk_usage_bytes(self.workspace),
+            limit_bytes=self.limit_bytes,
+            stage="preflight",
+        )
+        self._record_snapshot("disk_usage_measured", command, backend, snapshot)
+        if snapshot.exceeded:
+            self._record_snapshot("disk_budget_exceeded", command, backend, snapshot)
+        return snapshot
+
+    def post_run(
+        self,
+        *,
+        command: str,
+        backend: str,
+        before_bytes: int,
+    ) -> SandboxDiskSnapshot:
+        snapshot = SandboxDiskSnapshot(
+            before_bytes=before_bytes,
+            after_bytes=workspace_disk_usage_bytes(self.workspace),
+            limit_bytes=self.limit_bytes,
+            stage="post_run",
+        )
+        self._record_snapshot("disk_usage_measured", command, backend, snapshot)
+        if snapshot.exceeded:
+            self._record_snapshot("disk_budget_exceeded", command, backend, snapshot)
+        return snapshot
+
+    def _record_snapshot(
+        self,
+        event: str,
+        command: str,
+        backend: str,
+        snapshot: SandboxDiskSnapshot,
+    ) -> None:
+        self.audit_log.record(
+            event,
+            command=command,
+            backend=backend,
+            **snapshot.to_metadata(),
+        )
 
 
 class SandboxRunner:
@@ -211,6 +314,23 @@ class SandboxRunner:
         env: dict[str, str],
         cancellation_token: CancellationToken | None = None,
     ) -> ShellProcessResult:
+        disk_guard = SandboxDiskGuard(
+            self.workspace,
+            limit_bytes=self.policy.resources.disk_mb * 1024 * 1024,
+            audit_log=self.audit_log,
+        )
+        preflight_disk = disk_guard.preflight(command=command, backend=self.policy.backend)
+        if preflight_disk.exceeded:
+            completed = subprocess.CompletedProcess(
+                command,
+                125,
+                "",
+                preflight_disk.failure_message(),
+            )
+            return ShellProcessResult(
+                completed=completed,
+                metadata=preflight_disk.to_metadata(),
+            )
         self.audit_log.record(
             "command_started",
             command=command,
@@ -238,6 +358,42 @@ class SandboxRunner:
                 cancellation_token=cancellation_token,
             )
         elapsed_ms = round((time.monotonic() - start) * 1000, 2)
+        post_run_disk = disk_guard.post_run(
+            command=command,
+            backend=self.policy.backend,
+            before_bytes=preflight_disk.before_bytes,
+        )
+        result_metadata = {
+            **(result.metadata or {}),
+            **post_run_disk.to_metadata(),
+            "original_returncode": result.completed.returncode,
+        }
+        if post_run_disk.exceeded:
+            stderr = "\n".join(
+                part for part in [result.completed.stderr, post_run_disk.failure_message()] if part
+            )
+            result = ShellProcessResult(
+                completed=subprocess.CompletedProcess(
+                    result.completed.args,
+                    125,
+                    result.completed.stdout,
+                    stderr,
+                ),
+                timed_out=result.timed_out,
+                cancelled=result.cancelled,
+                output="\n".join(part for part in [result.output, stderr] if part),
+                cleanup_attempted=result.cleanup_attempted,
+                metadata=result_metadata,
+            )
+        else:
+            result = ShellProcessResult(
+                completed=result.completed,
+                timed_out=result.timed_out,
+                cancelled=result.cancelled,
+                output=result.output,
+                cleanup_attempted=result.cleanup_attempted,
+                metadata=result_metadata,
+            )
         self.audit_log.record(
             "command_finished",
             command=command,
@@ -247,6 +403,7 @@ class SandboxRunner:
             cancelled=result.cancelled,
             cleanup_attempted=result.cleanup_attempted,
             elapsed_ms=elapsed_ms,
+            disk=result_metadata,
         )
         return result
 

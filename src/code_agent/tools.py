@@ -59,7 +59,6 @@ from .sandbox_security import (
     SandboxPolicy,
     SandboxRunner,
     validate_workspace_boundary,
-    workspace_disk_usage_bytes,
 )
 from .verification import detect_verification_commands, suggest_verification_commands
 
@@ -388,21 +387,6 @@ class ToolRegistry:
             return ToolResult(ok=False, output="Permission denied for run_shell.")
         if self._is_python_test_command(command):
             self._clear_python_bytecode_cache()
-        disk_usage = workspace_disk_usage_bytes(self.workspace)
-        disk_limit = self.sandbox_policy.resources.disk_mb * 1024 * 1024
-        if disk_usage > disk_limit:
-            return ToolResult(
-                ok=False,
-                output=(
-                    "Sandbox disk usage limit exceeded before command execution: "
-                    f"{disk_usage} bytes used, limit {disk_limit} bytes."
-                ),
-                metadata={
-                    "sandbox_backend": self.sandbox_policy.backend,
-                    "disk_usage_bytes": disk_usage,
-                    "disk_limit_bytes": disk_limit,
-                },
-            )
         self.reset_cancellation()
         process_result = self._normalize_shell_process_result(
             self._run_shell_process(
@@ -416,6 +400,18 @@ class ToolRegistry:
         cancelled = bool(process_result["cancelled"])
         timeout_output = str(process_result["output"])
         cleanup_attempted = bool(process_result["cleanup_attempted"])
+        disk_metadata = dict(process_result["metadata"])
+        common_metadata = {
+            "category": policy.category,
+            "risk": policy.risk,
+            "timeout_seconds": self.sandbox_policy.effective_timeout(policy),
+            "cancelled": False,
+            "process_tree_cleanup": cleanup_attempted,
+            "shell_network_policy": self.shell_network_policy,
+            "sandbox_backend": self.sandbox_policy.backend,
+            "audit_log": str(self.audit_log.path),
+            **disk_metadata,
+        }
         if cancelled:
             output = timeout_output.strip()
             detail = f"Shell command cancelled: {self.cancellation_token.reason}."
@@ -425,49 +421,25 @@ class ToolRegistry:
                 ok=False,
                 output=redact_secrets(self._truncate(detail, MAX_SHELL_OUTPUT_CHARS)),
                 metadata={
-                    "category": policy.category,
-                    "risk": policy.risk,
-                    "timeout_seconds": self.sandbox_policy.effective_timeout(policy),
+                    **common_metadata,
                     "cancelled": True,
-                    "process_tree_cleanup": cleanup_attempted,
-                    "shell_network_policy": self.shell_network_policy,
-                    "sandbox_backend": self.sandbox_policy.backend,
-                    "audit_log": str(self.audit_log.path),
                 },
             )
         if timed_out:
             output = timeout_output.strip()
-            detail = f"Shell command timed out after {policy.timeout_seconds}s."
+            detail = f"Shell command timed out after {self.sandbox_policy.effective_timeout(policy)}s."
             if output:
                 detail += "\n" + output
             return ToolResult(
                 ok=False,
                 output=redact_secrets(self._truncate(detail, MAX_SHELL_OUTPUT_CHARS)),
-                metadata={
-                    "category": policy.category,
-                    "risk": policy.risk,
-                    "timeout_seconds": self.sandbox_policy.effective_timeout(policy),
-                    "cancelled": False,
-                    "process_tree_cleanup": cleanup_attempted,
-                    "shell_network_policy": self.shell_network_policy,
-                    "sandbox_backend": self.sandbox_policy.backend,
-                    "audit_log": str(self.audit_log.path),
-                },
+                metadata=common_metadata,
             )
         output = "\n".join(part for part in [completed.stdout, completed.stderr] if part).strip()
         return ToolResult(
             ok=completed.returncode == 0,
             output=redact_secrets(self._truncate(output, MAX_SHELL_OUTPUT_CHARS)) or "<no output>",
-            metadata={
-                "category": policy.category,
-                "risk": policy.risk,
-                "timeout_seconds": self.sandbox_policy.effective_timeout(policy),
-                "cancelled": False,
-                "process_tree_cleanup": cleanup_attempted,
-                "shell_network_policy": self.shell_network_policy,
-                "sandbox_backend": self.sandbox_policy.backend,
-                "audit_log": str(self.audit_log.path),
-            },
+            metadata=common_metadata,
         )
 
     def _search(self, query: str, requested_path: str | None) -> ToolResult:
@@ -816,14 +788,21 @@ class ToolRegistry:
         *,
         timeout_seconds: int,
         env: dict[str, str],
-    ) -> tuple[subprocess.CompletedProcess[str], bool, str, bool, bool]:
+    ) -> tuple[subprocess.CompletedProcess[str], bool, str, bool, bool, dict[str, Any]]:
         result = self.sandbox_runner.run_shell(
             command,
             timeout_seconds=timeout_seconds,
             env=env,
             cancellation_token=self.cancellation_token,
         )
-        return result.completed, result.timed_out, result.output, result.cancelled, result.cleanup_attempted
+        return (
+            result.completed,
+            result.timed_out,
+            result.output,
+            result.cancelled,
+            result.cleanup_attempted,
+            result.metadata or {},
+        )
 
     @staticmethod
     def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
@@ -834,12 +813,14 @@ class ToolRegistry:
         completed, timed_out, output, *rest = value
         cancelled = bool(rest[0]) if len(rest) >= 1 else False
         cleanup_attempted = bool(rest[1]) if len(rest) >= 2 else bool(timed_out or cancelled)
+        metadata = rest[2] if len(rest) >= 3 and isinstance(rest[2], dict) else {}
         return {
             "completed": completed,
             "timed_out": timed_out,
             "output": output,
             "cancelled": cancelled,
             "cleanup_attempted": cleanup_attempted,
+            "metadata": metadata,
         }
 
     @staticmethod

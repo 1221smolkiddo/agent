@@ -1,9 +1,12 @@
+import json
+import subprocess
 from pathlib import Path
 
 from typer.testing import CliRunner
 
 import code_agent.sandbox_security as sandbox_security_module
 from code_agent.cli import app
+from code_agent.processes import ShellProcessResult
 from code_agent.sandbox import (
     create_sandbox_workspace,
     diff_sandbox_workspace,
@@ -11,7 +14,7 @@ from code_agent.sandbox import (
     format_sandbox_limits,
     promote_sandbox_changes,
 )
-from code_agent.sandbox_security import SandboxPolicy, sandbox_health
+from code_agent.sandbox_security import SandboxPolicy, SandboxResourceLimits, sandbox_health
 from code_agent.sandbox_security import SandboxAuditLog, SandboxRunner
 from code_agent.processes import ProcessSupervisor
 from code_agent.schema import RunShellAction
@@ -217,6 +220,75 @@ def test_sandbox_audit_log_records_shell_command(tmp_path: Path, monkeypatch) ->
     audit_text = audit_path.read_text(encoding="utf-8")
     assert "command_started" in audit_text
     assert "command_finished" in audit_text
+
+
+def test_sandbox_disk_guard_blocks_shell_when_workspace_starts_over_budget(tmp_path: Path) -> None:
+    (tmp_path / "large.txt").write_bytes(b"x")
+    tools = ToolRegistry(
+        workspace=tmp_path,
+        dry_run=False,
+        approval_callback=lambda _action, _detail: True,
+        sandbox_policy=SandboxPolicy(resources=SandboxResourceLimits(disk_mb=0)),
+    )
+
+    result = tools.run(RunShellAction(type="run_shell", command="git --version"))
+
+    assert not result.ok
+    assert "exceeded before command execution" in result.output
+    assert result.metadata["disk_budget_stage"] == "preflight"
+    assert result.metadata["disk_before_bytes"] == 1
+    assert result.metadata["disk_limit_bytes"] == 0
+    audit_events = [
+        json.loads(line)["event"]
+        for line in (tmp_path / ".code-agent" / "audit" / "sandbox.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
+    assert "disk_budget_exceeded" in audit_events
+    assert "command_started" not in audit_events
+
+
+def test_sandbox_disk_guard_fails_command_that_grows_workspace_past_budget(
+    tmp_path: Path,
+) -> None:
+    class GrowingSupervisor:
+        def run_shell(self, command: str, **_kwargs) -> ShellProcessResult:
+            (tmp_path / "large.txt").write_bytes(b"x")
+            return ShellProcessResult(
+                completed=subprocess.CompletedProcess(command, 0, "ok", ""),
+            )
+
+    runner = SandboxRunner(
+        tmp_path,
+        SandboxPolicy(resources=SandboxResourceLimits(disk_mb=0)),
+        GrowingSupervisor(),  # type: ignore[arg-type]
+        SandboxAuditLog(tmp_path),
+    )
+
+    result = runner.run_shell("git --version", timeout_seconds=30, env={})
+
+    assert result.completed.returncode == 125
+    assert result.completed.stdout == "ok"
+    assert "exceeded after command execution" in result.completed.stderr
+    assert result.metadata is not None
+    assert result.metadata["disk_budget_stage"] == "post_run"
+    assert result.metadata["disk_before_bytes"] == 0
+    assert result.metadata["disk_after_bytes"] == 1
+    assert result.metadata["disk_growth_bytes"] == 1
+    audit_records = [
+        json.loads(line)
+        for line in (tmp_path / ".code-agent" / "audit" / "sandbox.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
+    assert any(
+        record["event"] == "disk_budget_exceeded"
+        and record["disk_budget_stage"] == "post_run"
+        for record in audit_records
+    )
+    finished = [record for record in audit_records if record["event"] == "command_finished"]
+    assert finished[0]["returncode"] == 125
+    assert finished[0]["disk"]["original_returncode"] == 0
 
 
 def test_sandbox_audit_log_redacts_secret_looking_command_text(tmp_path: Path) -> None:
