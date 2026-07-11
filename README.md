@@ -446,9 +446,10 @@ Use `code-agent sandbox diff <sandbox-path>` to inspect changed files and unifie
 Sandbox execution has two backend families:
 
 - `local`: hardened local subprocess execution with workspace-bound paths, secret-scrubbed environment, command policy, timeouts, process-tree cleanup, disk-usage checks, and audit logs under `.code-agent/audit/sandbox.jsonl`. This is useful everywhere, but it is not an OS security boundary.
-- `docker`/`podman`: container-backed execution with offline network by default, read-only container root filesystem, a writable sandbox workspace mount, isolated environment, CPU/memory/pid limits, timeouts, and command audit logging.
+- `docker`/`podman`: container-backed execution with offline network by default, no implicit image pulls, read-only container root filesystem, a writable sandbox workspace mount, isolated environment, dropped Linux capabilities, `no-new-privileges`, CPU/memory/pid limits, timeouts, and command audit logging.
 
 Run `code-agent sandbox health --backend docker` or `code-agent sandbox health --backend podman` to check whether a container backend is available.
+Health checks distinguish an installed CLI from a running daemon, so Windows hosts with Docker Desktop installed but virtualization disabled report a clear backend-not-ready state instead of hanging.
 
 Projects can add `.code-agent/policy.toml` to narrow trusted commands and resource limits:
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import platform
 import shutil
 import subprocess
 import time
@@ -129,7 +130,10 @@ class SandboxHealth:
     available: bool
     isolation: str
     runtime: str | None = None
+    cli_available: bool = False
+    daemon_available: bool | None = None
     detail: str = ""
+    diagnostics: tuple[str, ...] = ()
 
     def format_text(self) -> str:
         lines = [
@@ -140,8 +144,14 @@ class SandboxHealth:
         ]
         if self.runtime:
             lines.append(f"- runtime: {self.runtime}")
+        lines.append(f"- cli available: {'yes' if self.cli_available else 'no'}")
+        if self.daemon_available is not None:
+            lines.append(f"- daemon available: {'yes' if self.daemon_available else 'no'}")
         if self.detail:
             lines.append(f"- detail: {self.detail}")
+        if self.diagnostics:
+            lines.append("- diagnostics:")
+            lines.extend(f"  - {item}" for item in self.diagnostics)
         return "\n".join(lines)
 
 
@@ -233,7 +243,8 @@ class SandboxRunner:
         env: dict[str, str],
         cancellation_token: CancellationToken | None,
     ) -> ShellProcessResult:
-        if shutil.which(runtime) is None:
+        runtime_path = resolve_container_runtime(runtime)
+        if runtime_path is None:
             completed = subprocess.CompletedProcess(
                 [runtime],
                 127,
@@ -241,14 +252,30 @@ class SandboxRunner:
                 f"{runtime} is not available. Install {runtime} or set AGENT_SANDBOX_BACKEND=local.",
             )
             return ShellProcessResult(completed=completed)
+        daemon_ok, daemon_detail = container_daemon_available(runtime_path)
+        if not daemon_ok:
+            completed = subprocess.CompletedProcess(
+                [runtime_path],
+                125,
+                "",
+                "Container runtime daemon is not available. "
+                + (daemon_detail or "Run `code-agent sandbox health` for diagnostics."),
+            )
+            return ShellProcessResult(completed=completed)
 
         network = "none" if self.policy.commands.offline else "bridge"
         container_command = [
-            runtime,
+            runtime_path,
             "run",
             "--rm",
+            "--pull",
+            "never",
             "--network",
             network,
+            "--security-opt",
+            "no-new-privileges",
+            "--cap-drop",
+            "ALL",
             "--cpus",
             str(self.policy.resources.cpus),
             "--memory",
@@ -307,28 +334,117 @@ class SandboxRunner:
 def sandbox_health(policy: SandboxPolicy) -> SandboxHealth:
     if policy.backend in {"docker", "podman", "container"}:
         runtime = "podman" if policy.backend == "podman" else "docker"
-        available = shutil.which(runtime) is not None
+        runtime_path = resolve_container_runtime(runtime)
+        cli_available = runtime_path is not None
+        daemon_available = False
+        diagnostics: list[str] = []
+        if cli_available:
+            daemon_available, daemon_detail = container_daemon_available(runtime_path)
+            if daemon_detail:
+                diagnostics.append(daemon_detail)
+        else:
+            diagnostics.append(f"{runtime} executable was not found on PATH or common install paths.")
+        if runtime == "docker" and platform.system().lower() == "windows":
+            virtualization_detail = windows_virtualization_diagnostic()
+            if virtualization_detail:
+                diagnostics.append(virtualization_detail)
+        available = cli_available and daemon_available
         return SandboxHealth(
             backend=policy.backend,
             available=available,
-            runtime=runtime,
+            runtime=runtime_path or runtime,
+            cli_available=cli_available,
+            daemon_available=daemon_available,
             isolation="container process, filesystem, env, network, pid, CPU, and memory boundaries",
             detail=(
                 "Container backend uses read-only rootfs, isolated env, offline network by default, "
                 "resource limits, and a writable workspace mount."
                 if available
-                else f"{runtime} executable was not found on PATH."
+                else "Container backend is configured but not ready. See diagnostics."
             ),
+            diagnostics=tuple(diagnostics),
         )
     return SandboxHealth(
         backend=policy.backend,
         available=True,
+        cli_available=True,
+        daemon_available=None,
         isolation="hardened local subprocess policy, not an OS security boundary",
         detail=(
             "Local backend enforces workspace paths, env scrubbing, policy checks, timeouts, "
             "process-tree cleanup, audit logs, and sandbox copy-on-write promotion."
         ),
     )
+
+
+def resolve_container_runtime(runtime: str) -> str | None:
+    found = shutil.which(runtime)
+    if found:
+        return found
+    candidates = []
+    if runtime == "docker":
+        candidates.extend(
+            [
+                Path("C:/Program Files/Docker/Docker/resources/bin/docker.exe"),
+            ]
+        )
+    elif runtime == "podman":
+        candidates.extend(
+            [
+                Path("C:/Program Files/RedHat/Podman/podman.exe"),
+                Path("C:/Program Files/Podman/podman.exe"),
+            ]
+        )
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def container_daemon_available(runtime_path: str, *, timeout_seconds: int = 5) -> tuple[bool, str]:
+    try:
+        completed = subprocess.run(
+            [runtime_path, "info"],
+            text=True,
+            capture_output=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"{runtime_path} info timed out after {timeout_seconds}s."
+    except OSError as exc:
+        return False, f"{runtime_path} info failed: {exc}."
+    if completed.returncode == 0:
+        return True, ""
+    output = "\n".join(part for part in [completed.stdout, completed.stderr] if part).strip()
+    return False, output or f"{runtime_path} info exited with {completed.returncode}."
+
+
+def windows_virtualization_diagnostic(*, timeout_seconds: int = 5) -> str:
+    try:
+        completed = subprocess.run(
+            ["systeminfo"],
+            text=True,
+            capture_output=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    lines = []
+    for line in completed.stdout.splitlines():
+        normalized = " ".join(line.split())
+        lowered = normalized.lower()
+        if (
+            "virtualization enabled in firmware" in lowered
+            or "vm monitor mode extensions" in lowered
+            or "hyper-v requirements" in lowered
+            or "a hypervisor has been detected" in lowered
+        ):
+            lines.append(normalized)
+    if not lines:
+        return ""
+    return "Windows virtualization: " + "; ".join(lines[:6])
 
 
 def validate_workspace_boundary(path: Path, workspace: Path) -> None:

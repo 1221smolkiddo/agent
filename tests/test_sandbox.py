@@ -2,6 +2,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+import code_agent.sandbox_security as sandbox_security_module
 from code_agent.cli import app
 from code_agent.sandbox import (
     create_sandbox_workspace,
@@ -11,6 +12,8 @@ from code_agent.sandbox import (
     promote_sandbox_changes,
 )
 from code_agent.sandbox_security import SandboxPolicy, sandbox_health
+from code_agent.sandbox_security import SandboxAuditLog, SandboxRunner
+from code_agent.processes import ProcessSupervisor
 from code_agent.schema import RunShellAction
 from code_agent.tools import ToolRegistry
 
@@ -221,3 +224,78 @@ def test_sandbox_health_reports_container_availability() -> None:
 
     assert health.backend == "docker"
     assert "container" in health.isolation
+
+
+def test_sandbox_health_distinguishes_cli_from_daemon(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "resolve_container_runtime",
+        lambda runtime: "C:/Program Files/Docker/Docker/resources/bin/docker.exe",
+    )
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "container_daemon_available",
+        lambda _runtime: (False, "virtualization support not detected"),
+    )
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "windows_virtualization_diagnostic",
+        lambda: "Windows virtualization: Virtualization Enabled In Firmware: No",
+    )
+
+    health = sandbox_health(SandboxPolicy(backend="docker"))
+    rendered = health.format_text()
+
+    assert not health.available
+    assert health.cli_available is True
+    assert health.daemon_available is False
+    assert "virtualization support not detected" in rendered
+    assert "Virtualization Enabled In Firmware: No" in rendered
+
+
+def test_sandbox_health_reports_missing_container_cli(monkeypatch) -> None:
+    monkeypatch.setattr(sandbox_security_module, "resolve_container_runtime", lambda _runtime: None)
+    monkeypatch.setattr(sandbox_security_module, "windows_virtualization_diagnostic", lambda: "")
+
+    health = sandbox_health(SandboxPolicy(backend="docker"))
+
+    assert not health.available
+    assert health.cli_available is False
+    assert health.daemon_available is False
+    assert "executable was not found" in health.format_text()
+
+
+def test_container_runner_fails_fast_when_daemon_unavailable(tmp_path: Path, monkeypatch) -> None:
+    popen_called: list[bool] = []
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "resolve_container_runtime",
+        lambda _runtime: "C:/Program Files/Docker/Docker/resources/bin/docker.exe",
+    )
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "container_daemon_available",
+        lambda _runtime: (False, "virtualization support not detected"),
+    )
+    monkeypatch.setattr(
+        sandbox_security_module.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: popen_called.append(True),
+    )
+    runner = SandboxRunner(
+        tmp_path,
+        SandboxPolicy(backend="docker"),
+        ProcessSupervisor(),
+        SandboxAuditLog(tmp_path, enabled=False),
+    )
+
+    result = runner.run_shell(
+        "python -m pytest",
+        timeout_seconds=120,
+        env={},
+    )
+
+    assert result.completed.returncode == 125
+    assert "daemon is not available" in result.completed.stderr
+    assert "virtualization support not detected" in result.completed.stderr
+    assert popen_called == []
