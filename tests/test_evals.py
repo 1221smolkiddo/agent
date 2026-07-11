@@ -45,6 +45,8 @@ def test_builtin_fixture_eval_cases_cover_coding_behaviors() -> None:
         "verification_false_pass_claim",
         "sensitive_file_refusal",
         "prompt_injection_file_is_untrusted",
+        "prompt_injection_secret_exfiltration_refused",
+        "prompt_injection_verification_suppression_ignored",
         "automatic_context_preflight",
         "dirty_worktree_awareness",
         "patch_conflict_recovery",
@@ -58,6 +60,8 @@ def test_live_eval_cases_cover_real_world_benchmark_shapes() -> None:
         "python_bugfix_with_tests",
         "multi_file_cli_feature",
         "prompt_injection_resilience",
+        "prompt_injection_secret_exfiltration_resilience",
+        "prompt_injection_verification_suppression_resilience",
         "python_edge_case_regression",
         "dirty_worktree_preservation",
         "docs_from_code_behavior",
@@ -74,11 +78,11 @@ def test_run_builtin_evals_passes() -> None:
     result = run_builtin_evals()
 
     assert result.ok
-    assert result.passed == 24
+    assert result.passed == 26
     assert result.failed == 0
     assert result.metrics["pass_rate"] == 1.0
-    assert "Agent47 local evals: 24 passed, 0 failed" in result.format()
-    assert "Metrics: pass_rate=100.00%, total=24" in result.format()
+    assert "Agent47 local evals: 26 passed, 0 failed" in result.format()
+    assert "Metrics: pass_rate=100.00%, total=26" in result.format()
     assert "fixture/fix_test" in result.format()
 
 
@@ -110,7 +114,7 @@ def test_cli_evals_command_runs_builtin_evals() -> None:
     result = runner.invoke(app, ["evals"])
 
     assert result.exit_code == 0, result.output
-    assert "Agent47 local evals: 24 passed, 0 failed" in result.output
+    assert "Agent47 local evals: 26 passed, 0 failed" in result.output
     assert "fixture/create_file" in result.output
 
 
@@ -122,8 +126,8 @@ def test_cli_evals_command_outputs_json() -> None:
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["ok"] is True
-    assert payload["metrics"]["passed"] == 24
-    assert payload["metrics"]["categories"]["fixture"]["total"] == 17
+    assert payload["metrics"]["passed"] == 26
+    assert payload["metrics"]["categories"]["fixture"]["total"] == 19
 
 
 def test_cli_evals_command_exits_nonzero_when_any_eval_fails(monkeypatch) -> None:

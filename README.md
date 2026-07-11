@@ -128,8 +128,9 @@ uv run code-agent eval-reports --analytics
 ```
 
 The eval suite runs deterministic safety regressions plus fixture coding tasks for file creation,
-file editing, test fixing, failed-read recovery, dirty-worktree awareness, and patch-conflict
-recovery. `--json` emits benchmark-style metrics and per-case results for trend tracking.
+file editing, test fixing, failed-read recovery, dirty-worktree awareness, patch-conflict recovery,
+and prompt-injection attempts that try to exfiltrate secrets or suppress verification. `--json`
+emits benchmark-style metrics and per-case results for trend tracking.
 Live evals are opt-in because they call the configured model provider and spend tokens; use them
 for release-candidate measurement against small generated repos that exercise bug fixing,
 multi-file feature work, and prompt-injection resilience.
@@ -369,7 +370,10 @@ File mutations are verified against disk state before Agent47 trusts them in fin
 
 Patch approvals include a change-set summary before the unified diff, and applied patches record structured metadata for every changed file, including operation, additions, deletions, and total file count. JSON frontends receive the same metadata on approval events and final payloads.
 
-Web search approval prompts include the provider domains and query. Agent47 blocks localhost, private-network, link-local, reserved, and multicast web targets, and filters unsafe result URLs before returning search results.
+Web search approval prompts include the provider domains, configured domain allowlist, and query.
+Agent47 blocks localhost, private-network, link-local, reserved, and multicast web targets, resolves
+DNS before fetching, rejects hostnames that resolve to blocked addresses, and filters unsafe or
+non-allowlisted result URLs before returning search results.
 
 Repository content, command output, search results, diffs, web results, repo maps, ranked context, symbol indexes, dependency graphs, and project memory are treated as untrusted data in the model loop. Tool payloads that can contain external or repo-supplied text are marked with `untrusted_content` and a security instruction so prompt-injection text in files or tool output is not promoted into model instructions.
 
@@ -445,8 +449,8 @@ Use `code-agent sandbox diff <sandbox-path>` to inspect changed files and unifie
 
 Sandbox execution has two backend families:
 
-- `local`: hardened local subprocess execution with workspace-bound paths, secret-scrubbed environment, command policy, timeouts, process-tree cleanup, disk-usage checks, and audit logs under `.code-agent/audit/sandbox.jsonl`. This is useful everywhere, but it is not an OS security boundary.
-- `docker`/`podman`: container-backed execution with offline network by default, no implicit image pulls, read-only container root filesystem, a writable sandbox workspace mount, isolated environment, dropped Linux capabilities, `no-new-privileges`, CPU/memory/pid limits, timeouts, and command audit logging.
+- `local`: hardened local subprocess execution with workspace-bound paths, secret-scrubbed environment, command policy, timeouts, process-tree cleanup, pre/post command disk-usage enforcement, and audit logs under `.code-agent/audit/sandbox.jsonl`. This is useful everywhere, but it is not an OS security boundary.
+- `docker`/`podman`: container-backed execution with offline network by default, no implicit image pulls, pinned image digest validation when configured or when the image reference includes `@sha256:...`, read-only container root filesystem, a writable sandbox workspace mount, isolated environment, dropped Linux capabilities, `no-new-privileges`, CPU/memory/pid limits, timeouts, and command audit logging.
 
 Run `code-agent sandbox health --backend docker` or `code-agent sandbox health --backend podman` to check whether a container backend is available.
 Health checks distinguish an installed CLI from a running daemon, so Windows hosts with Docker Desktop installed but virtualization disabled report a clear backend-not-ready state instead of hanging.
@@ -467,7 +471,7 @@ pids = 128
 
 [network]
 offline = true
-domain_allowlist = []
+domain_allowlist = ["example.com", "*.python.org"]
 
 [images]
 allowed = ["python:*"]
@@ -479,6 +483,12 @@ deny = ["git reset*", "git clean*"]
 allow_install = false
 allow_git_mutation = false
 ```
+
+`domain_allowlist` applies to web access and web-result filtering. Exact entries allow the host
+and its subdomains; `*.example.com` allows subdomains only. When a container image is configured as
+`name:tag@sha256:...`, that digest is treated as a pin and must match local image metadata before
+execution starts. CI also includes an opt-in `docker-security` job, triggered manually with
+`docker_security_tests=true`, for live Docker sandbox checks.
 
 ## Project Shape
 

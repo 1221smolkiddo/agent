@@ -16,6 +16,7 @@ Use this checklist before tagging any public alpha release.
 - [ ] Prompt-injection tests pass.
 - [ ] Secret redaction tests pass.
 - [ ] Permission and path-safety tests pass.
+- [ ] Domain allowlist, DNS safety, sandbox disk-budget, and container image pin tests pass.
 - [ ] JSON protocol approvals fail closed unless a matching response is supplied.
 - [ ] Patch previews include every changed file before approval.
 - [ ] Patch apply metadata records every changed file after apply.
@@ -30,6 +31,7 @@ Use this checklist before tagging any public alpha release.
 - [ ] `uv run code-agent doctor --strict` passes or any warning is documented in release notes.
 - [ ] `uv run code-agent evals` passes.
 - [ ] Optional but recommended before public claims: `uv run code-agent evals --live --limit 3` passes with the release candidate model.
+- [ ] Optional live Docker sandbox security CI has been run manually with `docker_security_tests=true` when making container isolation claims.
 - [ ] A clean virtual environment can install the package.
 - [ ] `code-agent run-json --dry-run "Inspect this project"` emits valid NDJSON.
 

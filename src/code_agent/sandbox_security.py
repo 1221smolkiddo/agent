@@ -624,7 +624,14 @@ def inspect_container_image(
 ) -> tuple[bool, tuple[str, ...], str]:
     try:
         completed = subprocess.run(
-            [runtime_path, "image", "inspect", image, "--format", "{{json .RepoDigests}}"],
+            [
+                runtime_path,
+                "image",
+                "inspect",
+                image,
+                "--format",
+                "{{json .RepoDigests}}",
+            ],
             text=True,
             capture_output=True,
             timeout=timeout_seconds,
@@ -650,8 +657,19 @@ def validate_container_image_policy(
     image: str,
     policy: ContainerImagePolicy,
 ) -> tuple[bool, str]:
-    if not any(fnmatch.fnmatch(image, pattern) for pattern in policy.allowed_images):
+    image_name, image_digest = split_container_image_digest(image)
+    if not any(
+        fnmatch.fnmatch(candidate, pattern)
+        for candidate in {image, image_name}
+        for pattern in policy.allowed_images
+    ):
         return False, f"Container image {image} is not allowed by sandbox image policy."
+    expected_digest = normalized_container_digest(policy.required_digest) or image_digest
+    if policy.required_digest and image_digest and image_digest != expected_digest:
+        return False, (
+            f"Container image {image} digest conflicts with policy. "
+            f"Expected {expected_digest}; image reference pins {image_digest}."
+        )
     available, digests, detail = inspect_container_image(runtime_path, image)
     if not available:
         return False, (
@@ -659,19 +677,48 @@ def validate_container_image_policy(
             "Pull and review the image explicitly before sandbox execution. "
             + detail
         )
-    if not policy.required_digest:
+    if not expected_digest:
         return True, f"Container image {image} is locally available."
-    expected = policy.required_digest
-    if expected.startswith("sha256:"):
-        matched = any(item.endswith("@" + expected) or item.endswith(expected) for item in digests)
-    else:
-        matched = expected in digests
+    matched = any(container_digest_matches(item, expected_digest) for item in digests)
     if matched:
-        return True, f"Container image {image} digest matches policy."
+        source = "policy" if policy.required_digest else "image reference"
+        return True, f"Container image {image} digest matches {source} pin."
     digest_detail = ", ".join(digests) if digests else "<no repo digests>"
     return False, (
         f"Container image {image} digest does not match policy. "
-        f"Expected {expected}; local digests: {digest_detail}."
+        f"Expected {expected_digest}; local digests: {digest_detail}."
+    )
+
+
+def split_container_image_digest(image: str) -> tuple[str, str | None]:
+    if "@sha256:" not in image:
+        return image, None
+    name, digest = image.rsplit("@", 1)
+    return name, normalized_container_digest(digest)
+
+
+def normalized_container_digest(value: str | None) -> str | None:
+    if not value:
+        return None
+    digest = value.strip()
+    if not digest:
+        return None
+    if digest.startswith("@"):
+        digest = digest[1:]
+    if digest.startswith("sha256:"):
+        return digest
+    if len(digest) == 64 and all(char in "0123456789abcdefABCDEF" for char in digest):
+        return "sha256:" + digest.lower()
+    return digest
+
+
+def container_digest_matches(actual: str, expected: str) -> bool:
+    normalized_expected = normalized_container_digest(expected) or expected
+    normalized_actual = actual.strip()
+    if normalized_actual.startswith("sha256:"):
+        return normalized_actual == normalized_expected
+    return normalized_actual.endswith("@" + normalized_expected) or normalized_actual.endswith(
+        normalized_expected
     )
 
 

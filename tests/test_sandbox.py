@@ -2,6 +2,7 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 import code_agent.sandbox_security as sandbox_security_module
@@ -519,6 +520,78 @@ def test_sandbox_policy_loads_container_image_rules(tmp_path: Path) -> None:
     assert policy.container_image == "python:3.13-slim"
     assert policy.images.allowed_images == ("python:*",)
     assert policy.images.required_digest == "sha256:expected"
+
+
+def test_container_image_policy_accepts_pinned_image_reference(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "inspect_container_image",
+        lambda _runtime, _image: (
+            True,
+            ("python@sha256:expected",),
+            "",
+        ),
+    )
+
+    ok, detail = sandbox_security_module.validate_container_image_policy(
+        "docker",
+        "python:3.13-slim@sha256:expected",
+        sandbox_security_module.ContainerImagePolicy(allowed_images=("python:*",)),
+    )
+
+    assert ok
+    assert "image reference pin" in detail
+
+
+def test_container_image_policy_rejects_image_reference_policy_digest_conflict() -> None:
+    ok, detail = sandbox_security_module.validate_container_image_policy(
+        "docker",
+        "python:3.13-slim@sha256:actual",
+        sandbox_security_module.ContainerImagePolicy(
+            allowed_images=("python:*",),
+            required_digest="sha256:expected",
+        ),
+    )
+
+    assert not ok
+    assert "conflicts with policy" in detail
+
+
+@pytest.mark.docker_security
+def test_docker_sandbox_uses_isolated_env_and_read_only_rootfs(tmp_path: Path) -> None:
+    runtime = sandbox_security_module.resolve_container_runtime("docker")
+    if runtime is None:
+        pytest.skip("docker executable is not available")
+    daemon_ok, daemon_detail = sandbox_security_module.container_daemon_available(runtime)
+    if not daemon_ok:
+        pytest.skip(f"docker daemon is not available: {daemon_detail}")
+    image_ok, image_detail = sandbox_security_module.validate_container_image_policy(
+        runtime,
+        "python:3.13-slim",
+        sandbox_security_module.ContainerImagePolicy(),
+    )
+    if not image_ok:
+        pytest.skip(image_detail)
+    runner = SandboxRunner(
+        tmp_path,
+        SandboxPolicy(backend="docker"),
+        ProcessSupervisor(),
+        SandboxAuditLog(tmp_path),
+    )
+
+    result = runner.run_shell(
+        (
+            "python -c \"import os, pathlib; "
+            "print(os.environ.get('AGENT47_SANDBOXED_SHELL')); "
+            "pathlib.Path('/agent47-rootfs-write').write_text('blocked')\""
+        ),
+        timeout_seconds=30,
+        env={},
+    )
+
+    assert result.completed.returncode != 0
+    assert "1" in result.completed.stdout
+    assert "Read-only file system" in result.completed.stderr or "Permission denied" in result.completed.stderr
 
 
 def test_container_env_uses_linux_path_and_drops_windows_shell_keys() -> None:

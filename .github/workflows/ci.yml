@@ -4,6 +4,16 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      docker_security_tests:
+        description: "Run optional live Docker sandbox security tests"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 jobs:
   test:
@@ -17,3 +27,20 @@ jobs:
       - run: uv sync --extra dev --extra parsing
       - run: uv run ruff check src tests
       - run: uv run pytest
+
+  docker-security:
+    if: github.event_name == 'workflow_dispatch' && inputs.docker_security_tests == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --extra dev
+      - name: Inspect Docker sandbox health
+        run: uv run code-agent sandbox health --backend docker
+      - name: Prepare reviewed sandbox image
+        run: docker pull python:3.13-slim
+      - name: Run live Docker sandbox security tests
+        run: uv run pytest tests/test_sandbox.py -m docker_security

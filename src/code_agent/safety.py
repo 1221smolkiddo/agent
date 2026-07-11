@@ -3,9 +3,11 @@ from __future__ import annotations
 import re
 import shlex
 import ipaddress
+import socket
 import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 
 SENSITIVE_FILE_NAMES = {
@@ -86,6 +88,7 @@ class NetworkPolicy:
     risk: str
     allowed: bool
     reason: str
+    resolved_addresses: tuple[str, ...] = ()
 
 
 def is_sensitive_path(path: Path, workspace: Path) -> bool:
@@ -200,7 +203,16 @@ def classify_shell_command(command: str) -> ShellPolicy:
     )
 
 
-def classify_network_url(url: str) -> NetworkPolicy:
+DnsResolver = Callable[[str], tuple[str, ...]]
+
+
+def classify_network_url(
+    url: str,
+    *,
+    domain_allowlist: tuple[str, ...] = (),
+    resolve_dns: bool = False,
+    dns_resolver: DnsResolver | None = None,
+) -> NetworkPolicy:
     parsed = urllib.parse.urlparse(url)
     host = (parsed.hostname or "").lower()
     if parsed.scheme not in {"http", "https"}:
@@ -219,6 +231,18 @@ def classify_network_url(url: str) -> NetworkPolicy:
             allowed=False,
             reason="URL does not contain a host.",
         )
+    normalized_allowlist = _normalize_domain_allowlist(domain_allowlist)
+    if normalized_allowlist and not _host_matches_domain_allowlist(host, normalized_allowlist):
+        return NetworkPolicy(
+            host=host,
+            category="domain-not-allowlisted",
+            risk="high",
+            allowed=False,
+            reason=(
+                "Host is not included in the configured domain allowlist: "
+                + ", ".join(normalized_allowlist)
+            ),
+        )
     if host in {"localhost"} or host.endswith(".localhost"):
         return NetworkPolicy(
             host=host,
@@ -230,26 +254,54 @@ def classify_network_url(url: str) -> NetworkPolicy:
     try:
         address = ipaddress.ip_address(host.strip("[]"))
     except ValueError:
+        if not resolve_dns:
+            return NetworkPolicy(
+                host=host,
+                category="public-web",
+                risk="medium",
+                allowed=True,
+                reason="Public web target.",
+            )
+        resolver = dns_resolver or resolve_public_dns_addresses
+        try:
+            resolved_addresses = resolver(host)
+        except OSError as exc:
+            return NetworkPolicy(
+                host=host,
+                category="dns-resolution-failed",
+                risk="high",
+                allowed=False,
+                reason=f"DNS resolution failed for {host}: {exc}.",
+            )
+        blocked = _blocked_network_addresses(resolved_addresses)
+        if blocked:
+            return NetworkPolicy(
+                host=host,
+                category="dns-private-network",
+                risk="critical",
+                allowed=False,
+                reason=(
+                    "DNS resolved to private, loopback, reserved, link-local, or "
+                    f"multicast address(es): {', '.join(blocked)}."
+                ),
+                resolved_addresses=tuple(resolved_addresses),
+            )
         return NetworkPolicy(
             host=host,
             category="public-web",
             risk="medium",
             allowed=True,
             reason="Public web target.",
+            resolved_addresses=tuple(resolved_addresses),
         )
-    if (
-        address.is_private
-        or address.is_loopback
-        or address.is_link_local
-        or address.is_reserved
-        or address.is_multicast
-    ):
+    if _is_blocked_network_address(address):
         return NetworkPolicy(
             host=host,
             category="local-network",
             risk="critical",
             allowed=False,
             reason="Private, loopback, reserved, link-local, and multicast web targets are blocked.",
+            resolved_addresses=(str(address),),
         )
     return NetworkPolicy(
         host=host,
@@ -257,6 +309,63 @@ def classify_network_url(url: str) -> NetworkPolicy:
         risk="medium",
         allowed=True,
         reason="Public web target.",
+        resolved_addresses=(str(address),),
+    )
+
+
+def resolve_public_dns_addresses(host: str) -> tuple[str, ...]:
+    addresses = {
+        item[4][0]
+        for item in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        if item and len(item) >= 5 and item[4]
+    }
+    return tuple(sorted(addresses))
+
+
+def _normalize_domain_allowlist(domain_allowlist: tuple[str, ...]) -> tuple[str, ...]:
+    normalized: list[str] = []
+    for item in domain_allowlist:
+        host = item.strip().lower().rstrip(".")
+        if "://" in host:
+            host = urllib.parse.urlparse(host).hostname or ""
+        if host:
+            normalized.append(host)
+    return tuple(normalized)
+
+
+def _host_matches_domain_allowlist(host: str, domain_allowlist: tuple[str, ...]) -> bool:
+    clean_host = host.strip().lower().rstrip(".")
+    for pattern in domain_allowlist:
+        if pattern.startswith("*."):
+            suffix = pattern[1:]
+            if clean_host.endswith(suffix) and clean_host != pattern[2:]:
+                return True
+            continue
+        if clean_host == pattern or clean_host.endswith("." + pattern):
+            return True
+    return False
+
+
+def _blocked_network_addresses(addresses: tuple[str, ...]) -> tuple[str, ...]:
+    blocked: list[str] = []
+    for raw in addresses:
+        try:
+            address = ipaddress.ip_address(raw)
+        except ValueError:
+            blocked.append(raw)
+            continue
+        if _is_blocked_network_address(address):
+            blocked.append(str(address))
+    return tuple(blocked)
+
+
+def _is_blocked_network_address(address: ipaddress._BaseAddress) -> bool:
+    return (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_reserved
+        or address.is_multicast
     )
 
 

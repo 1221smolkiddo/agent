@@ -60,6 +60,9 @@ packages = ["src/code_agent"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+  "docker_security: optional live Docker sandbox security tests",
+]
 
 [tool.ruff]
 line-length = 100

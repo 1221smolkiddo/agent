@@ -5,6 +5,7 @@ from code_agent import processes as processes_module
 import code_agent.tools as tools_module
 from code_agent.safety import classify_network_url, classify_shell_command, redact_secrets
 from code_agent.schema import ReadFileAction, RunShellAction, SearchAction, WebSearchAction, WriteFileAction
+from code_agent.sandbox_security import CommandPolicy, SandboxPolicy
 from code_agent.tools import ToolRegistry
 
 
@@ -65,6 +66,34 @@ def test_classify_network_url_allows_public_https() -> None:
     assert policy.category == "public-web"
     assert policy.risk == "medium"
     assert policy.allowed
+
+
+def test_classify_network_url_enforces_domain_allowlist() -> None:
+    allowed = classify_network_url(
+        "https://docs.example.com/guide",
+        domain_allowlist=("example.com",),
+    )
+    blocked = classify_network_url(
+        "https://attacker.example.net/guide",
+        domain_allowlist=("example.com",),
+    )
+
+    assert allowed.allowed
+    assert blocked.category == "domain-not-allowlisted"
+    assert not blocked.allowed
+
+
+def test_classify_network_url_blocks_public_hostname_that_resolves_private() -> None:
+    policy = classify_network_url(
+        "https://metadata.example.com/latest",
+        resolve_dns=True,
+        dns_resolver=lambda _host: ("169.254.169.254",),
+    )
+
+    assert policy.category == "dns-private-network"
+    assert policy.risk == "critical"
+    assert not policy.allowed
+    assert policy.resolved_addresses == ("169.254.169.254",)
 
 
 def test_redact_secrets_hides_key_values_and_bearer_tokens() -> None:
@@ -371,7 +400,25 @@ def test_web_search_permission_detail_includes_provider_audit(tmp_path: Path) ->
     assert result.output == "Permission denied for web_search."
     assert "Category: public-web-search" in approval_details[0]
     assert "Providers: www.bing.com, duckduckgo.com" in approval_details[0]
+    assert "Domain allowlist: <public web allowed>" in approval_details[0]
     assert "Query: Agent47 docs" in approval_details[0]
+
+
+def test_web_search_permission_detail_includes_domain_allowlist(tmp_path: Path) -> None:
+    approval_details: list[str] = []
+    tools = ToolRegistry(
+        workspace=tmp_path,
+        dry_run=True,
+        approval_callback=lambda _action, detail: approval_details.append(detail) or False,
+        sandbox_policy=SandboxPolicy(
+            commands=CommandPolicy(domain_allowlist=("example.com",)),
+        ),
+    )
+
+    result = tools.run(WebSearchAction(type="web_search", query="Agent47 docs"))
+
+    assert not result.ok
+    assert "Domain allowlist: example.com" in approval_details[0]
 
 
 def test_web_search_filters_private_network_results(tmp_path: Path, monkeypatch) -> None:
@@ -394,9 +441,54 @@ def test_web_search_filters_private_network_results(tmp_path: Path, monkeypatch)
     assert "127.0.0.1" not in result.output
 
 
-def test_fetch_url_blocks_local_network_targets() -> None:
+def test_web_search_filters_domains_outside_allowlist(tmp_path: Path, monkeypatch) -> None:
+    tools = ToolRegistry(
+        workspace=tmp_path,
+        dry_run=True,
+        approval_callback=lambda _a, _d: True,
+        sandbox_policy=SandboxPolicy(
+            commands=CommandPolicy(domain_allowlist=("example.com",)),
+        ),
+    )
+    monkeypatch.setattr(
+        tools,
+        "_search_bing",
+        lambda _query: [
+            ("Outside", "https://attacker.example.net/docs"),
+            ("Allowed", "https://example.com/docs"),
+        ],
+    )
+    monkeypatch.setattr(tools, "_search_duckduckgo", lambda _query: [])
+
+    result = tools.run(WebSearchAction(type="web_search", query="docs"))
+
+    assert result.ok
+    assert "Allowed" in result.output
+    assert "example.com" in result.output
+    assert "attacker.example.net" not in result.output
+
+
+def test_web_search_reports_provider_policy_blocks(tmp_path: Path) -> None:
+    tools = ToolRegistry(
+        workspace=tmp_path,
+        dry_run=True,
+        approval_callback=lambda _a, _d: True,
+        sandbox_policy=SandboxPolicy(
+            commands=CommandPolicy(domain_allowlist=("example.com",)),
+        ),
+    )
+
+    result = tools.run(WebSearchAction(type="web_search", query="docs"))
+
+    assert not result.ok
+    assert "domain-not-allowlisted" in result.output
+    assert result.metadata["domain_allowlist"] == ["example.com"]
+
+
+def test_fetch_url_blocks_local_network_targets(tmp_path: Path) -> None:
+    tools = ToolRegistry(workspace=tmp_path, dry_run=True, approval_callback=lambda _a, _d: True)
     try:
-        ToolRegistry._fetch_url("http://127.0.0.1:8000")
+        tools._fetch_url("http://127.0.0.1:8000")
     except ValueError as exc:
         assert "Blocked local-network web target" in str(exc)
     else:

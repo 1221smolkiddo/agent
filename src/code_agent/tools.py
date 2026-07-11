@@ -650,22 +650,39 @@ class ToolRegistry:
             f"Risk: medium\n"
             f"Category: public-web-search\n"
             f"Providers: www.bing.com, duckduckgo.com\n"
+            f"Domain allowlist: {self._domain_allowlist_detail()}\n"
             f"Query: {query}"
         )
         if not self._approve("web_search", approval_detail):
             return ToolResult(ok=False, output="Permission denied for web_search.")
 
-        results = self._search_bing(query)
+        provider_errors: list[str] = []
+        results: list[tuple[str, str]] = []
+        try:
+            results = self._search_bing(query)
+        except ValueError as exc:
+            provider_errors.append(str(exc))
         if not results:
-            results = self._search_duckduckgo(query)
+            try:
+                results = self._search_duckduckgo(query)
+            except ValueError as exc:
+                provider_errors.append(str(exc))
         results = self._filter_safe_web_results(results)
         if not results:
+            detail = ""
+            if provider_errors:
+                detail = " Provider errors: " + " | ".join(provider_errors)
             return ToolResult(
                 ok=False,
                 output=(
                     "No web results were found from the configured search providers. "
                     "Try a more specific query or another source."
+                    + detail
                 ),
+                metadata={
+                    "domain_allowlist": list(self.sandbox_policy.commands.domain_allowlist),
+                    "provider_errors": provider_errors,
+                },
             )
         return ToolResult(
             ok=True,
@@ -719,9 +736,12 @@ class ToolRegistry:
         parser.feed(html)
         return parser.results[:5]
 
-    @staticmethod
-    def _fetch_url(url: str) -> str:
-        policy = classify_network_url(url)
+    def _fetch_url(self, url: str) -> str:
+        policy = classify_network_url(
+            url,
+            domain_allowlist=self.sandbox_policy.commands.domain_allowlist,
+            resolve_dns=True,
+        )
         if not policy.allowed:
             raise ValueError(
                 f"Blocked {policy.category} web target ({policy.risk} risk): {policy.reason}"
@@ -738,9 +758,21 @@ class ToolRegistry:
         with urllib.request.urlopen(request, timeout=20) as response:
             return response.read().decode("utf-8", errors="replace")
 
-    @staticmethod
-    def _filter_safe_web_results(results: list[tuple[str, str]]) -> list[tuple[str, str]]:
-        return [(title, href) for title, href in results if classify_network_url(href).allowed]
+    def _filter_safe_web_results(self, results: list[tuple[str, str]]) -> list[tuple[str, str]]:
+        return [
+            (title, href)
+            for title, href in results
+            if classify_network_url(
+                href,
+                domain_allowlist=self.sandbox_policy.commands.domain_allowlist,
+                resolve_dns=True,
+            ).allowed
+        ]
+
+    def _domain_allowlist_detail(self) -> str:
+        if not self.sandbox_policy.commands.domain_allowlist:
+            return "<public web allowed>"
+        return ", ".join(self.sandbox_policy.commands.domain_allowlist)
 
     def _python_search(self, query: str, target: Path) -> str:
         try:
