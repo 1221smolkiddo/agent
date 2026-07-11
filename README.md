@@ -469,6 +469,10 @@ pids = 128
 offline = true
 domain_allowlist = []
 
+[images]
+allowed = ["python:*"]
+required_digest = "sha256:..."
+
 [commands]
 allow = ["uv run pytest*", "uv run ruff check*"]
 deny = ["git reset*", "git clean*"]

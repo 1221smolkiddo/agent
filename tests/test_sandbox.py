@@ -313,6 +313,141 @@ def test_container_runner_fails_fast_when_daemon_unavailable(tmp_path: Path, mon
     assert popen_called == []
 
 
+def test_container_runner_fails_before_popen_when_image_policy_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    popen_called: list[bool] = []
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "resolve_container_runtime",
+        lambda _runtime: "docker",
+    )
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "container_daemon_available",
+        lambda _runtime: (True, ""),
+    )
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "validate_container_image_policy",
+        lambda _runtime, _image, _policy: (False, "image policy failed"),
+    )
+    monkeypatch.setattr(
+        sandbox_security_module.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: popen_called.append(True),
+    )
+    runner = SandboxRunner(
+        tmp_path,
+        SandboxPolicy(backend="docker"),
+        ProcessSupervisor(),
+        SandboxAuditLog(tmp_path, enabled=False),
+    )
+
+    result = runner.run_shell("ls", timeout_seconds=30, env={})
+
+    assert result.completed.returncode == 126
+    assert result.completed.stderr == "image policy failed"
+    assert popen_called == []
+
+
+def test_container_image_policy_rejects_unallowed_image() -> None:
+    policy = sandbox_security_module.ContainerImagePolicy(allowed_images=("python:*",))
+
+    ok, detail = sandbox_security_module.validate_container_image_policy(
+        "docker",
+        "node:latest",
+        policy,
+    )
+
+    assert not ok
+    assert "not allowed" in detail
+
+
+def test_container_image_policy_requires_local_image(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "inspect_container_image",
+        lambda _runtime, _image: (False, (), "No such image"),
+    )
+
+    ok, detail = sandbox_security_module.validate_container_image_policy(
+        "docker",
+        "python:3.13-slim",
+        sandbox_security_module.ContainerImagePolicy(),
+    )
+
+    assert not ok
+    assert "not available locally" in detail
+
+
+def test_container_image_policy_validates_required_digest(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "inspect_container_image",
+        lambda _runtime, _image: (
+            True,
+            ("python@sha256:expected",),
+            "",
+        ),
+    )
+
+    ok, detail = sandbox_security_module.validate_container_image_policy(
+        "docker",
+        "python:3.13-slim",
+        sandbox_security_module.ContainerImagePolicy(required_digest="sha256:expected"),
+    )
+
+    assert ok
+    assert "matches policy" in detail
+
+
+def test_container_image_policy_rejects_digest_mismatch(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "inspect_container_image",
+        lambda _runtime, _image: (
+            True,
+            ("python@sha256:actual",),
+            "",
+        ),
+    )
+
+    ok, detail = sandbox_security_module.validate_container_image_policy(
+        "docker",
+        "python:3.13-slim",
+        sandbox_security_module.ContainerImagePolicy(required_digest="sha256:expected"),
+    )
+
+    assert not ok
+    assert "digest does not match" in detail
+
+
+def test_sandbox_policy_loads_container_image_rules(tmp_path: Path) -> None:
+    policy_dir = tmp_path / ".code-agent"
+    policy_dir.mkdir()
+    (policy_dir / "policy.toml").write_text(
+        "\n".join(
+            [
+                "[sandbox]",
+                'container_image = "python:3.13-slim"',
+                "",
+                "[images]",
+                'allowed = ["python:*"]',
+                'required_digest = "sha256:expected"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    policy = SandboxPolicy.from_workspace(tmp_path, backend="docker")
+
+    assert policy.container_image == "python:3.13-slim"
+    assert policy.images.allowed_images == ("python:*",)
+    assert policy.images.required_digest == "sha256:expected"
+
+
 def test_container_env_uses_linux_path_and_drops_windows_shell_keys() -> None:
     env = sandbox_security_module._container_env(
         {

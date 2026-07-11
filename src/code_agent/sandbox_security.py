@@ -51,12 +51,19 @@ class CommandPolicy:
 
 
 @dataclass(frozen=True)
+class ContainerImagePolicy:
+    allowed_images: tuple[str, ...] = ("python:3.13-slim",)
+    required_digest: str | None = None
+
+
+@dataclass(frozen=True)
 class SandboxPolicy:
     backend: str = "local"
     container_image: str = "python:3.13-slim"
     rootless_required: bool = True
     resources: SandboxResourceLimits = field(default_factory=SandboxResourceLimits)
     commands: CommandPolicy = field(default_factory=CommandPolicy)
+    images: ContainerImagePolicy = field(default_factory=ContainerImagePolicy)
     audit_enabled: bool = True
     cleanup: bool = True
 
@@ -76,6 +83,7 @@ class SandboxPolicy:
         resources = _dict(payload.get("resources"))
         commands = _dict(payload.get("commands"))
         network = _dict(payload.get("network"))
+        images = _dict(payload.get("images"))
         return cls(
             backend=str(sandbox.get("backend", backend)).strip().lower() or backend,
             container_image=str(
@@ -97,6 +105,14 @@ class SandboxPolicy:
                 allow_git_mutation=bool(commands.get("allow_git_mutation", False)),
                 offline=bool(network.get("offline", True)),
                 domain_allowlist=tuple(str(item) for item in network.get("domain_allowlist", []) or []),
+            ),
+            images=ContainerImagePolicy(
+                allowed_images=tuple(str(item) for item in images.get("allowed", ["python:3.13-slim"]) or []),
+                required_digest=(
+                    str(images["required_digest"]).strip()
+                    if images.get("required_digest")
+                    else None
+                ),
             ),
             audit_enabled=bool(sandbox.get("audit_enabled", True)),
             cleanup=bool(sandbox.get("cleanup", True)),
@@ -262,6 +278,19 @@ class SandboxRunner:
                 + (daemon_detail or "Run `code-agent sandbox health` for diagnostics."),
             )
             return ShellProcessResult(completed=completed)
+        image_ok, image_detail = validate_container_image_policy(
+            runtime_path,
+            self.policy.container_image,
+            self.policy.images,
+        )
+        if not image_ok:
+            completed = subprocess.CompletedProcess(
+                [runtime_path],
+                126,
+                "",
+                image_detail,
+            )
+            return ShellProcessResult(completed=completed)
 
         network = "none" if self.policy.commands.offline else "bridge"
         container_command = [
@@ -339,17 +368,26 @@ def sandbox_health(policy: SandboxPolicy) -> SandboxHealth:
         cli_available = runtime_path is not None
         daemon_available = False
         diagnostics: list[str] = []
+        image_ok = False
         if cli_available:
             daemon_available, daemon_detail = container_daemon_available(runtime_path)
             if daemon_detail:
                 diagnostics.append(daemon_detail)
+            if daemon_available:
+                image_ok, image_detail = validate_container_image_policy(
+                    runtime_path,
+                    policy.container_image,
+                    policy.images,
+                )
+                if image_detail:
+                    diagnostics.append(image_detail)
         else:
             diagnostics.append(f"{runtime} executable was not found on PATH or common install paths.")
         if runtime == "docker" and platform.system().lower() == "windows":
             virtualization_detail = windows_virtualization_diagnostic()
             if virtualization_detail:
                 diagnostics.append(virtualization_detail)
-        available = cli_available and daemon_available
+        available = cli_available and daemon_available and image_ok
         return SandboxHealth(
             backend=policy.backend,
             available=available,
@@ -359,7 +397,7 @@ def sandbox_health(policy: SandboxPolicy) -> SandboxHealth:
             isolation="container process, filesystem, env, network, pid, CPU, and memory boundaries",
             detail=(
                 "Container backend uses read-only rootfs, isolated env, offline network by default, "
-                "resource limits, and a writable workspace mount."
+                "resource limits, validated image policy, and a writable workspace mount."
                 if available
                 else "Container backend is configured but not ready. See diagnostics."
             ),
@@ -419,6 +457,65 @@ def container_daemon_available(runtime_path: str, *, timeout_seconds: int = 5) -
         return True, ""
     output = "\n".join(part for part in [completed.stdout, completed.stderr] if part).strip()
     return False, output or f"{runtime_path} info exited with {completed.returncode}."
+
+
+def inspect_container_image(
+    runtime_path: str,
+    image: str,
+    *,
+    timeout_seconds: int = 10,
+) -> tuple[bool, tuple[str, ...], str]:
+    try:
+        completed = subprocess.run(
+            [runtime_path, "image", "inspect", image, "--format", "{{json .RepoDigests}}"],
+            text=True,
+            capture_output=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False, (), f"Image inspect for {image} timed out after {timeout_seconds}s."
+    except OSError as exc:
+        return False, (), f"Image inspect for {image} failed: {exc}."
+    if completed.returncode != 0:
+        output = "\n".join(part for part in [completed.stdout, completed.stderr] if part).strip()
+        return False, (), output or f"Image not available locally: {image}."
+    try:
+        raw = json.loads(completed.stdout.strip() or "[]")
+    except json.JSONDecodeError:
+        return False, (), f"Image inspect for {image} returned invalid digest metadata."
+    digests = tuple(str(item) for item in raw if isinstance(item, str))
+    return True, digests, ""
+
+
+def validate_container_image_policy(
+    runtime_path: str,
+    image: str,
+    policy: ContainerImagePolicy,
+) -> tuple[bool, str]:
+    if not any(fnmatch.fnmatch(image, pattern) for pattern in policy.allowed_images):
+        return False, f"Container image {image} is not allowed by sandbox image policy."
+    available, digests, detail = inspect_container_image(runtime_path, image)
+    if not available:
+        return False, (
+            f"Container image {image} is not available locally. "
+            "Pull and review the image explicitly before sandbox execution. "
+            + detail
+        )
+    if not policy.required_digest:
+        return True, f"Container image {image} is locally available."
+    expected = policy.required_digest
+    if expected.startswith("sha256:"):
+        matched = any(item.endswith("@" + expected) or item.endswith(expected) for item in digests)
+    else:
+        matched = expected in digests
+    if matched:
+        return True, f"Container image {image} digest matches policy."
+    digest_detail = ", ".join(digests) if digests else "<no repo digests>"
+    return False, (
+        f"Container image {image} digest does not match policy. "
+        f"Expected {expected}; local digests: {digest_detail}."
+    )
 
 
 def windows_virtualization_diagnostic(*, timeout_seconds: int = 5) -> str:
