@@ -219,6 +219,18 @@ def test_sandbox_audit_log_records_shell_command(tmp_path: Path, monkeypatch) ->
     assert "command_finished" in audit_text
 
 
+def test_sandbox_audit_log_redacts_secret_looking_command_text(tmp_path: Path) -> None:
+    audit = SandboxAuditLog(tmp_path)
+
+    audit.record("command_started", command="echo API_KEY=super-secret-token")
+
+    audit_text = (tmp_path / ".code-agent" / "audit" / "sandbox.jsonl").read_text(
+        encoding="utf-8"
+    )
+    assert "super-secret-token" not in audit_text
+    assert "API_KEY=[REDACTED]" in audit_text
+
+
 def test_sandbox_health_reports_container_availability() -> None:
     health = sandbox_health(SandboxPolicy(backend="docker"))
 
@@ -306,6 +318,10 @@ def test_container_env_uses_linux_path_and_drops_windows_shell_keys() -> None:
         {
             "PATH": "C:\\Windows\\System32",
             "COMSPEC": "C:\\Windows\\System32\\cmd.exe",
+            "HOME": "C:\\Users\\Sirius",
+            "TEMP": "C:\\Users\\Sirius\\AppData\\Local\\Temp",
+            "USERNAME": "Sirius",
+            "USERPROFILE": "C:\\Users\\Sirius",
             "AGENT47_SANDBOXED_SHELL": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
         }
@@ -313,4 +329,8 @@ def test_container_env_uses_linux_path_and_drops_windows_shell_keys() -> None:
 
     assert env["PATH"] == "/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
     assert "COMSPEC" not in env
+    assert "HOME" not in env
+    assert "TEMP" not in env
+    assert "USERNAME" not in env
+    assert "USERPROFILE" not in env
     assert env["PYTHONDONTWRITEBYTECODE"] == "1"

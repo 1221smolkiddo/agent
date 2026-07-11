@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .processes import CancellationToken, ProcessSupervisor, ShellProcessResult
-from .safety import ShellPolicy
+from .safety import ShellPolicy, redact_secrets
 
 
 POLICY_PATH = ".code-agent/policy.toml"
@@ -168,7 +168,7 @@ class SandboxAuditLog:
         entry = {
             "timestamp": datetime.now(UTC).isoformat(),
             "event": event,
-            **payload,
+            **_redact_payload(payload),
         }
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
@@ -453,14 +453,29 @@ def _container_env(env: dict[str, str]) -> dict[str, str]:
         "PATH": "/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin",
         "AGENT47_SANDBOXED_SHELL": "1",
     }
+    allowed = {
+        "NO_COLOR",
+        "PYTHONDONTWRITEBYTECODE",
+        "PYTHONUNBUFFERED",
+        "TERM",
+    }
     for key, value in env.items():
         upper = key.upper()
-        if upper in {"PATH", "PATHEXT", "COMSPEC", "PSMODULEPATH"}:
-            continue
-        if upper.startswith(("PROGRAMFILES", "SYSTEM", "WINDIR")):
-            continue
-        clean[key] = value
+        if upper in allowed:
+            clean[key] = value
     return clean
+
+
+def _redact_payload(value: Any) -> Any:
+    if isinstance(value, str):
+        return redact_secrets(value)
+    if isinstance(value, dict):
+        return {str(key): _redact_payload(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_payload(item) for item in value)
+    return value
 
 
 def validate_workspace_boundary(path: Path, workspace: Path) -> None:
