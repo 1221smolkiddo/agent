@@ -249,6 +249,7 @@ def test_sandbox_health_distinguishes_cli_from_daemon(monkeypatch) -> None:
         "container_daemon_available",
         lambda _runtime: (False, "virtualization support not detected"),
     )
+    monkeypatch.setattr(sandbox_security_module.platform, "system", lambda: "Windows")
     monkeypatch.setattr(
         sandbox_security_module,
         "windows_virtualization_diagnostic",
