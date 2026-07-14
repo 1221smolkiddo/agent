@@ -159,19 +159,44 @@ def test_complete_raises_insufficient_credits_after_max_retries(monkeypatch):
     assert mock_completions.call_count == 4
 
 
-def test_complete_propagates_non_402_errors(monkeypatch):
-    client = OpenAICompatibleChatClient(api_key="test", base_url="test", model="test", max_tokens=4096)
+def test_complete_retries_transient_server_errors(monkeypatch):
+    client = OpenAICompatibleChatClient(
+        api_key="test",
+        base_url="test",
+        model="test",
+        max_tokens=4096,
+        retry_base_delay_seconds=0,
+    )
     
     mock_completions = MockCompletions([
-        make_500_error()
+        make_500_error(),
+        MockResponse("Recovered"),
     ])
     monkeypatch.setattr(client, "_client", MockClient(mock_completions))
 
-    with pytest.raises(openai.APIStatusError) as exc_info:
+    assert client.complete([{"role": "user", "content": "hi"}]) == "Recovered"
+    assert mock_completions.call_count == 2
+    records = client.drain_usage_records()
+    assert records[0].ok is False
+    assert "server provider failure" in str(records[0].error)
+
+
+def test_complete_stops_after_transient_retry_budget(monkeypatch):
+    client = OpenAICompatibleChatClient(
+        api_key="test",
+        base_url="test",
+        model="test",
+        max_tokens=4096,
+        transient_retry_count=2,
+        retry_base_delay_seconds=0,
+    )
+    mock_completions = MockCompletions([make_500_error(), make_500_error(), make_500_error()])
+    monkeypatch.setattr(client, "_client", MockClient(mock_completions))
+
+    with pytest.raises(openai.APIStatusError):
         client.complete([{"role": "user", "content": "hi"}])
-    
-    assert exc_info.value.status_code == 500
-    assert mock_completions.call_count == 1
+
+    assert mock_completions.call_count == 3
 
 
 def test_stream_complete_retries_on_402(monkeypatch):

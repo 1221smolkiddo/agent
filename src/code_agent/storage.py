@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from .safety import redact_secrets
 
 
 CURRENT_SCHEMA_VERSION = 3
@@ -16,12 +19,13 @@ class AgentStorage:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
+        self._restrict_database_permissions()
 
     def create_run(self, task: str, model: str, cwd: Path) -> int:
         with self._connect() as conn:
             cursor = conn.execute(
                 "insert into runs (task, model, cwd) values (?, ?, ?)",
-                (task, model, str(cwd)),
+                (redact_secrets(task), model, str(cwd)),
             )
             return int(cursor.lastrowid)
 
@@ -29,7 +33,7 @@ class AgentStorage:
         with self._connect() as conn:
             conn.execute(
                 "insert into steps (run_id, role, payload) values (?, ?, ?)",
-                (run_id, role, json.dumps(payload)),
+                (run_id, role, self._safe_json(payload)),
             )
 
     def add_model_usage(self, run_id: int, payload: dict[str, Any]) -> None:
@@ -52,8 +56,8 @@ class AgentStorage:
                     payload.get("total_tokens"),
                     payload.get("estimated_cost_usd"),
                     payload.get("fallback_from"),
-                    payload.get("error"),
-                    json.dumps(payload),
+                    redact_secrets(str(payload.get("error"))) if payload.get("error") else None,
+                    self._safe_json(payload),
                 ),
             )
 
@@ -98,7 +102,7 @@ class AgentStorage:
                     body = excluded.body,
                     payload = excluded.payload
                 """,
-                (run_id, body, json.dumps(payload)),
+                (run_id, redact_secrets(body), self._safe_json(payload)),
             )
 
     def get_work_report(self, run_id: int) -> dict[str, Any] | None:
@@ -172,14 +176,61 @@ class AgentStorage:
             )
         return payloads
 
+    def delete_run(self, run_id: int) -> bool:
+        with self._connect() as conn:
+            exists = conn.execute("select 1 from runs where id = ?", (run_id,)).fetchone()
+            if exists is None:
+                return False
+            conn.execute("delete from model_usage where run_id = ?", (run_id,))
+            conn.execute("delete from work_reports where run_id = ?", (run_id,))
+            conn.execute("delete from steps where run_id = ?", (run_id,))
+            conn.execute("delete from runs where id = ?", (run_id,))
+            return True
+
+    def prune_runs(self, keep_last: int) -> int:
+        if keep_last < 0:
+            raise ValueError("keep_last must be zero or greater")
+        with self._connect() as conn:
+            rows = conn.execute(
+                "select id from runs order by id desc limit -1 offset ?",
+                (keep_last,),
+            ).fetchall()
+        deleted = 0
+        for row in rows:
+            deleted += int(self.delete_run(int(row["id"])))
+        return deleted
+
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
+        conn.execute("pragma foreign_keys = on")
+        conn.execute("pragma busy_timeout = 30000")
         return conn
 
     def _init_db(self) -> None:
         with self._connect() as conn:
+            conn.execute("pragma journal_mode = wal")
             self._migrate(conn)
+
+    def _restrict_database_permissions(self) -> None:
+        if os.name != "nt" and self.db_path.exists():
+            self.db_path.chmod(0o600)
+
+    @classmethod
+    def _safe_json(cls, payload: dict[str, Any]) -> str:
+        return json.dumps(cls._redact_payload(payload))
+
+    @classmethod
+    def _redact_payload(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return redact_secrets(value)
+        if isinstance(value, dict):
+            return {str(key): cls._redact_payload(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [cls._redact_payload(item) for item in value]
+        if isinstance(value, tuple):
+            return [cls._redact_payload(item) for item in value]
+        return value
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
         legacy_database = self._has_user_tables(conn) and not self._table_exists(

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import shlex
 import signal
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -72,10 +74,13 @@ class ProcessSupervisor:
     ) -> ShellProcessResult:
         creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
         start_new_session = os.name != "nt"
+        process_args = split_command_argv(command)
+        if not process_args:
+            raise ValueError("Shell command cannot be empty.")
         process = subprocess.Popen(
-            command,
+            process_args,
             cwd=cwd,
-            shell=True,
+            shell=False,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -172,4 +177,19 @@ def _joined_output(*parts: str | bytes | None) -> str:
 def _coerce_process_output(value: str | bytes) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
+    return value
+
+
+def split_command_argv(command: str) -> list[str]:
+    argv = shlex.split(command, posix=os.name != "nt")
+    if os.name == "nt":
+        argv = [_strip_wrapping_quotes(item) for item in argv]
+    if argv and argv[0].lower() in {"python", "python3", "python.exe", "python3.exe"}:
+        argv[0] = sys.executable
+    return argv
+
+
+def _strip_wrapping_quotes(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        return value[1:-1]
     return value

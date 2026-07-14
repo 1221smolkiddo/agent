@@ -845,6 +845,35 @@ def history_export(
     typer.echo(f"Debug bundle exported: {path}")
 
 
+@history_app.command("delete")
+def history_delete(
+    run_id: int = typer.Argument(..., help="Run ID to permanently delete."),
+    yes: bool = typer.Option(False, "--yes", help="Confirm permanent deletion."),
+) -> None:
+    """Permanently delete one run and its saved data."""
+    if not yes:
+        typer.echo("Refusing to delete history without --yes.")
+        raise typer.Exit(code=1)
+    storage = AgentStorage(Settings().agent_db_path)
+    if not storage.delete_run(run_id):
+        typer.echo(f"No run found with id {run_id}.")
+        raise typer.Exit(code=1)
+    typer.echo(f"Deleted run {run_id}.")
+
+
+@history_app.command("prune")
+def history_prune(
+    keep_last: int = typer.Option(20, "--keep-last", min=0, help="Recent runs to retain."),
+    yes: bool = typer.Option(False, "--yes", help="Confirm permanent deletion."),
+) -> None:
+    """Delete old runs while retaining the newest runs."""
+    if not yes:
+        typer.echo("Refusing to prune history without --yes.")
+        raise typer.Exit(code=1)
+    deleted = AgentStorage(Settings().agent_db_path).prune_runs(keep_last)
+    typer.echo(f"Deleted {deleted} old run(s); retained the newest {keep_last}.")
+
+
 def main() -> None:
     app()
 

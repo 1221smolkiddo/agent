@@ -11,6 +11,7 @@ class SmokeCommand:
     name: str
     command: tuple[str, ...]
     required: bool = True
+    timeout_seconds: int = 300
 
 
 @dataclass(frozen=True)
@@ -82,13 +83,28 @@ def run_release_smoke(
 ) -> SmokeReport:
     checks: list[SmokeCheck] = []
     for item in commands or default_smoke_commands(include_build=include_build):
-        completed = subprocess.run(
-            list(item.command),
-            cwd=cwd,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                list(item.command),
+                cwd=cwd,
+                text=True,
+                capture_output=True,
+                timeout=item.timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            stdout = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout
+            stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr
+            completed = subprocess.CompletedProcess(
+                list(item.command),
+                124,
+                stdout or "",
+                "\n".join(
+                    part
+                    for part in [stderr or "", f"Timed out after {item.timeout_seconds}s."]
+                    if part
+                ),
+            )
         output = "\n".join(part for part in [completed.stdout, completed.stderr] if part).strip()
         checks.append(
             SmokeCheck(

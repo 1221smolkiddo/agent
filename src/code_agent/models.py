@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import replace
 import re
+import time
 from typing import Any, Literal, Protocol, TypeVar
 
 import openai
@@ -73,6 +74,9 @@ class ModelProviderConfig:
     input_cost_per_million: float | None = None
     output_cost_per_million: float | None = None
     credit_retry_count: int = 3
+    transient_retry_count: int = 2
+    retry_base_delay_seconds: float = 0.5
+    retry_max_delay_seconds: float = 4.0
     min_viable_tokens: int = 64
     extra_body: dict[str, Any] | None = None
 
@@ -129,10 +133,17 @@ class OpenAICompatibleChatClient:
     input_cost_per_million: float | None = None
     output_cost_per_million: float | None = None
     credit_retry_count: int = 3
+    transient_retry_count: int = 2
+    retry_base_delay_seconds: float = 0.5
+    retry_max_delay_seconds: float = 4.0
     min_viable_tokens: int = 64
     extra_body: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
+        if self.credit_retry_count < 0 or self.transient_retry_count < 0:
+            raise ValueError("Model retry counts must be zero or greater.")
+        if self.retry_base_delay_seconds < 0 or self.retry_max_delay_seconds < 0:
+            raise ValueError("Model retry delays must be zero or greater.")
         self._usage_records: list[ModelUsageRecord] = []
         self._client = OpenAI(
             api_key=self.api_key,
@@ -159,7 +170,7 @@ class OpenAICompatibleChatClient:
             self._record_success(_usage_from_response(response))
             return content
 
-        return self._call_with_credit_retry(_make_request)
+        return self._call_with_retry(_make_request)
 
     def stream_complete(
         self,
@@ -200,7 +211,7 @@ class OpenAICompatibleChatClient:
                 self._record_success({})
             return content
 
-        return self._call_with_credit_retry(_make_request)
+        return self._call_with_retry(_make_request)
 
     def drain_usage_records(self) -> list[ModelUsageRecord]:
         records = self._usage_records
@@ -217,32 +228,44 @@ class OpenAICompatibleChatClient:
             return 0
         return 1
 
-    def _call_with_credit_retry(self, make_request: Callable[[int], T]) -> T:
+    def _call_with_retry(self, make_request: Callable[[int], T]) -> T:
         current_tokens = self.max_tokens
-        for attempt in range(self.credit_retry_count + 1):
+        credit_retries = 0
+        transient_retries = 0
+        while True:
             try:
                 return make_request(current_tokens)
-            except openai.APIStatusError as exc:
+            except Exception as exc:
                 classified = classify_model_error(exc)
-                if classified.kind != "credits" or not classified.retryable:
+                if classified.kind == "credits" and classified.retryable:
+                    if credit_retries >= self.credit_retry_count:
+                        raise InsufficientCreditsError("Exhausted credit retries.") from exc
+                    credit_retries += 1
+                    affordable = _parse_affordable_tokens(str(exc))
+                    current_tokens = affordable if affordable is not None else current_tokens // 2
+                    if current_tokens < self.min_viable_tokens:
+                        raise InsufficientCreditsError(
+                            f"Insufficient credits: the provider cannot afford even "
+                            f"{self.min_viable_tokens} output tokens. "
+                            f"Visit https://openrouter.ai/settings/credits to add credits."
+                        ) from exc
+                    self._record_failure(
+                        f"402 Payment Required (retrying with max_tokens={current_tokens})"
+                    )
+                    continue
+                if not classified.retryable or transient_retries >= self.transient_retry_count:
                     raise
-                
-                affordable = _parse_affordable_tokens(str(exc))
-                if affordable is not None:
-                    current_tokens = affordable
-                else:
-                    current_tokens = current_tokens // 2
-                
-                if current_tokens < self.min_viable_tokens:
-                    raise InsufficientCreditsError(
-                        f"Insufficient credits: the provider cannot afford even "
-                        f"{self.min_viable_tokens} output tokens. "
-                        f"Visit https://openrouter.ai/settings/credits to add credits."
-                    ) from exc
-                
-                self._record_failure(f"402 Payment Required (retrying with max_tokens={current_tokens})")
-
-        raise InsufficientCreditsError("Exhausted credit retries.")
+                transient_retries += 1
+                delay = min(
+                    self.retry_max_delay_seconds,
+                    self.retry_base_delay_seconds * (2 ** (transient_retries - 1)),
+                )
+                self._record_failure(
+                    f"{classified.kind} provider failure "
+                    f"(retry {transient_retries}/{self.transient_retry_count} in {delay:g}s): {exc}"
+                )
+                if delay > 0:
+                    time.sleep(delay)
 
     def _record_success(self, usage: dict[str, int | None]) -> None:
         self._usage_records.append(
@@ -393,6 +416,9 @@ def create_openai_compatible_client(
         input_cost_per_million=provider.input_cost_per_million,
         output_cost_per_million=provider.output_cost_per_million,
         credit_retry_count=provider.credit_retry_count,
+        transient_retry_count=provider.transient_retry_count,
+        retry_base_delay_seconds=provider.retry_base_delay_seconds,
+        retry_max_delay_seconds=provider.retry_max_delay_seconds,
         min_viable_tokens=provider.min_viable_tokens,
         extra_body=provider.extra_body,
     )

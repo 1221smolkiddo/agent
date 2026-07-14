@@ -199,6 +199,9 @@ def model_provider_config(
         input_cost_per_million=settings.agent_input_cost_per_million,
         output_cost_per_million=settings.agent_output_cost_per_million,
         credit_retry_count=runtime.credit_retry_count,
+        transient_retry_count=settings.agent_model_retry_count,
+        retry_base_delay_seconds=settings.agent_model_retry_base_seconds,
+        retry_max_delay_seconds=settings.agent_model_retry_max_seconds,
         min_viable_tokens=runtime.min_viable_tokens,
         extra_body=runtime.extra_body or None,
     )

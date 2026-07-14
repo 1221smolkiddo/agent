@@ -277,3 +277,46 @@ def test_compact_run_context_truncates_large_history() -> None:
     output = compact_run_context(steps, max_chars=1000)
 
     assert "<truncated" in output
+
+
+def test_storage_redacts_secrets_before_persistence(tmp_path: Path) -> None:
+    storage = AgentStorage(tmp_path / "agent.db")
+    run_id = storage.create_run(
+        task="debug token=super-secret-value",
+        model="test",
+        cwd=tmp_path,
+    )
+    storage.add_step(
+        run_id,
+        "tool",
+        {"output": "Authorization: Bearer super-secret-value", "nested": ["password=hunter22"]},
+    )
+
+    run = storage.get_run(run_id)
+    steps = storage.run_steps_payloads(run_id)
+
+    assert run is not None
+    assert "super-secret-value" not in run["task"]
+    assert "super-secret-value" not in str(steps)
+    assert "hunter22" not in str(steps)
+    assert "[REDACTED]" in str(steps)
+
+
+def test_storage_delete_and_prune_remove_related_run_data(tmp_path: Path) -> None:
+    storage = AgentStorage(tmp_path / "agent.db")
+    run_ids = [storage.create_run(f"task {index}", "test", tmp_path) for index in range(3)]
+    for run_id in run_ids:
+        storage.add_step(run_id, "tool", {"output": "ok"})
+        storage.add_model_usage(run_id, {"model": "test", "ok": True})
+        storage.save_work_report(run_id, "report", {"ok": True})
+
+    assert storage.delete_run(run_ids[0]) is True
+    assert storage.delete_run(run_ids[0]) is False
+    assert storage.get_run(run_ids[0]) is None
+    assert storage.run_steps(run_ids[0]) == []
+    assert storage.model_usage(run_ids[0]) == []
+    assert storage.get_work_report(run_ids[0]) is None
+
+    assert storage.prune_runs(keep_last=1) == 1
+    assert storage.get_run(run_ids[1]) is None
+    assert storage.get_run(run_ids[2]) is not None

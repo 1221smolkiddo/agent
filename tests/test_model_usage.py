@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from code_agent.agent import CodingAgent
 from code_agent.config import Settings
 from code_agent.factory import create_agent
@@ -139,6 +141,35 @@ def test_create_fallback_client_passes_timeout_to_model_client() -> None:
     client = create_fallback_client(provider, profile, [])
 
     assert client.timeout_seconds == 12.5
+
+
+def test_create_fallback_client_passes_retry_policy_to_model_client() -> None:
+    profile = resolve_model_profile("default", default_model="primary", max_tokens=1000)
+    provider = ModelProviderConfig(
+        api_key="test",
+        base_url="https://example.com",
+        transient_retry_count=4,
+        retry_base_delay_seconds=0.25,
+        retry_max_delay_seconds=3.0,
+    )
+
+    client = create_fallback_client(provider, profile, [])
+
+    assert client.transient_retry_count == 4
+    assert client.retry_base_delay_seconds == 0.25
+    assert client.retry_max_delay_seconds == 3.0
+
+
+def test_model_client_rejects_negative_retry_policy() -> None:
+    profile = resolve_model_profile("default", default_model="primary", max_tokens=1000)
+    provider = ModelProviderConfig(
+        api_key="test",
+        base_url="https://example.com",
+        transient_retry_count=-1,
+    )
+
+    with pytest.raises(ValueError, match="retry counts"):
+        create_fallback_client(provider, profile, [])
 
 
 def test_factory_uses_configured_fallback_models(tmp_path: Path) -> None:

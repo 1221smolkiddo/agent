@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .model_registry import provider_name_list, provider_names
@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     agent_output_cost_per_million: float | None = None
     agent_max_tokens: int = 4096
     agent_model_timeout_seconds: float = 60.0
+    agent_model_retry_count: int = Field(default=2, ge=0, le=10)
+    agent_model_retry_base_seconds: float = Field(default=0.5, ge=0, le=60)
+    agent_model_retry_max_seconds: float = Field(default=4.0, ge=0, le=300)
     agent_max_failures: int = 3
     agent_db_path: Path = Path(".code-agent/agent.db")
     agent_stream: bool = True

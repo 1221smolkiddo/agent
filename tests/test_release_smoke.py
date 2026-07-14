@@ -14,7 +14,7 @@ from code_agent.release_smoke import SmokeCheck, SmokeCommand, SmokeReport, run_
 def test_run_release_smoke_runs_commands_until_failure(monkeypatch, tmp_path: Path) -> None:
     calls: list[list[str]] = []
 
-    def fake_run(command, cwd, text, capture_output, check):
+    def fake_run(command, cwd, text, capture_output, timeout, check):
         calls.append(command)
         return subprocess.CompletedProcess(command, 1 if "bad" in command else 0, "ok", "")
 
@@ -36,7 +36,7 @@ def test_run_release_smoke_runs_commands_until_failure(monkeypatch, tmp_path: Pa
 
 
 def test_run_release_smoke_json_shape(monkeypatch, tmp_path: Path) -> None:
-    def fake_run(command, cwd, text, capture_output, check):
+    def fake_run(command, cwd, text, capture_output, timeout, check):
         return subprocess.CompletedProcess(command, 0, "done", "")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -47,6 +47,22 @@ def test_run_release_smoke_json_shape(monkeypatch, tmp_path: Path) -> None:
     assert payload["ok"] is True
     assert payload["checks"][0]["name"] == "unit-tests"
     assert payload["checks"][0]["command"] == ["pytest"]
+
+
+def test_run_release_smoke_turns_timeout_into_failed_check(tmp_path: Path, monkeypatch) -> None:
+    def fake_run(command, **kwargs):
+        raise subprocess.TimeoutExpired(command, timeout=kwargs["timeout"], output="partial")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    report = run_release_smoke(
+        tmp_path,
+        commands=[SmokeCommand("slow", ("slow",), timeout_seconds=1)],
+    )
+
+    assert report.ok is False
+    assert report.checks[0].returncode == 124
+    assert "Timed out after 1s" in report.checks[0].output
 
 
 def test_cli_release_smoke_command_outputs_report(monkeypatch, tmp_path: Path) -> None:
