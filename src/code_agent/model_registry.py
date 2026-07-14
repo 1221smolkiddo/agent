@@ -85,7 +85,7 @@ REGISTERED_MODELS: dict[str, RegisteredModel] = {
     "gemini-pro": RegisteredModel(
         name="gemini-pro",
         provider="gemini",
-        model="gemini-3.1-pro",
+        model="gemini-3.1-pro-preview",
         description="Higher-capability Gemini model for deeper coding work.",
         required_key="GEMINI_API_KEY",
         capabilities=DEFAULT_CAPABILITIES,

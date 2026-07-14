@@ -365,6 +365,7 @@ def test_cli_models_lists_presets() -> None:
 
     assert result.exit_code == 0
     assert "gemini-flash" in result.output
+    assert "gemini-pro: provider=gemini, model=gemini-3.1-pro-preview" in result.output
     assert "deepseek-pro" in result.output
     assert "glm-5.2" in result.output
     assert "deepseek-v4-flash" in result.output
