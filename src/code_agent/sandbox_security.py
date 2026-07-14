@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import json
 import os
@@ -8,10 +9,11 @@ import re
 import shlex
 import shutil
 import subprocess
+import tempfile
 import time
 import tomllib
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -38,6 +40,21 @@ LOCAL_ENV_OVERRIDES = {
     "AGENT47_LOCAL_SANDBOX": "1",
     "AGENT47_SANDBOXED_SHELL": "1",
 }
+CONTAINER_BACKENDS = {"docker", "podman", "container"}
+CONTAINER_RUNTIME_ENV_KEYS = {
+    "CONTAINER_CONNECTION",
+    "CONTAINER_HOST",
+    "DOCKER_CERT_PATH",
+    "DOCKER_CONFIG",
+    "DOCKER_CONTEXT",
+    "DOCKER_HOST",
+    "DOCKER_TLS_VERIFY",
+    "XDG_RUNTIME_DIR",
+}
+
+
+class SandboxIsolationError(RuntimeError):
+    """Raised when required process isolation cannot be established."""
 
 
 @dataclass(frozen=True)
@@ -63,6 +80,19 @@ class CommandPolicy:
 class ContainerImagePolicy:
     allowed_images: tuple[str, ...] = ("python:3.13-slim",)
     required_digest: str | None = None
+    require_digest: bool = True
+    scan_required: bool = False
+    scanner: str = "trivy"
+    denied_severities: tuple[str, ...] = ("HIGH", "CRITICAL")
+
+
+@dataclass(frozen=True)
+class ContainerRuntimeSecurity:
+    rootless: bool
+    seccomp: bool
+    apparmor: bool = False
+    selinux: bool = False
+    detail: str = ""
 
 
 @dataclass(frozen=True)
@@ -70,11 +100,15 @@ class SandboxPolicy:
     backend: str = "local"
     container_image: str = "python:3.13-slim"
     rootless_required: bool = True
+    seccomp_required: bool = True
+    container_user: str = "65532:65532"
     resources: SandboxResourceLimits = field(default_factory=SandboxResourceLimits)
     commands: CommandPolicy = field(default_factory=CommandPolicy)
     images: ContainerImagePolicy = field(default_factory=ContainerImagePolicy)
     audit_enabled: bool = True
     cleanup: bool = True
+    process_isolation_required: bool = False
+    requested_backend: str = "local"
 
     @classmethod
     def from_workspace(
@@ -100,6 +134,8 @@ class SandboxPolicy:
             ).strip()
             or container_image,
             rootless_required=bool(sandbox.get("rootless_required", True)),
+            seccomp_required=bool(sandbox.get("seccomp_required", True)),
+            container_user=str(sandbox.get("container_user", "65532:65532")).strip(),
             resources=SandboxResourceLimits(
                 timeout_seconds=_optional_int(resources.get("timeout_seconds")),
                 cpus=float(resources.get("cpus", 1.0)),
@@ -121,6 +157,13 @@ class SandboxPolicy:
                     str(images["required_digest"]).strip()
                     if images.get("required_digest")
                     else None
+                ),
+                require_digest=bool(images.get("require_digest", True)),
+                scan_required=bool(images.get("scan_required", False)),
+                scanner=str(images.get("scanner", "trivy")).strip().lower() or "trivy",
+                denied_severities=tuple(
+                    str(item).strip().upper()
+                    for item in images.get("denied_severities", ["HIGH", "CRITICAL"]) or []
                 ),
             ),
             audit_enabled=bool(sandbox.get("audit_enabled", True)),
@@ -147,6 +190,34 @@ class SandboxPolicy:
         if self.resources.timeout_seconds is not None:
             return min(shell_policy.timeout_seconds, self.resources.timeout_seconds)
         return shell_policy.timeout_seconds
+
+    @property
+    def process_isolated(self) -> bool:
+        return self.backend in CONTAINER_BACKENDS
+
+    def isolation_rejection(self) -> str | None:
+        if self.process_isolation_required and not self.process_isolated:
+            return (
+                "Sandbox process isolation was required, but the resolved backend is local. "
+                "Agent47 refuses to execute rather than silently downgrade isolation."
+            )
+        return None
+
+    def network_rejection(self) -> str | None:
+        if not self.commands.offline and self.commands.domain_allowlist:
+            return (
+                "Domain allowlists require an enforced egress proxy. Agent47 refuses unrestricted "
+                "bridge networking rather than pretending command classification is a firewall."
+            )
+        return None
+
+    def container_user_rejection(self) -> str | None:
+        user = self.container_user.strip().lower()
+        if not re.fullmatch(r"[1-9][0-9]{0,9}:[1-9][0-9]{0,9}", user):
+            return (
+                "Sandbox containers must run as an explicit numeric non-root UID:GID pair."
+            )
+        return None
 
 
 @dataclass(frozen=True)
@@ -397,6 +468,19 @@ class SandboxRunner:
         env: dict[str, str],
         cancellation_token: CancellationToken | None = None,
     ) -> ShellProcessResult:
+        isolation_metadata = {
+            "isolation_required": self.policy.process_isolation_required,
+            "process_isolated": self.policy.process_isolated,
+            "sandbox_backend": self.policy.backend,
+            "requested_backend": self.policy.requested_backend,
+        }
+        isolation_rejection = self.policy.isolation_rejection()
+        if isolation_rejection:
+            self.audit_log.record("isolation_rejected", reason=isolation_rejection, **isolation_metadata)
+            return ShellProcessResult(
+                completed=subprocess.CompletedProcess(command, 126, "", isolation_rejection),
+                metadata=isolation_metadata,
+            )
         disk_guard = SandboxDiskGuard(
             self.workspace,
             limit_bytes=self.policy.resources.disk_mb * 1024 * 1024,
@@ -412,7 +496,7 @@ class SandboxRunner:
             )
             return ShellProcessResult(
                 completed=completed,
-                metadata=preflight_disk.to_metadata(),
+                metadata={**preflight_disk.to_metadata(), **isolation_metadata},
             )
         self.audit_log.record(
             "command_started",
@@ -421,6 +505,7 @@ class SandboxRunner:
             timeout_seconds=timeout_seconds,
             network="offline" if self.policy.commands.offline else "allow",
             resources=self.policy.resources.__dict__,
+            **isolation_metadata,
         )
         start = time.monotonic()
         if self.policy.backend in {"docker", "podman", "container"}:
@@ -485,6 +570,7 @@ class SandboxRunner:
             **(result.metadata or {}),
             **post_run_disk.to_metadata(),
             "original_returncode": result.completed.returncode,
+            **isolation_metadata,
         }
         if post_run_disk.exceeded:
             stderr = "\n".join(
@@ -540,7 +626,7 @@ class SandboxRunner:
                 [runtime],
                 127,
                 "",
-                f"{runtime} is not available. Install {runtime} or set AGENT_SANDBOX_BACKEND=local.",
+                f"{runtime} is not available. Install {runtime} and run `code-agent sandbox health`.",
             )
             return ShellProcessResult(completed=completed)
         daemon_ok, daemon_detail = container_daemon_available(runtime_path)
@@ -553,12 +639,48 @@ class SandboxRunner:
                 + (daemon_detail or "Run `code-agent sandbox health` for diagnostics."),
             )
             return ShellProcessResult(completed=completed)
-        image_ok, image_detail = validate_container_image_policy(
+        security, security_detail = inspect_container_runtime_security(runtime_path, runtime)
+        if security is None:
+            completed = subprocess.CompletedProcess(
+                [runtime_path],
+                126,
+                "",
+                security_detail,
+            )
+            return ShellProcessResult(completed=completed)
+        security_rejection = runtime_security_rejection(self.policy, security)
+        if security_rejection:
+            completed = subprocess.CompletedProcess(
+                [runtime_path],
+                126,
+                "",
+                security_rejection,
+            )
+            return ShellProcessResult(completed=completed)
+        network_rejection = self.policy.network_rejection()
+        if network_rejection:
+            completed = subprocess.CompletedProcess(
+                [runtime_path],
+                126,
+                "",
+                network_rejection,
+            )
+            return ShellProcessResult(completed=completed)
+        user_rejection = self.policy.container_user_rejection()
+        if user_rejection:
+            completed = subprocess.CompletedProcess(
+                [runtime_path],
+                126,
+                "",
+                user_rejection,
+            )
+            return ShellProcessResult(completed=completed)
+        resolved_image, image_detail = resolve_container_image_reference(
             runtime_path,
             self.policy.container_image,
             self.policy.images,
         )
-        if not image_ok:
+        if resolved_image is None:
             completed = subprocess.CompletedProcess(
                 [runtime_path],
                 126,
@@ -568,14 +690,31 @@ class SandboxRunner:
             return ShellProcessResult(completed=completed)
 
         network = "none" if self.policy.commands.offline else "bridge"
+        container_id = uuid.uuid4().hex
+        container_name = f"agent47-{container_id}"
+        lifecycle_dir = Path(tempfile.mkdtemp(prefix="agent47-container-"))
+        cidfile = lifecycle_dir / f"{container_id}.cid"
         container_command = [
             runtime_path,
             "run",
             "--rm",
             "--pull",
             "never",
+            "--name",
+            container_name,
+            "--cidfile",
+            str(cidfile),
+            "--label",
+            "io.agent47.sandbox=true",
+            "--label",
+            f"io.agent47.run={container_id}",
             "--network",
             network,
+            "--init",
+            "--ipc",
+            "none",
+            "--user",
+            self.policy.container_user,
             "--security-opt",
             "no-new-privileges",
             "--cap-drop",
@@ -594,61 +733,228 @@ class SandboxRunner:
             "-w",
             "/workspace",
         ]
+        if runtime == "podman":
+            container_command.extend(["--userns", "keep-id"])
+        if runtime == "docker" and security.apparmor:
+            container_command.extend(["--security-opt", "apparmor=docker-default"])
         container_env = _container_env(env)
         for key, value in container_env.items():
             container_command.extend(["-e", f"{key}={value}"])
-        container_command.extend([self.policy.container_image, "/bin/sh", "-lc", command])
+        try:
+            command_argv = shlex.split(command, posix=True)
+        except ValueError as exc:
+            completed = subprocess.CompletedProcess(
+                [runtime_path],
+                126,
+                "",
+                f"Sandbox command could not be parsed safely: {exc}",
+            )
+            return ShellProcessResult(completed=completed)
+        if not command_argv:
+            completed = subprocess.CompletedProcess(
+                [runtime_path],
+                126,
+                "",
+                "Sandbox command cannot be empty.",
+            )
+            return ShellProcessResult(completed=completed)
+        container_command.extend([resolved_image, *command_argv])
 
-        process = subprocess.Popen(
-            container_command,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env={},
+        self.audit_log.record(
+            "container_launching",
+            backend=self.policy.backend,
+            container_name=container_name,
+            image=resolved_image,
+            network=network,
+            rootless=security.rootless,
+            seccomp=security.seccomp,
+            container_user=self.policy.container_user,
         )
-        deadline = time.monotonic() + timeout_seconds
-        while True:
-            if cancellation_token is not None and cancellation_token.cancelled:
-                process.kill()
-                stdout, stderr = process.communicate()
-                return ShellProcessResult(
-                    completed=subprocess.CompletedProcess(container_command, process.returncode, stdout, stderr),
-                    cancelled=True,
-                    output="\n".join(part for part in [stdout, stderr] if part),
-                    cleanup_attempted=True,
+        result: ShellProcessResult
+        try:
+            process = subprocess.Popen(
+                container_command,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=_container_runtime_env(),
+            )
+            result = _wait_for_container_process(
+                process,
+                container_command,
+                timeout_seconds=timeout_seconds,
+                cancellation_token=cancellation_token,
+            )
+        except OSError as exc:
+            result = ShellProcessResult(
+                completed=subprocess.CompletedProcess(
+                    container_command,
+                    125,
+                    "",
+                    f"Container launch failed: {exc}",
                 )
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                process.kill()
-                stdout, stderr = process.communicate()
-                return ShellProcessResult(
-                    completed=subprocess.CompletedProcess(container_command, process.returncode, stdout, stderr),
-                    timed_out=True,
-                    output="\n".join(part for part in [stdout, stderr] if part),
-                    cleanup_attempted=True,
-                )
-            try:
-                stdout, stderr = process.communicate(timeout=min(0.2, remaining))
-                return ShellProcessResult(
-                    completed=subprocess.CompletedProcess(container_command, process.returncode, stdout, stderr),
-                )
-            except subprocess.TimeoutExpired:
-                continue
+            )
+        finally:
+            cleanup_ok, cleanup_detail = cleanup_container(
+                runtime_path,
+                container_name,
+                cidfile,
+            )
+            self.audit_log.record(
+                "container_cleanup",
+                backend=self.policy.backend,
+                container_name=container_name,
+                cleanup_ok=cleanup_ok,
+                detail=cleanup_detail,
+            )
+        return ShellProcessResult(
+            completed=result.completed,
+            timed_out=result.timed_out,
+            cancelled=result.cancelled,
+            output=result.output,
+            cleanup_attempted=True,
+            metadata={
+                **(result.metadata or {}),
+                "container_name": container_name,
+                "container_image": resolved_image,
+                "container_rootless": security.rootless,
+                "container_seccomp": security.seccomp,
+                "container_apparmor": security.apparmor,
+                "container_user": self.policy.container_user,
+                "container_cleanup_ok": cleanup_ok,
+                "container_cleanup_detail": cleanup_detail,
+            },
+        )
+
+
+def _wait_for_container_process(
+    process,
+    container_command: list[str],
+    *,
+    timeout_seconds: int,
+    cancellation_token: CancellationToken | None,
+) -> ShellProcessResult:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        if cancellation_token is not None and cancellation_token.cancelled:
+            process.kill()
+            stdout, stderr = process.communicate()
+            return ShellProcessResult(
+                completed=subprocess.CompletedProcess(
+                    container_command,
+                    process.returncode,
+                    stdout,
+                    stderr,
+                ),
+                cancelled=True,
+                output="\n".join(part for part in [stdout, stderr] if part),
+            )
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            process.kill()
+            stdout, stderr = process.communicate()
+            return ShellProcessResult(
+                completed=subprocess.CompletedProcess(
+                    container_command,
+                    process.returncode,
+                    stdout,
+                    stderr,
+                ),
+                timed_out=True,
+                output="\n".join(part for part in [stdout, stderr] if part),
+            )
+        try:
+            stdout, stderr = process.communicate(timeout=min(0.2, remaining))
+            return ShellProcessResult(
+                completed=subprocess.CompletedProcess(
+                    container_command,
+                    process.returncode,
+                    stdout,
+                    stderr,
+                ),
+            )
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def cleanup_container(
+    runtime_path: str,
+    container_name: str,
+    cidfile: Path,
+    *,
+    timeout_seconds: int = 10,
+) -> tuple[bool, str]:
+    target = container_name
+    try:
+        if cidfile.is_file():
+            recorded = cidfile.read_text(encoding="utf-8").strip()
+            if re.fullmatch(r"[a-fA-F0-9]{12,64}", recorded):
+                target = recorded
+        completed = subprocess.run(
+            [runtime_path, "rm", "--force", target],
+            text=True,
+            capture_output=True,
+            timeout=timeout_seconds,
+            check=False,
+            env=_container_runtime_env(),
+        )
+        output = "\n".join(
+            part for part in [completed.stdout, completed.stderr] if part
+        ).strip()
+        missing = "no such" in output.lower() or "does not exist" in output.lower()
+        return completed.returncode == 0 or missing, output
+    except subprocess.TimeoutExpired:
+        return False, f"Forced cleanup timed out after {timeout_seconds}s."
+    except OSError as exc:
+        return False, f"Forced cleanup failed: {exc}."
+    finally:
+        cidfile.unlink(missing_ok=True)
+        if cidfile.parent.name.startswith("agent47-container-"):
+            with contextlib.suppress(OSError):
+                cidfile.parent.rmdir()
 
 
 def sandbox_health(policy: SandboxPolicy) -> SandboxHealth:
-    if policy.backend in {"docker", "podman", "container"}:
+    if policy.backend in CONTAINER_BACKENDS:
         runtime = "podman" if policy.backend == "podman" else "docker"
         runtime_path = resolve_container_runtime(runtime)
         cli_available = runtime_path is not None
         daemon_available = False
         diagnostics: list[str] = []
         image_ok = False
+        runtime_security_ok = False
+        network_ok = policy.network_rejection() is None
+        if not network_ok:
+            diagnostics.append(policy.network_rejection() or "Invalid sandbox network policy.")
+        user_ok = policy.container_user_rejection() is None
+        if not user_ok:
+            diagnostics.append(
+                policy.container_user_rejection() or "Invalid sandbox container user policy."
+            )
         if cli_available:
             daemon_available, daemon_detail = container_daemon_available(runtime_path)
             if daemon_detail:
                 diagnostics.append(daemon_detail)
             if daemon_available:
+                security, security_detail = inspect_container_runtime_security(
+                    runtime_path,
+                    runtime,
+                )
+                if security_detail:
+                    diagnostics.append(security_detail)
+                if security is not None:
+                    security_rejection = runtime_security_rejection(policy, security)
+                    if security_rejection:
+                        diagnostics.append(security_rejection)
+                    else:
+                        runtime_security_ok = True
+                        diagnostics.append(
+                            "Runtime security verified: "
+                            f"rootless={'yes' if security.rootless else 'no'}, "
+                            f"seccomp={'yes' if security.seccomp else 'no'}, "
+                            f"apparmor={'yes' if security.apparmor else 'no'}, "
+                            f"selinux={'yes' if security.selinux else 'no'}."
+                        )
                 image_ok, image_detail = validate_container_image_policy(
                     runtime_path,
                     policy.container_image,
@@ -662,7 +968,14 @@ def sandbox_health(policy: SandboxPolicy) -> SandboxHealth:
             virtualization_detail = windows_virtualization_diagnostic()
             if virtualization_detail:
                 diagnostics.append(virtualization_detail)
-        available = cli_available and daemon_available and image_ok
+        available = (
+            cli_available
+            and daemon_available
+            and runtime_security_ok
+            and image_ok
+            and network_ok
+            and user_ok
+        )
         return SandboxHealth(
             backend=policy.backend,
             available=available,
@@ -671,8 +984,9 @@ def sandbox_health(policy: SandboxPolicy) -> SandboxHealth:
             daemon_available=daemon_available,
             isolation="container process, filesystem, env, network, pid, CPU, and memory boundaries",
             detail=(
-                "Container backend uses read-only rootfs, isolated env, offline network by default, "
-                "resource limits, validated image policy, and a writable workspace mount."
+                "Container backend uses a verified rootless runtime and seccomp profile, read-only "
+                "rootfs, isolated env, offline network by default, resource limits, validated "
+                "image policy, and a writable copied-workspace mount."
                 if available
                 else "Container backend is configured but not ready. See diagnostics."
             ),
@@ -689,6 +1003,60 @@ def sandbox_health(policy: SandboxPolicy) -> SandboxHealth:
             "directories, env scrubbing, policy checks, timeouts, process-tree cleanup, "
             "audit logs, and sandbox copy-on-write promotion."
         ),
+    )
+
+
+def resolve_sandbox_policy(
+    workspace: Path,
+    *,
+    backend: str,
+    container_image: str,
+    require_process_isolation: bool,
+) -> SandboxPolicy:
+    requested = backend.strip().lower() or "auto"
+    if requested not in {"auto", "local", *CONTAINER_BACKENDS}:
+        raise SandboxIsolationError(
+            "Sandbox backend must be one of: auto, local, docker, podman, container."
+        )
+    candidates = (
+        ["docker", "podman"]
+        if requested == "auto" and require_process_isolation
+        else ["local" if requested == "auto" else requested]
+    )
+    failures: list[str] = []
+    attempted: set[tuple[str, str]] = set()
+    for candidate in candidates:
+        policy = SandboxPolicy.from_workspace(
+            workspace,
+            backend=candidate,
+            container_image=container_image,
+        )
+        resolved_backend = "docker" if policy.backend == "container" else policy.backend
+        policy = replace(
+            policy,
+            backend=resolved_backend,
+            process_isolation_required=require_process_isolation,
+            requested_backend=requested,
+        )
+        attempt = (policy.backend, policy.container_image)
+        if attempt in attempted:
+            continue
+        attempted.add(attempt)
+        rejection = policy.isolation_rejection()
+        if rejection:
+            failures.append(rejection)
+            continue
+        if require_process_isolation:
+            health = sandbox_health(policy)
+            if not health.available:
+                detail = "; ".join(health.diagnostics) or health.detail
+                failures.append(f"{policy.backend}: {detail}")
+                continue
+        return policy
+    detail = " | ".join(failures) or "No supported container backend was available."
+    raise SandboxIsolationError(
+        "Sandbox mode requires real process isolation and will not fall back to local execution. "
+        f"Requested backend: {requested}. {detail}"
     )
 
 
@@ -724,6 +1092,7 @@ def container_daemon_available(runtime_path: str, *, timeout_seconds: int = 5) -
             capture_output=True,
             timeout=timeout_seconds,
             check=False,
+            env=_container_runtime_env(),
         )
     except subprocess.TimeoutExpired:
         return False, f"{runtime_path} info timed out after {timeout_seconds}s."
@@ -733,6 +1102,81 @@ def container_daemon_available(runtime_path: str, *, timeout_seconds: int = 5) -
         return True, ""
     output = "\n".join(part for part in [completed.stdout, completed.stderr] if part).strip()
     return False, output or f"{runtime_path} info exited with {completed.returncode}."
+
+
+def inspect_container_runtime_security(
+    runtime_path: str,
+    runtime: str,
+    *,
+    timeout_seconds: int = 5,
+) -> tuple[ContainerRuntimeSecurity | None, str]:
+    command = (
+        [runtime_path, "info", "--format", "{{json .SecurityOptions}}"]
+        if runtime == "docker"
+        else [runtime_path, "info", "--format", "json"]
+    )
+    try:
+        completed = subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            timeout=timeout_seconds,
+            check=False,
+            env=_container_runtime_env(),
+        )
+    except subprocess.TimeoutExpired:
+        return None, f"{runtime} security inspection timed out after {timeout_seconds}s."
+    except OSError as exc:
+        return None, f"{runtime} security inspection failed: {exc}."
+    if completed.returncode != 0:
+        output = "\n".join(
+            part for part in [completed.stdout, completed.stderr] if part
+        ).strip()
+        return None, output or f"{runtime} security inspection exited with {completed.returncode}."
+    try:
+        payload = json.loads(completed.stdout.strip() or "null")
+    except json.JSONDecodeError:
+        return None, f"{runtime} security inspection returned invalid JSON."
+
+    tokens = tuple(_security_tokens(payload))
+    lowered = " ".join(tokens).lower()
+    if runtime == "docker":
+        security = ContainerRuntimeSecurity(
+            rootless="rootless" in lowered,
+            seccomp="seccomp" in lowered,
+            apparmor="apparmor" in lowered,
+            selinux="selinux" in lowered,
+            detail=", ".join(tokens),
+        )
+    else:
+        host = payload.get("host", {}) if isinstance(payload, dict) else {}
+        security_payload = host.get("security", {}) if isinstance(host, dict) else {}
+        security = ContainerRuntimeSecurity(
+            rootless=bool(
+                host.get("rootless", security_payload.get("rootless", False))
+                if isinstance(security_payload, dict)
+                else host.get("rootless", False)
+            ),
+            seccomp=_security_feature_enabled(tokens, "seccomp"),
+            apparmor=_security_feature_enabled(tokens, "apparmor"),
+            selinux=_security_feature_enabled(tokens, "selinux"),
+            detail=", ".join(tokens[:24]),
+        )
+    return security, ""
+
+
+def runtime_security_rejection(
+    policy: SandboxPolicy,
+    security: ContainerRuntimeSecurity,
+) -> str | None:
+    failures = []
+    if policy.rootless_required and not security.rootless:
+        failures.append("rootless runtime is required but was not detected")
+    if policy.seccomp_required and not security.seccomp:
+        failures.append("seccomp enforcement is required but was not detected")
+    if failures:
+        return "; ".join(failures) + "."
+    return None
 
 
 def inspect_container_image(
@@ -755,6 +1199,7 @@ def inspect_container_image(
             capture_output=True,
             timeout=timeout_seconds,
             check=False,
+            env=_container_runtime_env(),
         )
     except subprocess.TimeoutExpired:
         return False, (), f"Image inspect for {image} timed out after {timeout_seconds}s."
@@ -797,16 +1242,119 @@ def validate_container_image_policy(
             + detail
         )
     if not expected_digest:
-        return True, f"Container image {image} is locally available."
+        if policy.require_digest and not digests:
+            return False, (
+                f"Container image {image} has no immutable repository digest. "
+                "Sandbox image policy requires digest-addressable images."
+            )
+        if policy.require_digest:
+            return validate_container_image_scan(
+                digests[0],
+                policy,
+                f"Container image {image} has an immutable local repository digest.",
+            )
+        return validate_container_image_scan(
+            image,
+            policy,
+            f"Container image {image} is locally available.",
+        )
     matched = any(container_digest_matches(item, expected_digest) for item in digests)
     if matched:
         source = "policy" if policy.required_digest else "image reference"
-        return True, f"Container image {image} digest matches {source} pin."
+        return validate_container_image_scan(
+            f"{image_name}@{expected_digest}",
+            policy,
+            f"Container image {image} digest matches {source} pin.",
+        )
     digest_detail = ", ".join(digests) if digests else "<no repo digests>"
     return False, (
         f"Container image {image} digest does not match policy. "
         f"Expected {expected_digest}; local digests: {digest_detail}."
     )
+
+
+def validate_container_image_scan(
+    image: str,
+    policy: ContainerImagePolicy,
+    success_detail: str,
+    *,
+    timeout_seconds: int = 300,
+) -> tuple[bool, str]:
+    if not policy.scan_required:
+        return True, success_detail
+    if policy.scanner != "trivy":
+        return False, f"Unsupported container image scanner: {policy.scanner}."
+    scanner_path = shutil.which("trivy")
+    if scanner_path is None:
+        return False, "Container image policy requires Trivy, but `trivy` was not found on PATH."
+    severities = ",".join(policy.denied_severities)
+    command = [
+        scanner_path,
+        "image",
+        "--scanners",
+        "vuln",
+        "--severity",
+        severities,
+        "--exit-code",
+        "1",
+        "--no-progress",
+        image,
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            timeout=timeout_seconds,
+            check=False,
+            env=_scanner_env(),
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"Trivy image scan timed out after {timeout_seconds}s."
+    except OSError as exc:
+        return False, f"Trivy image scan failed: {exc}."
+    if completed.returncode == 0:
+        return True, success_detail + " Trivy vulnerability policy passed."
+    output = "\n".join(
+        part for part in [completed.stdout, completed.stderr] if part
+    ).strip()
+    return False, (
+        f"Container image failed Trivy vulnerability policy for severities {severities}. "
+        + (output[-2000:] if output else f"Trivy exited with {completed.returncode}.")
+    )
+
+
+def resolve_container_image_reference(
+    runtime_path: str,
+    image: str,
+    policy: ContainerImagePolicy,
+) -> tuple[str | None, str]:
+    valid, detail = validate_container_image_policy(runtime_path, image, policy)
+    if not valid:
+        return None, detail
+    image_name, image_digest = split_container_image_digest(image)
+    if image_digest:
+        return image, detail
+    available, digests, inspect_detail = inspect_container_image(runtime_path, image)
+    if not available:
+        return None, inspect_detail
+    expected = normalized_container_digest(policy.required_digest)
+    if expected:
+        return f"{image_name}@{expected}", detail
+    if policy.require_digest:
+        matching = next(
+            (
+                digest
+                for digest in digests
+                if digest.split("@", 1)[0].split(":", 1)[0]
+                == image_name.split(":", 1)[0]
+            ),
+            digests[0] if digests else None,
+        )
+        if matching:
+            return matching, detail
+        return None, f"Container image {image} could not be resolved to an immutable digest."
+    return image, detail
 
 
 def split_container_image_digest(image: str) -> tuple[str, str | None]:
@@ -872,6 +1420,9 @@ def _container_env(env: dict[str, str]) -> dict[str, str]:
     clean: dict[str, str] = {
         "PATH": "/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin",
         "AGENT47_SANDBOXED_SHELL": "1",
+        "HOME": "/tmp",
+        "TMPDIR": "/tmp",
+        "XDG_CACHE_HOME": "/tmp/.cache",
     }
     allowed = {
         "NO_COLOR",
@@ -884,6 +1435,23 @@ def _container_env(env: dict[str, str]) -> dict[str, str]:
         if upper in allowed:
             clean[key] = value
     return clean
+
+
+def _container_runtime_env() -> dict[str, str]:
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() in CONTAINER_RUNTIME_ENV_KEYS
+    }
+
+
+def _scanner_env() -> dict[str, str]:
+    blocked_fragments = ("API_KEY", "PASSWORD", "SECRET", "TOKEN")
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if not any(fragment in key.upper() for fragment in blocked_fragments)
+    }
 
 
 def _redact_payload(value: Any) -> Any:
@@ -993,6 +1561,27 @@ def _looks_like_git_mutation(command: str) -> bool:
 
 def _dict(value: object) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _security_tokens(value: object, prefix: str = ""):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            yield from _security_tokens(item, path)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _security_tokens(item, prefix)
+    elif prefix:
+        yield f"{prefix}={value}"
+    else:
+        yield str(value)
+
+
+def _security_feature_enabled(tokens: tuple[str, ...], feature: str) -> bool:
+    matches = [token.lower() for token in tokens if feature in token.lower()]
+    if not matches:
+        return False
+    return not all(token.endswith("=false") or token.endswith("=disabled") for token in matches)
 
 
 def _optional_int(value: object) -> int | None:

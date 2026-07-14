@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     agent_stream: bool = True
     agent_reviewer_pass: bool = True
     agent_shell_network: str = "allow"
-    agent_sandbox_backend: str = "local"
+    agent_sandbox_backend: str = "auto"
     agent_sandbox_image: str = "python:3.13-slim"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -154,6 +154,8 @@ class Settings(BaseSettings):
     @property
     def sandbox_backend(self) -> str:
         value = self.agent_sandbox_backend.strip().lower()
-        if value in {"local", "docker", "podman", "container"}:
+        if value in {"auto", "local", "docker", "podman", "container"}:
             return value
-        raise RuntimeError("AGENT_SANDBOX_BACKEND must be one of: local, docker, podman, container.")
+        raise RuntimeError(
+            "AGENT_SANDBOX_BACKEND must be one of: auto, local, docker, podman, container."
+        )

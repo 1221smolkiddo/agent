@@ -110,7 +110,7 @@ AGENT_DB_PATH=.code-agent/agent.db
 AGENT_STREAM=true
 AGENT_REVIEWER_PASS=true
 AGENT_SHELL_NETWORK=allow
-AGENT_SANDBOX_BACKEND=local
+AGENT_SANDBOX_BACKEND=auto
 AGENT_SANDBOX_IMAGE=python:3.13-slim
 ```
 
@@ -144,7 +144,8 @@ The model retry count is bounded from 0-10. The context budget must be at least 
 
 ## Sandbox Setup
 
-The local backend requires no external runtime but is not OS-level isolation.
+Ordinary runs can use the local backend without an external runtime, but it is not OS-level isolation.
+`--sandbox` requires a healthy Docker or Podman backend and fails closed rather than using local execution.
 
 Docker example:
 
@@ -154,8 +155,35 @@ uv run code-agent sandbox health --backend docker
 uv run code-agent run --sandbox --sandbox-backend docker "Inspect and test this project"
 ```
 
-Container images must satisfy `.code-agent-policy.toml` image allowlist and optional digest policy.
-Networking is disabled by default inside container sandboxes.
+The default strict policy requires a rootless runtime. Rootful Docker Desktop or Docker Engine therefore
+fails health unless the repository explicitly sets `rootless_required = false`; that opt-out weakens the
+daemon boundary and should be limited to reviewed development environments. Rootless Podman is preferred
+when available.
+
+Example strict `.code-agent/policy.toml`:
+
+```toml
+[sandbox]
+rootless_required = true
+seccomp_required = true
+container_user = "65532:65532"
+
+[network]
+offline = true
+
+[images]
+allowed = ["python:3.13-slim"]
+require_digest = true
+scan_required = true
+scanner = "trivy"
+denied_severities = ["HIGH", "CRITICAL"]
+```
+
+Images must be pulled and reviewed before use. Agent47 resolves allowed tags to an immutable local repository
+digest. When `scan_required` is enabled, install a verified Trivy release; health and execution fail if the
+scanner is missing or reports a denied severity. Networking is disabled by default. Setting `offline = false`
+with a domain allowlist is refused because an unrestricted bridge is not a domain firewall. With `auto`,
+Agent47 tries Docker and then Podman and reports all failed checks.
 
 ## Verification
 

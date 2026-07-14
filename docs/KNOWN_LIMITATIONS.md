@@ -25,7 +25,8 @@ hard security sandbox. These limitations are part of the operating contract.
 
 ## Sandboxing And Commands
 
-- The default `local` backend is hardened subprocess policy, not OS-level isolation.
+- Ordinary non-sandbox runs use hardened local subprocess policy, not OS-level isolation.
+- `--sandbox` fails closed unless Docker or Podman runtime, daemon, local image, and policy checks are healthy.
 - Approved verification, build, and install commands can execute arbitrary project code.
 - Workspace path checks do not constrain every operating-system API available to an approved local process.
 - Local command network-deny mode is command classification, not an OS firewall.
@@ -34,6 +35,12 @@ hard security sandbox. These limitations are part of the operating contract.
 - Docker and Podman isolation depend on a correctly configured daemon, host virtualization, runtime security, and
   trusted image supply chain.
 - Container networking is offline by default, but the container runtime itself remains a privileged host component.
+- Strict health requires rootless runtime evidence; disabling that policy restores the rootful daemon risk.
+- Runtime seccomp is mandatory, while AppArmor or SELinux availability remains platform-dependent.
+- Domain-limited shell egress is refused rather than simulated. Networked containers currently receive either
+  offline isolation or explicitly approved unrestricted bridge access.
+- Vulnerability scanning is enforced only when `images.scan_required` is enabled and depends on a trusted,
+  current local Trivy installation and vulnerability database.
 - Disk limits are measured around commands and are not a filesystem quota.
 
 ## Secrets And Data
@@ -83,7 +90,7 @@ hard security sandbox. These limitations are part of the operating contract.
 ## Recommended Operating Modes
 
 - Use `--dry-run` for unfamiliar repositories and inspection-only work.
-- Use `--sandbox` for broad edits and Docker or Podman when OS-level isolation matters.
+- Use `--sandbox` for broad edits that execute project code; it requires Docker or Podman process isolation.
 - Keep network shell access denied unless installation or external access is intentional.
 - Review every approval preview, generated diff, command, and final verification report.
 - Keep `.env`, `.code-agent/`, virtual environments, caches, and private eval reports out of Git.

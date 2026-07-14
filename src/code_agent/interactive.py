@@ -36,6 +36,7 @@ from .sandbox import (
     format_sandbox_diff,
     promote_sandbox_changes,
 )
+from .sandbox_security import SandboxIsolationError, resolve_sandbox_policy
 from .session import SessionState
 from .storage import AgentStorage
 from .status import StatusReporter, analyze_workspace
@@ -196,27 +197,31 @@ def main() -> None:
             continue
 
         permission_policy.reset_task()
-        agent = create_agent(
-            settings=settings,
-            cwd=cwd,
-            model=model,
-            profile=profile,
-            dry_run=dry_run,
-            max_steps=max_steps,
-            max_failures=max_failures,
-            approval_callback=permission_policy.approve,
-            reporter=StatusReporter(),
-            stream_model=stream_model,
-        )
+        agent: InteractiveAgent | None = None
         try:
+            agent = create_agent(
+                settings=settings,
+                cwd=cwd,
+                model=model,
+                profile=profile,
+                dry_run=dry_run,
+                max_steps=max_steps,
+                max_failures=max_failures,
+                approval_callback=permission_policy.approve,
+                reporter=StatusReporter(),
+                stream_model=stream_model,
+                require_process_isolation=sandbox_enabled,
+            )
             with active_shortcuts(agent):
                 transcript = run_interactive_turn(user_input, agent, transcript, session_state)
         except InteractiveExitRequested:
-            agent.cancel("interactive exit shortcut")
+            if agent is not None:
+                agent.cancel("interactive exit shortcut")
             print_panel("System", "bye")
             return
         except KeyboardInterrupt:
-            agent.cancel("interactive keyboard interrupt")
+            if agent is not None:
+                agent.cancel("interactive keyboard interrupt")
             print_panel("Stopped", "Current action stopped. Interactive session is still open.")
             continue
         except Exception as exc:
@@ -342,10 +347,28 @@ def handle_command(
                         body += "\nPromoted files: " + ", ".join(result.changed_paths)
                     print_panel("Sandbox Apply", body)
         else:
-            sandbox_workspace = create_sandbox_workspace(base_cwd)
-            cwd = sandbox_workspace.path
-            sandbox_enabled = True
-            print_key_values("Sandbox", [("Sandbox", "on"), ("Workspace", cwd)])
+            try:
+                policy = resolve_sandbox_policy(
+                    base_cwd,
+                    backend=settings.sandbox_backend,
+                    container_image=settings.agent_sandbox_image,
+                    require_process_isolation=True,
+                )
+                sandbox_workspace = create_sandbox_workspace(base_cwd, policy=policy)
+            except SandboxIsolationError as exc:
+                print_panel("Sandbox Unavailable", str(exc))
+            else:
+                cwd = sandbox_workspace.path
+                sandbox_enabled = True
+                print_key_values(
+                    "Sandbox",
+                    [
+                        ("Sandbox", "on"),
+                        ("Workspace", cwd),
+                        ("Backend", policy.backend),
+                        ("Process isolated", "yes"),
+                    ],
+                )
     elif command == "/model":
         if value.lower() in {"select", "picker", "list"}:
             selected_model = prompt_model_selection(current_model=current_model_name(settings, model))
@@ -398,6 +421,7 @@ def handle_command(
             stream_model=stream_model,
             max_steps=max_steps,
             max_failures=max_failures,
+            sandbox_enabled=sandbox_enabled,
             session_state=session_state,
         )
     elif command in {"/revert", "/restore"}:
@@ -590,6 +614,7 @@ def run_resume_command(
     stream_model: bool,
     max_steps: int,
     max_failures: int | None,
+    sandbox_enabled: bool,
     session_state: SessionState | None,
 ) -> None:
     if not value:
@@ -614,18 +639,23 @@ def run_resume_command(
         instruction.strip() or None,
         storage.get_work_report(run_id),
     )
-    agent = create_agent(
-        settings=settings,
-        cwd=cwd,
-        model=model,
-        profile=profile,
-        dry_run=dry_run,
-        max_steps=max_steps,
-        max_failures=max_failures,
-        approval_callback=confirm_permission,
-        reporter=StatusReporter(),
-        stream_model=stream_model,
-    )
+    try:
+        agent = create_agent(
+            settings=settings,
+            cwd=cwd,
+            model=model,
+            profile=profile,
+            dry_run=dry_run,
+            max_steps=max_steps,
+            max_failures=max_failures,
+            approval_callback=confirm_permission,
+            reporter=StatusReporter(),
+            stream_model=stream_model,
+            require_process_isolation=sandbox_enabled,
+        )
+    except SandboxIsolationError as exc:
+        print_panel("Sandbox Unavailable", str(exc))
+        return
     result = agent.run_detailed(task)
     print_work_report_panel(result)
     if not should_show_work_report(result):

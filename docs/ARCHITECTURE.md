@@ -98,6 +98,28 @@ escape the managed environment.
 
 Container execution supports Docker and Podman with offline networking by default, read-only root filesystems,
 resource and pid limits, dropped capabilities, isolated environment variables, and image policy validation.
+Commands are parsed into argv and passed directly to the container image without an inner shell.
+
+`resolve_sandbox_policy` is the single backend-selection boundary. Normal runs may resolve `auto` to the
+local policy backend. Copied `--sandbox` runs require process isolation, probe Docker then Podman, preserve
+the reviewed workspace policy in the copy, and fail closed if runtime, daemon, image, or policy health is
+unavailable. `SandboxRunner` independently rejects any required-isolation policy resolved to local, so a
+caller mistake cannot silently downgrade execution. Audit and protocol metadata record the requested and
+effective backend plus whether process isolation was required and established.
+
+Container health also verifies rootless runtime operation and seccomp before execution. Docker explicitly
+selects `docker-default` when AppArmor is reported by the runtime. The workload runs
+as the configured non-root UID; disposable workspace copies receive only the POSIX permissions needed by
+that UID. Image tags are resolved to locally inspected repository digests before launch. Optional Trivy
+policy blocks configured vulnerability severities. Every workload has a unique name, CID file, and labels;
+the runtime receives an unconditional forced-remove request in `finally`, including cancellation and timeout
+paths. Only runtime connection variables such as `DOCKER_HOST` survive into the host runtime CLI process,
+and none are forwarded into the workload.
+
+Network policy is deliberately binary at the container boundary: `none` by default or explicitly approved
+bridge access. A configured domain allowlist with bridge access is rejected because DNS names cannot be
+enforced by command classification. Domain-restricted container egress requires an external managed proxy
+and is not represented as active isolation until such a proxy exists.
 
 ## Permissions And Trust
 
@@ -110,8 +132,9 @@ Trust boundaries:
 - Model output: untrusted until parsed and validated.
 - Repository files, diffs, command output, search results, web pages, and memory: untrusted context.
 - Workspace: normal file-operation boundary.
-- Local subprocess backend: policy boundary, not OS isolation.
-- Container backend: stronger process and network boundary when runtime and image policy are healthy.
+- Local subprocess backend: policy boundary for ordinary runs, not OS isolation.
+- Sandbox resolver: fail-closed transition from copied workspace to a healthy container boundary.
+- Container backend: process and network boundary when runtime, daemon, image, and policy checks are healthy.
 
 ## Models
 

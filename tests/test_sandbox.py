@@ -1,4 +1,6 @@
 import json
+import os
+import stat
 import subprocess
 from pathlib import Path
 
@@ -15,9 +17,16 @@ from code_agent.sandbox import (
     format_sandbox_limits,
     promote_sandbox_changes,
 )
-from code_agent.sandbox_security import SandboxPolicy, SandboxResourceLimits, sandbox_health
+from code_agent.sandbox_security import (
+    SandboxHealth,
+    SandboxIsolationError,
+    SandboxPolicy,
+    SandboxResourceLimits,
+    resolve_sandbox_policy,
+    sandbox_health,
+)
 from code_agent.sandbox_security import SandboxAuditLog, SandboxRunner, local_command_path_rejection
-from code_agent.processes import ProcessSupervisor
+from code_agent.processes import CancellationToken, ProcessSupervisor
 from code_agent.schema import RunShellAction
 from code_agent.tools import ToolRegistry
 
@@ -44,6 +53,35 @@ def test_create_sandbox_workspace_excludes_local_state(tmp_path: Path) -> None:
     assert not (sandbox.path / ".env").exists()
     assert not (sandbox.path / ".git").exists()
     assert not (sandbox.path / ".venv").exists()
+
+
+def test_create_sandbox_workspace_preserves_reviewed_policy(tmp_path: Path) -> None:
+    policy_path = tmp_path / ".code-agent" / "policy.toml"
+    policy_path.parent.mkdir()
+    policy_path.write_text('[commands]\nallow = ["uv run pytest"]\n', encoding="utf-8")
+
+    sandbox = create_sandbox_workspace(tmp_path)
+
+    assert (sandbox.path / ".code-agent" / "policy.toml").read_text(
+        encoding="utf-8"
+    ) == policy_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits are not enforced on Windows")
+def test_container_sandbox_copy_is_writable_by_fixed_non_root_user(tmp_path: Path) -> None:
+    source = tmp_path / "app.py"
+    source.write_text("print('ok')\n", encoding="utf-8")
+
+    sandbox = create_sandbox_workspace(
+        tmp_path,
+        policy=SandboxPolicy(
+            backend="podman",
+            process_isolation_required=True,
+        ),
+    )
+
+    assert sandbox.path.stat().st_mode & stat.S_IWOTH
+    assert (sandbox.path / "app.py").stat().st_mode & stat.S_IWOTH
 
 
 def test_create_sandbox_workspace_skips_symlinks(tmp_path: Path) -> None:
@@ -141,6 +179,8 @@ def test_format_sandbox_limits_describes_process_and_network_boundaries() -> Non
     output = format_sandbox_limits()
 
     assert "backend: local" in output
+    assert "process isolation required: no" in output
+    assert "process isolated: no" in output
     assert "hardened local subprocess policy" in output
     assert "offline by default" in output
     assert "explicit sandbox apply promotion" in output
@@ -398,6 +438,199 @@ def test_sandbox_health_reports_container_availability() -> None:
     assert "container" in health.isolation
 
 
+def test_sandbox_policy_auto_uses_local_only_when_isolation_is_not_required(
+    tmp_path: Path,
+) -> None:
+    policy = resolve_sandbox_policy(
+        tmp_path,
+        backend="auto",
+        container_image="python:3.13-slim",
+        require_process_isolation=False,
+    )
+
+    assert policy.backend == "local"
+    assert not policy.process_isolation_required
+    assert not policy.process_isolated
+
+
+def test_sandbox_policy_auto_selects_first_healthy_container(tmp_path: Path, monkeypatch) -> None:
+    checked: list[str] = []
+
+    def fake_health(policy: SandboxPolicy) -> SandboxHealth:
+        checked.append(policy.backend)
+        return SandboxHealth(
+            backend=policy.backend,
+            available=policy.backend == "podman",
+            isolation="container",
+            diagnostics=("unavailable",) if policy.backend == "docker" else (),
+        )
+
+    monkeypatch.setattr(sandbox_security_module, "sandbox_health", fake_health)
+
+    policy = resolve_sandbox_policy(
+        tmp_path,
+        backend="auto",
+        container_image="python:3.13-slim",
+        require_process_isolation=True,
+    )
+
+    assert checked == ["docker", "podman"]
+    assert policy.backend == "podman"
+    assert policy.process_isolation_required
+    assert policy.process_isolated
+
+
+def test_sandbox_policy_refuses_required_local_backend(tmp_path: Path) -> None:
+    with pytest.raises(SandboxIsolationError, match="will not fall back"):
+        resolve_sandbox_policy(
+            tmp_path,
+            backend="local",
+            container_image="python:3.13-slim",
+            require_process_isolation=True,
+        )
+
+
+def test_sandbox_health_rejects_rootful_runtime(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(sandbox_security_module, "resolve_container_runtime", lambda _runtime: "docker")
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "container_daemon_available",
+        lambda _runtime: (True, ""),
+    )
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "inspect_container_runtime_security",
+        lambda _runtime, _kind: (
+            sandbox_security_module.ContainerRuntimeSecurity(rootless=False, seccomp=True),
+            "",
+        ),
+    )
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "validate_container_image_policy",
+        lambda _runtime, _image, _policy: (True, "digest verified"),
+    )
+
+    health = sandbox_health(SandboxPolicy(backend="docker"))
+
+    assert not health.available
+    assert "rootless runtime is required" in health.format_text()
+
+
+def test_sandbox_health_rejects_runtime_without_seccomp(monkeypatch) -> None:
+    monkeypatch.setattr(sandbox_security_module, "resolve_container_runtime", lambda _runtime: "podman")
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "container_daemon_available",
+        lambda _runtime: (True, ""),
+    )
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "inspect_container_runtime_security",
+        lambda _runtime, _kind: (
+            sandbox_security_module.ContainerRuntimeSecurity(rootless=True, seccomp=False),
+            "",
+        ),
+    )
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "validate_container_image_policy",
+        lambda _runtime, _image, _policy: (True, "digest verified"),
+    )
+
+    health = sandbox_health(SandboxPolicy(backend="podman"))
+
+    assert not health.available
+    assert "seccomp enforcement is required" in health.format_text()
+
+
+def test_sandbox_policy_rejects_fake_domain_allowlist() -> None:
+    policy = SandboxPolicy(
+        backend="docker",
+        commands=sandbox_security_module.CommandPolicy(
+            offline=False,
+            domain_allowlist=("pypi.org",),
+        ),
+    )
+
+    assert "egress proxy" in (policy.network_rejection() or "")
+
+
+@pytest.mark.parametrize(
+    "container_user",
+    ["", "0", "0:0", "root", "root:root", "65532", "-1:-1", "user:1000"],
+)
+def test_sandbox_policy_rejects_root_container_user(container_user: str) -> None:
+    policy = SandboxPolicy(backend="docker", container_user=container_user)
+
+    assert policy.container_user_rejection() is not None
+
+
+def test_workspace_policy_cannot_downgrade_required_isolation(tmp_path: Path) -> None:
+    policy_path = tmp_path / ".code-agent" / "policy.toml"
+    policy_path.parent.mkdir()
+    policy_path.write_text('[sandbox]\nbackend = "local"\n', encoding="utf-8")
+
+    with pytest.raises(SandboxIsolationError, match="resolved backend is local"):
+        resolve_sandbox_policy(
+            tmp_path,
+            backend="docker",
+            container_image="python:3.13-slim",
+            require_process_isolation=True,
+        )
+
+
+def test_runner_refuses_local_execution_when_isolation_is_required(tmp_path: Path) -> None:
+    class FailingSupervisor:
+        def run_shell(self, *_args, **_kwargs) -> ShellProcessResult:
+            raise AssertionError("local process must not start")
+
+    runner = SandboxRunner(
+        tmp_path,
+        SandboxPolicy(backend="local", process_isolation_required=True),
+        FailingSupervisor(),  # type: ignore[arg-type]
+        SandboxAuditLog(tmp_path),
+    )
+
+    result = runner.run_shell("git status", timeout_seconds=30, env={})
+
+    assert result.completed.returncode == 126
+    assert "refuses to execute" in result.completed.stderr
+    assert result.metadata == {
+        "isolation_required": True,
+        "process_isolated": False,
+        "sandbox_backend": "local",
+        "requested_backend": "local",
+    }
+    assert "isolation_rejected" in (
+        tmp_path / ".code-agent" / "audit" / "sandbox.jsonl"
+    ).read_text(encoding="utf-8")
+
+
+def test_run_json_sandbox_refuses_local_backend_before_agent_start(tmp_path: Path) -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        [
+            "run-json",
+            "say hi",
+            "--cwd",
+            str(tmp_path),
+            "--sandbox",
+            "--sandbox-backend",
+            "local",
+            "--no-stream",
+        ],
+    )
+
+    assert result.exit_code == 1
+    events = [json.loads(line) for line in result.output.splitlines()]
+    assert [event["event"] for event in events] == ["run_failed"]
+    assert events[0]["code"] == "SandboxIsolationError"
+    assert "will not fall back" in events[0]["message"]
+
+
 def test_sandbox_health_distinguishes_cli_from_daemon(monkeypatch) -> None:
     monkeypatch.setattr(
         sandbox_security_module,
@@ -491,8 +724,20 @@ def test_container_runner_fails_before_popen_when_image_policy_fails(
     )
     monkeypatch.setattr(
         sandbox_security_module,
-        "validate_container_image_policy",
-        lambda _runtime, _image, _policy: (False, "image policy failed"),
+        "inspect_container_runtime_security",
+        lambda _runtime, _kind: (
+            sandbox_security_module.ContainerRuntimeSecurity(
+                rootless=True,
+                seccomp=True,
+                apparmor=True,
+            ),
+            "",
+        ),
+    )
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "resolve_container_image_reference",
+        lambda _runtime, _image, _policy: (None, "image policy failed"),
     )
     monkeypatch.setattr(
         sandbox_security_module.subprocess,
@@ -511,6 +756,177 @@ def test_container_runner_fails_before_popen_when_image_policy_fails(
     assert result.completed.returncode == 126
     assert result.completed.stderr == "image policy failed"
     assert popen_called == []
+
+
+def test_container_runner_executes_argv_without_inner_shell(tmp_path: Path, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FinishedProcess:
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            return "ok", ""
+
+    def fake_popen(args, **kwargs):
+        captured["args"] = args
+        captured.update(kwargs)
+        return FinishedProcess()
+
+    monkeypatch.setattr(sandbox_security_module, "resolve_container_runtime", lambda _runtime: "docker")
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "container_daemon_available",
+        lambda _runtime: (True, ""),
+    )
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "inspect_container_runtime_security",
+        lambda _runtime, _kind: (
+            sandbox_security_module.ContainerRuntimeSecurity(
+                rootless=True,
+                seccomp=True,
+                apparmor=True,
+            ),
+            "",
+        ),
+    )
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "resolve_container_image_reference",
+        lambda _runtime, _image, _policy: ("python@sha256:expected", ""),
+    )
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "cleanup_container",
+        lambda _runtime, _name, _cidfile: (True, ""),
+    )
+    monkeypatch.setattr(sandbox_security_module.subprocess, "Popen", fake_popen)
+    runner = SandboxRunner(
+        tmp_path,
+        SandboxPolicy(backend="docker", process_isolation_required=True),
+        ProcessSupervisor(),
+        SandboxAuditLog(tmp_path, enabled=False),
+    )
+
+    result = runner.run_shell(
+        'python -c "print(123)"',
+        timeout_seconds=30,
+        env={},
+    )
+
+    assert result.completed.returncode == 0
+    args = captured["args"]
+    assert isinstance(args, list)
+    assert "/bin/sh" not in args
+    assert "-lc" not in args
+    assert args[-3:] == ["python", "-c", "print(123)"]
+    assert "python@sha256:expected" in args
+    assert "--cidfile" in args
+    assert "--name" in args
+    assert "--user" in args
+    assert "65532:65532" in args
+    assert "apparmor=docker-default" in args
+    assert captured["env"] == sandbox_security_module._container_runtime_env()
+
+
+def test_container_cancellation_forces_runtime_cleanup(tmp_path: Path, monkeypatch) -> None:
+    cleanup_calls: list[tuple[str, str, Path]] = []
+
+    class RunningProcess:
+        returncode = None
+
+        def kill(self):
+            self.returncode = -9
+
+        def communicate(self, timeout=None):
+            return "", "cancelled"
+
+    monkeypatch.setattr(sandbox_security_module, "resolve_container_runtime", lambda _runtime: "docker")
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "container_daemon_available",
+        lambda _runtime: (True, ""),
+    )
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "inspect_container_runtime_security",
+        lambda _runtime, _kind: (
+            sandbox_security_module.ContainerRuntimeSecurity(rootless=True, seccomp=True),
+            "",
+        ),
+    )
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "resolve_container_image_reference",
+        lambda _runtime, _image, _policy: ("python@sha256:expected", ""),
+    )
+    monkeypatch.setattr(
+        sandbox_security_module.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: RunningProcess(),
+    )
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "cleanup_container",
+        lambda runtime, name, cidfile: cleanup_calls.append((runtime, name, cidfile))
+        or (True, "removed"),
+    )
+    token = CancellationToken()
+    token.cancel("test cancellation")
+    runner = SandboxRunner(
+        tmp_path,
+        SandboxPolicy(backend="docker", process_isolation_required=True),
+        ProcessSupervisor(),
+        SandboxAuditLog(tmp_path),
+    )
+
+    result = runner.run_shell(
+        "python -m pytest",
+        timeout_seconds=30,
+        env={},
+        cancellation_token=token,
+    )
+
+    assert result.cancelled
+    assert result.cleanup_attempted
+    assert result.metadata is not None
+    assert result.metadata["container_cleanup_ok"] is True
+    assert len(cleanup_calls) == 1
+    assert cleanup_calls[0][1].startswith("agent47-")
+    assert not cleanup_calls[0][2].is_relative_to(tmp_path)
+    audit = (tmp_path / ".code-agent" / "audit" / "sandbox.jsonl").read_text(
+        encoding="utf-8"
+    )
+    assert "container_launching" in audit
+    assert "container_cleanup" in audit
+
+
+def test_cleanup_container_uses_validated_cid_and_deletes_cidfile(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+    cidfile = tmp_path / "run.cid"
+    container_id = "a" * 64
+    cidfile.write_text(container_id, encoding="utf-8")
+
+    def fake_run(args, **kwargs):
+        captured["args"] = args
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(args, 0, container_id, "")
+
+    monkeypatch.setattr(sandbox_security_module.subprocess, "run", fake_run)
+
+    ok, _detail = sandbox_security_module.cleanup_container(
+        "docker",
+        "agent47-fallback",
+        cidfile,
+    )
+
+    assert ok
+    assert captured["args"] == ["docker", "rm", "--force", container_id]
+    assert captured["env"] == sandbox_security_module._container_runtime_env()
+    assert not cidfile.exists()
 
 
 def test_container_image_policy_rejects_unallowed_image() -> None:
@@ -541,6 +957,102 @@ def test_container_image_policy_requires_local_image(monkeypatch) -> None:
 
     assert not ok
     assert "not available locally" in detail
+
+
+def test_container_image_policy_requires_digest_metadata(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "inspect_container_image",
+        lambda _runtime, _image: (True, (), ""),
+    )
+
+    ok, detail = sandbox_security_module.validate_container_image_policy(
+        "docker",
+        "python:3.13-slim",
+        sandbox_security_module.ContainerImagePolicy(),
+    )
+
+    assert not ok
+    assert "requires digest-addressable images" in detail
+
+
+def test_container_image_reference_is_resolved_to_immutable_digest(monkeypatch) -> None:
+    digest = "sha256:" + "a" * 64
+    monkeypatch.setattr(
+        sandbox_security_module,
+        "inspect_container_image",
+        lambda _runtime, _image: (True, (f"python@{digest}",), ""),
+    )
+
+    resolved, detail = sandbox_security_module.resolve_container_image_reference(
+        "docker",
+        "python:3.13-slim",
+        sandbox_security_module.ContainerImagePolicy(),
+    )
+
+    assert resolved == f"python@{digest}"
+    assert "immutable" in detail
+
+
+def test_container_image_scan_policy_fails_when_scanner_is_missing(monkeypatch) -> None:
+    monkeypatch.setattr(sandbox_security_module.shutil, "which", lambda _name: None)
+
+    ok, detail = sandbox_security_module.validate_container_image_scan(
+        "python@sha256:expected",
+        sandbox_security_module.ContainerImagePolicy(scan_required=True),
+        "digest verified",
+    )
+
+    assert not ok
+    assert "Trivy" in detail
+    assert "not found" in detail
+
+
+def test_container_image_scan_policy_blocks_denied_vulnerabilities(monkeypatch) -> None:
+    monkeypatch.setattr(sandbox_security_module.shutil, "which", lambda _name: "trivy")
+    monkeypatch.setattr(
+        sandbox_security_module.subprocess,
+        "run",
+        lambda args, **_kwargs: subprocess.CompletedProcess(
+            args,
+            1,
+            "CRITICAL CVE detected",
+            "",
+        ),
+    )
+
+    ok, detail = sandbox_security_module.validate_container_image_scan(
+        "python@sha256:expected",
+        sandbox_security_module.ContainerImagePolicy(scan_required=True),
+        "digest verified",
+    )
+
+    assert not ok
+    assert "HIGH,CRITICAL" in detail
+    assert "CRITICAL CVE detected" in detail
+
+
+def test_container_image_scan_policy_accepts_clean_scan(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(sandbox_security_module.shutil, "which", lambda _name: "trivy")
+
+    def fake_run(args, **kwargs):
+        captured["args"] = args
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(args, 0, "clean", "")
+
+    monkeypatch.setattr(sandbox_security_module.subprocess, "run", fake_run)
+
+    ok, detail = sandbox_security_module.validate_container_image_scan(
+        "python@sha256:expected",
+        sandbox_security_module.ContainerImagePolicy(scan_required=True),
+        "digest verified",
+    )
+
+    assert ok
+    assert "vulnerability policy passed" in detail
+    assert captured["args"][-1] == "python@sha256:expected"
+    assert "--exit-code" in captured["args"]
 
 
 def test_container_image_policy_validates_required_digest(monkeypatch) -> None:
@@ -593,10 +1105,17 @@ def test_sandbox_policy_loads_container_image_rules(tmp_path: Path) -> None:
             [
                 "[sandbox]",
                 'container_image = "python:3.13-slim"',
+                "rootless_required = true",
+                "seccomp_required = true",
+                'container_user = "65532:65532"',
                 "",
                 "[images]",
                 'allowed = ["python:*"]',
                 'required_digest = "sha256:expected"',
+                "require_digest = true",
+                "scan_required = true",
+                'scanner = "trivy"',
+                'denied_severities = ["HIGH", "CRITICAL"]',
             ]
         ),
         encoding="utf-8",
@@ -607,6 +1126,13 @@ def test_sandbox_policy_loads_container_image_rules(tmp_path: Path) -> None:
     assert policy.container_image == "python:3.13-slim"
     assert policy.images.allowed_images == ("python:*",)
     assert policy.images.required_digest == "sha256:expected"
+    assert policy.rootless_required
+    assert policy.seccomp_required
+    assert policy.container_user == "65532:65532"
+    assert policy.images.require_digest
+    assert policy.images.scan_required
+    assert policy.images.scanner == "trivy"
+    assert policy.images.denied_severities == ("HIGH", "CRITICAL")
 
 
 def test_container_image_policy_accepts_pinned_image_reference(monkeypatch) -> None:
@@ -659,14 +1185,25 @@ def test_docker_sandbox_uses_isolated_env_and_read_only_rootfs(tmp_path: Path) -
     )
     if not image_ok:
         pytest.skip(image_detail)
+    policy = SandboxPolicy(
+        backend="docker",
+        rootless_required=False,
+        process_isolation_required=True,
+    )
+    sandbox = create_sandbox_workspace(tmp_path, policy=policy)
     runner = SandboxRunner(
-        tmp_path,
-        SandboxPolicy(backend="docker"),
+        sandbox.path,
+        policy,
         ProcessSupervisor(),
-        SandboxAuditLog(tmp_path),
+        SandboxAuditLog(sandbox.path),
     )
 
-    result = runner.run_shell(
+    identity = runner.run_shell(
+        "python -c \"import os; print(os.getuid())\"",
+        timeout_seconds=30,
+        env={},
+    )
+    rootfs = runner.run_shell(
         (
             "python -c \"import os, pathlib; "
             "print(os.environ.get('AGENT47_SANDBOXED_SHELL')); "
@@ -675,10 +1212,18 @@ def test_docker_sandbox_uses_isolated_env_and_read_only_rootfs(tmp_path: Path) -
         timeout_seconds=30,
         env={},
     )
+    network = runner.run_shell(
+        "python -c \"import socket; socket.create_connection(('1.1.1.1', 53), 1)\"",
+        timeout_seconds=30,
+        env={},
+    )
 
-    assert result.completed.returncode != 0
-    assert "1" in result.completed.stdout
-    assert "Read-only file system" in result.completed.stderr or "Permission denied" in result.completed.stderr
+    assert identity.completed.returncode == 0
+    assert identity.completed.stdout.strip() == "65532"
+    assert rootfs.completed.returncode != 0
+    assert "1" in rootfs.completed.stdout
+    assert "Read-only file system" in rootfs.completed.stderr or "Permission denied" in rootfs.completed.stderr
+    assert network.completed.returncode != 0
 
 
 def test_container_env_uses_linux_path_and_drops_windows_shell_keys() -> None:
@@ -697,8 +1242,22 @@ def test_container_env_uses_linux_path_and_drops_windows_shell_keys() -> None:
 
     assert env["PATH"] == "/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
     assert "COMSPEC" not in env
-    assert "HOME" not in env
+    assert env["HOME"] == "/tmp"
+    assert env["TMPDIR"] == "/tmp"
+    assert env["XDG_CACHE_HOME"] == "/tmp/.cache"
     assert "TEMP" not in env
     assert "USERNAME" not in env
     assert "USERPROFILE" not in env
     assert env["PYTHONDONTWRITEBYTECODE"] == "1"
+
+
+def test_container_runtime_env_keeps_connection_without_provider_secrets(monkeypatch) -> None:
+    monkeypatch.setenv("DOCKER_HOST", "unix:///run/user/1000/docker.sock")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+
+    env = sandbox_security_module._container_runtime_env()
+
+    assert env["DOCKER_HOST"] == "unix:///run/user/1000/docker.sock"
+    assert env["XDG_RUNTIME_DIR"] == "/run/user/1000"
+    assert "OPENAI_API_KEY" not in env

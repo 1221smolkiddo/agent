@@ -54,9 +54,22 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --extra dev
-      - name: Inspect Docker sandbox health
-        run: uv run code-agent sandbox health --backend docker
+      - name: Configure live Docker test policy
+        run: |
+          mkdir -p .code-agent
+          cat > .code-agent/policy.toml <<'EOF'
+          [sandbox]
+          rootless_required = false
+          seccomp_required = true
+          container_user = "65532:65532"
+
+          [images]
+          allowed = ["python:3.13-slim"]
+          require_digest = true
+          EOF
       - name: Prepare reviewed sandbox image
         run: docker pull python:3.13-slim
+      - name: Inspect Docker sandbox health
+        run: uv run code-agent sandbox health --backend docker
       - name: Run live Docker sandbox security tests
         run: uv run pytest tests/test_sandbox.py -m docker_security

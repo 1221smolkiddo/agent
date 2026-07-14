@@ -57,7 +57,11 @@ from .sandbox import (
     format_sandbox_limits,
     promote_sandbox_changes,
 )
-from .sandbox_security import SandboxPolicy, sandbox_health
+from .sandbox_security import (
+    SandboxIsolationError,
+    resolve_sandbox_policy,
+    sandbox_health,
+)
 from .storage import AgentStorage
 from .status import StatusReporter
 from .terminal_ui import print_work_report_panel
@@ -137,7 +141,11 @@ def run(
         help="Model profile: default, planner, coder, reviewer, or fast.",
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Inspect only; skip writes and shell."),
-    sandbox: bool = typer.Option(False, "--sandbox", help="Run inside an isolated workspace copy."),
+    sandbox: bool = typer.Option(
+        False,
+        "--sandbox",
+        help="Run in a copied workspace with required Docker/Podman process isolation.",
+    ),
     stream: bool = typer.Option(True, "--stream/--no-stream", help="Show compact model streaming progress."),
     deny_network_shell: bool = typer.Option(
         False,
@@ -147,7 +155,7 @@ def run(
     sandbox_backend: Optional[str] = typer.Option(
         None,
         "--sandbox-backend",
-        help="Sandbox execution backend override: local, docker, podman, or container.",
+        help="Sandbox backend override: auto, docker, or podman. Local is refused with --sandbox.",
     ),
     max_steps: int = typer.Option(12, "--max-steps", min=1, help="Maximum agent loop steps."),
     max_failures: Optional[int] = typer.Option(
@@ -160,16 +168,20 @@ def run(
     """Run the coding agent on a task."""
     settings = Settings()
     workspace = cwd.resolve()
-    sandbox_policy = SandboxPolicy.from_workspace(
-        workspace,
-        backend=sandbox_backend or settings.sandbox_backend,
-        container_image=settings.agent_sandbox_image,
-    )
+    try:
+        sandbox_policy = resolve_sandbox_policy(
+            workspace,
+            backend=sandbox_backend or settings.sandbox_backend,
+            container_image=settings.agent_sandbox_image,
+            require_process_isolation=sandbox,
+        )
+    except SandboxIsolationError as exc:
+        typer.echo(f"Sandbox unavailable: {exc}")
+        raise typer.Exit(code=1)
     if sandbox:
         sandbox_workspace = create_sandbox_workspace(
             workspace,
-            backend=sandbox_policy.backend,
-            container_image=sandbox_policy.container_image,
+            policy=sandbox_policy,
         )
         workspace = sandbox_workspace.path
         typer.echo(f"Sandbox: {workspace}")
@@ -190,6 +202,7 @@ def run(
         preset=preset,
         shell_network_policy="deny" if deny_network_shell else None,
         sandbox_backend=sandbox_policy.backend,
+        require_process_isolation=sandbox,
     )
     try:
         result = agent.run_detailed(task)
@@ -374,16 +387,21 @@ def sandbox_health_command(
     backend: Optional[str] = typer.Option(
         None,
         "--backend",
-        help="Sandbox backend to check: local, docker, podman, or container.",
+        help="Process-isolation backend to check: auto, docker, or podman.",
     ),
 ) -> None:
     """Show sandbox backend availability and isolation guarantees."""
     settings = Settings()
-    policy = SandboxPolicy.from_workspace(
-        cwd.resolve(),
-        backend=backend or settings.sandbox_backend,
-        container_image=settings.agent_sandbox_image,
-    )
+    try:
+        policy = resolve_sandbox_policy(
+            cwd.resolve(),
+            backend=backend or settings.sandbox_backend,
+            container_image=settings.agent_sandbox_image,
+            require_process_isolation=True,
+        )
+    except SandboxIsolationError as exc:
+        typer.echo(f"Sandbox unavailable: {exc}")
+        raise typer.Exit(code=1)
     typer.echo(sandbox_health(policy).format_text())
 
 
@@ -435,7 +453,11 @@ def run_json(
         help="Model profile: default, planner, coder, reviewer, or fast.",
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Inspect only; skip writes and shell."),
-    sandbox: bool = typer.Option(False, "--sandbox", help="Run inside an isolated workspace copy."),
+    sandbox: bool = typer.Option(
+        False,
+        "--sandbox",
+        help="Run in a copied workspace with required Docker/Podman process isolation.",
+    ),
     stream: bool = typer.Option(True, "--stream/--no-stream", help="Emit model stream lifecycle events."),
     deny_network_shell: bool = typer.Option(
         False,
@@ -445,7 +467,7 @@ def run_json(
     sandbox_backend: Optional[str] = typer.Option(
         None,
         "--sandbox-backend",
-        help="Sandbox execution backend override: local, docker, podman, or container.",
+        help="Sandbox backend override: auto, docker, or podman. Local is refused with --sandbox.",
     ),
     max_steps: int = typer.Option(12, "--max-steps", min=1, help="Maximum agent loop steps."),
     max_failures: Optional[int] = typer.Option(
@@ -476,21 +498,28 @@ def run_json(
         raise typer.Exit(code=2)
     settings = Settings()
     workspace = cwd.resolve()
-    sandbox_policy = SandboxPolicy.from_workspace(
-        workspace,
-        backend=sandbox_backend or settings.sandbox_backend,
-        container_image=settings.agent_sandbox_image,
-    )
     agent = None
     try:
+        sandbox_policy = resolve_sandbox_policy(
+            workspace,
+            backend=sandbox_backend or settings.sandbox_backend,
+            container_image=settings.agent_sandbox_image,
+            require_process_isolation=sandbox,
+        )
         if sandbox:
             sandbox_workspace = create_sandbox_workspace(
                 workspace,
-                backend=sandbox_policy.backend,
-                container_image=sandbox_policy.container_image,
+                policy=sandbox_policy,
             )
             workspace = sandbox_workspace.path
-            emitter.emit("sandbox_created", path=str(workspace), source=str(cwd.resolve()))
+            emitter.emit(
+                "sandbox_created",
+                path=str(workspace),
+                source=str(cwd.resolve()),
+                backend=sandbox_policy.backend,
+                process_isolated=sandbox_policy.process_isolated,
+                isolation_required=sandbox_policy.process_isolation_required,
+            )
             emitter.emit("sandbox_limits", detail=format_sandbox_limits(sandbox_workspace.policy))
 
         emit_run_started(
@@ -503,6 +532,8 @@ def run_json(
             preset=preset,
             profile=profile,
             max_steps=max_steps,
+            sandbox_backend=sandbox_policy.backend,
+            process_isolated=sandbox_policy.process_isolated,
         )
         agent = create_agent(
             settings=settings,
@@ -523,6 +554,7 @@ def run_json(
             preset=preset,
             shell_network_policy="deny" if deny_network_shell else None,
             sandbox_backend=sandbox_policy.backend,
+            require_process_isolation=sandbox,
         )
         result = agent.run_detailed(task)
     except KeyboardInterrupt:
@@ -563,7 +595,11 @@ def resume(
         help="Model profile: default, planner, coder, reviewer, or fast.",
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Inspect only; skip writes and shell."),
-    sandbox: bool = typer.Option(False, "--sandbox", help="Run inside an isolated workspace copy."),
+    sandbox: bool = typer.Option(
+        False,
+        "--sandbox",
+        help="Run in a copied workspace with required Docker/Podman process isolation.",
+    ),
     stream: bool = typer.Option(True, "--stream/--no-stream", help="Show compact model streaming progress."),
     deny_network_shell: bool = typer.Option(
         False,
@@ -573,7 +609,7 @@ def resume(
     sandbox_backend: Optional[str] = typer.Option(
         None,
         "--sandbox-backend",
-        help="Sandbox execution backend override: local, docker, podman, or container.",
+        help="Sandbox backend override: auto, docker, or podman. Local is refused with --sandbox.",
     ),
     max_steps: int = typer.Option(12, "--max-steps", min=1, help="Maximum agent loop steps."),
     max_failures: Optional[int] = typer.Option(
@@ -592,16 +628,20 @@ def resume(
         raise typer.Exit(code=1)
 
     workspace = (cwd or Path(run_row["cwd"])).resolve()
-    sandbox_policy = SandboxPolicy.from_workspace(
-        workspace,
-        backend=sandbox_backend or settings.sandbox_backend,
-        container_image=settings.agent_sandbox_image,
-    )
+    try:
+        sandbox_policy = resolve_sandbox_policy(
+            workspace,
+            backend=sandbox_backend or settings.sandbox_backend,
+            container_image=settings.agent_sandbox_image,
+            require_process_isolation=sandbox,
+        )
+    except SandboxIsolationError as exc:
+        typer.echo(f"Sandbox unavailable: {exc}")
+        raise typer.Exit(code=1)
     if sandbox:
         sandbox_workspace = create_sandbox_workspace(
             workspace,
-            backend=sandbox_policy.backend,
-            container_image=sandbox_policy.container_image,
+            policy=sandbox_policy,
         )
         workspace = sandbox_workspace.path
         typer.echo(f"Sandbox: {workspace}")
@@ -628,6 +668,7 @@ def resume(
         preset=preset,
         shell_network_policy="deny" if deny_network_shell else None,
         sandbox_backend=sandbox_policy.backend,
+        require_process_isolation=sandbox,
     )
     try:
         result = agent.run_detailed(task)

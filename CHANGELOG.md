@@ -21,6 +21,11 @@ Notable user-facing and engineering changes are recorded here.
 - Secret redaction before model context and persistence.
 - Mutation evidence and rejection of unsupported completion claims.
 - Container image, digest, resource, pid, root-filesystem, environment, and network controls.
+- Fail-closed Docker/Podman sandbox resolution with preserved workspace policy and isolation evidence.
+- Direct container argv execution without an inner shell or silent local downgrade.
+- Rootless and seccomp health enforcement, fixed non-root workload identity, and immutable image resolution.
+- Named-container CID tracking with forced cleanup across success, failure, cancellation, and timeout paths.
+- Optional Trivy vulnerability gates and fail-closed rejection of unenforced domain egress allowlists.
 
 ### Quality
 

@@ -198,8 +198,8 @@ Core controls include:
 - Private HOME, temporary, and cache directories for local commands.
 - Disk, process, CPU, memory, timeout, image, digest, and network controls for configured sandboxes.
 
-The default local backend is hardened policy enforcement, not an OS security boundary. Use Docker or
-Podman when process and network isolation are required.
+Ordinary runs use the hardened local subprocess policy. `--sandbox` is a strict security mode: it
+selects a healthy Docker or Podman backend and refuses to start if process isolation cannot be proven.
 
 ### Security Reports
 
@@ -227,8 +227,9 @@ defense in depth and cannot identify every possible secret format.
 
 ## Sandboxes
 
-`--dry-run` disables mutations and shell execution. `--sandbox` works in a copied workspace and requires
-explicit promotion back to the base repository.
+`--dry-run` disables mutations and shell execution. `--sandbox` combines a copied workspace with required
+Docker or Podman process isolation and explicit promotion back to the base repository. It never silently
+falls back to local execution. The effective `.code-agent/policy.toml` is preserved in the copy.
 
 ```bash
 uv run code-agent run --sandbox "Try the refactor"
@@ -236,9 +237,16 @@ uv run code-agent sandbox diff .code-agent/sandboxes/<name>
 uv run code-agent sandbox apply .code-agent/sandboxes/<name>
 ```
 
-Container backends add read-only root filesystems, dropped capabilities, pid and resource limits,
-isolated environment variables, and offline networking by default. Images must satisfy workspace policy
-and optional digest requirements.
+Container commands execute directly as parsed argv without an inner shell. Backends add read-only root
+filesystems, dropped capabilities, pid and resource limits, isolated environment variables, and offline
+networking by default. Strict health requires a rootless runtime, seccomp, an explicit non-root container
+UID, and a locally reviewed image that resolves to an immutable digest. Containers receive unique names,
+CID files, audit labels, and forced cleanup after success, failure, cancellation, or timeout.
+
+Production policies can additionally require a Trivy vulnerability gate. Enabling shell networking with
+a domain allowlist is refused because bridge networking cannot enforce domains without a managed egress
+proxy; offline mode remains the secure default. Use `code-agent sandbox health` to verify the complete
+boundary before a run.
 
 ## Verification And Evals
 

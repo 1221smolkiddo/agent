@@ -232,6 +232,8 @@ def emit_run_started(
     preset: str | None = None,
     profile: str | None,
     max_steps: int,
+    sandbox_backend: str | None = None,
+    process_isolated: bool = False,
 ) -> None:
     emitter.emit(
         "run_started",
@@ -243,6 +245,8 @@ def emit_run_started(
         preset=preset,
         profile=profile,
         max_steps=max_steps,
+        sandbox_backend=sandbox_backend,
+        process_isolated=process_isolated,
     )
 
 

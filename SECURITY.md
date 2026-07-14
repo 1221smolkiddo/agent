@@ -31,16 +31,24 @@ Include:
 - Destructive, compound-shell, workspace-escape, and arbitrary inline-code commands are blocked.
 - Tool output and stored payloads are redacted for common secret patterns.
 - Dry-run mode disables mutations and command execution.
-- Copied sandboxes require explicit promotion to the base workspace.
-- Docker and Podman backends provide stronger process and network isolation when correctly configured.
+- Copied sandboxes preserve reviewed policy and require explicit promotion to the base workspace.
+- `--sandbox` requires a healthy Docker or Podman process boundary and refuses local fallback.
+- Container commands execute as direct argv without an inner shell and record isolation evidence.
+- Strict container health requires rootless runtime evidence, seccomp, a non-root workload UID, and an
+  immutable local image digest.
+- Docker explicitly selects `docker-default` when AppArmor is available.
+- Named containers and CID files support forced cleanup on completion, cancellation, timeout, and launch failure.
+- Optional Trivy policy can fail health and execution on denied image vulnerability severities.
+- Domain allowlists never silently become unrestricted bridge access; unsupported egress policy fails closed.
 
 ## Residual Risk
 
 - Approved project commands can execute arbitrary repository code.
-- The local backend is policy enforcement, not OS-level isolation.
+- The local backend used by ordinary runs is policy enforcement, not OS-level isolation.
 - Pattern-based redaction cannot identify every secret.
 - A passing model review or test suite does not prove correctness or security.
 - Provider calls send approved context under the provider's retention policy.
 - Container safety depends on the host runtime, daemon, image, and policy configuration.
+- Disabling rootless or image-scan requirements weakens the strict sandbox contract.
 
 See [Known Limitations](docs/KNOWN_LIMITATIONS.md) for the full operating contract.

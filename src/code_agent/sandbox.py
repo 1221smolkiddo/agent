@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import shutil
+import os
+import stat
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .schema import ApplyPatchAction
-from .sandbox_security import SandboxPolicy, sandbox_health
+from .sandbox_security import POLICY_PATH, SandboxPolicy, resolve_sandbox_policy, sandbox_health
 from .tools import ToolRegistry
 from .patches import git_style_unified_diff
 
@@ -61,14 +63,17 @@ class SandboxApplyResult:
 def create_sandbox_workspace(
     source: Path,
     *,
-    backend: str = "local",
+    backend: str = "auto",
     container_image: str = "python:3.13-slim",
+    require_process_isolation: bool = False,
+    policy: SandboxPolicy | None = None,
 ) -> SandboxWorkspace:
     resolved_source = source.resolve()
-    policy = SandboxPolicy.from_workspace(
+    policy = policy or resolve_sandbox_policy(
         resolved_source,
         backend=backend,
         container_image=container_image,
+        require_process_isolation=require_process_isolation,
     )
     sandbox_root = resolved_source / ".code-agent" / "sandboxes"
     sandbox_root.mkdir(parents=True, exist_ok=True)
@@ -80,6 +85,13 @@ def create_sandbox_workspace(
         sandbox_path,
         ignore=_ignore_sandbox_entries,
     )
+    source_policy = resolved_source / POLICY_PATH
+    if source_policy.is_file():
+        copied_policy = sandbox_path / POLICY_PATH
+        copied_policy.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_policy, copied_policy)
+    if policy.process_isolated and os.name != "nt":
+        _prepare_non_root_container_workspace(sandbox_path)
     return SandboxWorkspace(source=resolved_source, path=sandbox_path, policy=policy)
 
 
@@ -171,6 +183,13 @@ def format_sandbox_limits(policy: SandboxPolicy | None = None) -> str:
         [
             "Sandbox limits:",
             f"- backend: {policy.backend}",
+            f"- process isolation required: {'yes' if policy.process_isolation_required else 'no'}",
+            f"- process isolated: {'yes' if policy.process_isolated else 'no'}",
+            f"- rootless runtime required: {'yes' if policy.rootless_required else 'no'}",
+            f"- seccomp required: {'yes' if policy.seccomp_required else 'no'}",
+            f"- container user: {policy.container_user}",
+            f"- immutable image digest required: {'yes' if policy.images.require_digest else 'no'}",
+            f"- vulnerability scan required: {'yes' if policy.images.scan_required else 'no'}",
             f"- isolation: {health.isolation}",
             "- filesystem: copied workspace with sensitive/local state excluded; base repo is read-only by design",
             "- promotion: base workspace files change only after explicit sandbox apply promotion",
@@ -251,6 +270,20 @@ def _ignore_sandbox_entries(directory: str, names: list[str]) -> set[str]:
         if (root / name).is_symlink():
             ignored.add(name)
     return ignored
+
+
+def _prepare_non_root_container_workspace(workspace: Path) -> None:
+    for path in [workspace, *workspace.rglob("*")]:
+        if path.is_symlink():
+            continue
+        try:
+            mode = path.stat().st_mode
+            if path.is_dir():
+                path.chmod(mode | stat.S_IWOTH | stat.S_IXOTH)
+            elif path.is_file():
+                path.chmod(mode | stat.S_IWOTH)
+        except OSError:
+            continue
 
 
 def _indexed_files(root: Path, selected: set[str] | None) -> set[str]:
