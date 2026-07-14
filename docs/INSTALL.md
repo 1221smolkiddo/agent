@@ -1,119 +1,193 @@
-# Agent47 Install Guide
+# Install
 
-This guide is the public-alpha install path for Agent47 on Windows, macOS, and Linux.
+Agent47 supports Python 3.11 and newer on Windows, macOS, and Linux. CI currently exercises Python
+3.11-3.13 on Linux and Python 3.12 on Windows and macOS.
 
-Agent47 requires Python 3.11 or newer.
+## Recommended Installation
 
-## Recommended: uv
-
-From the repository root:
+Install `uv`, clone the repository, and create the managed environment:
 
 ```bash
 uv sync --extra dev --extra parsing
-cp .env.example .env
-uv run code-agent doctor
-uv run code-agent evals
-uv run code-agent run --dry-run "Inspect this project"
 ```
 
-On Windows PowerShell, use:
+Create local configuration:
+
+```bash
+cp .env.example .env
+```
+
+PowerShell:
 
 ```powershell
 Copy-Item .env.example .env
-uv run code-agent doctor
 ```
 
-Set your API key in `.env`:
+Set at least one provider key, then run diagnostics:
 
 ```text
+AGENT_PROVIDER=openrouter
 OPENROUTER_API_KEY=...
+AGENT_MODEL=qwen/qwen3-coder
 ```
 
-## pip Editable Install
+```bash
+uv run code-agent doctor --strict
+uv run code-agent models
+uv run code-agent run --dry-run "Inspect this repository"
+```
 
-Use this when `uv` is not available:
+## Editable pip Installation
+
+Create and activate a virtual environment, then install development and parsing extras:
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate
-python -m pip install -e ".[dev,parsing]"
-code-agent doctor
 ```
 
-On Windows PowerShell:
+Windows:
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev,parsing]"
+.\.venv\Scripts\python -m pip install -e ".[dev,parsing]"
+.\.venv\Scripts\code-agent doctor
+```
+
+macOS and Linux:
+
+```bash
+.venv/bin/python -m pip install -e ".[dev,parsing]"
+.venv/bin/code-agent doctor
+```
+
+## pipx
+
+From a local checkout:
+
+```bash
+pipx install .
 code-agent doctor
 ```
 
-## pipx Install From A Local Checkout
+Install development extras only in contributor environments; normal CLI use does not require them.
 
-Use this when you want the console commands installed in an isolated app environment:
+## Required Tools
+
+- Python 3.11 or newer.
+- Git for git-awareness, collaboration commands, patches, and reverts.
+- `ripgrep` is recommended for fast repository search; a slower built-in fallback is available.
+- Docker or Podman is optional and only required for container sandbox isolation.
+- `uv` is recommended for reproducible development, tests, and builds.
+
+Tree-sitter parsing is optional. Install the `parsing` extra for richer symbol extraction across languages.
+
+## Provider Configuration
+
+Agent47 supports these direct OpenAI-compatible providers:
+
+| Provider | Key | Default base URL |
+| --- | --- | --- |
+| OpenRouter | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` |
+| OpenAI | `OPENAI_API_KEY` | `https://api.openai.com/v1` |
+| Gemini | `GEMINI_API_KEY` | `https://generativelanguage.googleapis.com/v1beta/openai/` |
+| DeepSeek | `DEEPSEEK_API_KEY` | `https://api.deepseek.com` |
+| NVIDIA NIM | `NVIDIA_API_KEY` | `https://integrate.api.nvidia.com/v1` |
+
+Use `.env.example` as the canonical configuration reference. Common settings:
+
+```text
+AGENT_MODEL_PRESET=
+AGENT_MODEL=qwen/qwen3-coder
+AGENT_PROFILE=default
+AGENT_FALLBACK_MODELS=
+AGENT_MAX_TOKENS=4096
+AGENT_MODEL_TIMEOUT_SECONDS=60
+AGENT_MODEL_RETRY_COUNT=2
+AGENT_MODEL_RETRY_BASE_SECONDS=0.5
+AGENT_MODEL_RETRY_MAX_SECONDS=4
+AGENT_MAX_FAILURES=3
+AGENT_CONTEXT_MAX_CHARS=60000
+AGENT_DB_PATH=.code-agent/agent.db
+AGENT_STREAM=true
+AGENT_REVIEWER_PASS=true
+AGENT_SHELL_NETWORK=allow
+AGENT_SANDBOX_BACKEND=local
+AGENT_SANDBOX_IMAGE=python:3.13-slim
+```
+
+The model retry count is bounded from 0-10. The context budget must be at least 8,000 characters.
+
+## Platform Notes
+
+### Windows
+
+- Install Git for Windows and ensure `git` is on `PATH`.
+- Install ripgrep with `winget`, Chocolatey, Scoop, or another package manager.
+- If PowerShell blocks virtual-environment activation, invoke `.venv\Scripts\python` directly or set an
+  appropriate user-scoped execution policy.
+- Docker Desktop requires hardware virtualization and a running daemon. `code-agent sandbox health
+  --backend docker` distinguishes a missing CLI from an unavailable daemon.
+- Agent47 pins `python` verification commands to the active interpreter to avoid Windows executable
+  lookup escaping the managed environment.
+
+### macOS
+
+- Install command-line developer tools so Git and native package builds are available.
+- Docker Desktop or Podman is optional for container isolation.
+- If `code-agent` is not found after `pipx`, run `pipx ensurepath` and restart the shell.
+
+### Linux
+
+- Install Python development support when native dependencies require compilation.
+- Docker users may need daemon access through the configured socket or group. Do not weaken daemon
+  permissions solely for Agent47.
+- Rootless Podman is a suitable container backend when available.
+
+## Sandbox Setup
+
+The local backend requires no external runtime but is not OS-level isolation.
+
+Docker example:
 
 ```bash
-pipx install ".[parsing]"
-code-agent doctor
-agent47
+docker pull python:3.13-slim
+uv run code-agent sandbox health --backend docker
+uv run code-agent run --sandbox --sandbox-backend docker "Inspect and test this project"
 ```
 
-If the command is not found, run:
+Container images must satisfy `.code-agent-policy.toml` image allowlist and optional digest policy.
+Networking is disabled by default inside container sandboxes.
+
+## Verification
+
+Fast installation checks:
 
 ```bash
-pipx ensurepath
+uv run code-agent doctor --strict
+uv run code-agent evals
+uv run code-agent run-json --dry-run "Inspect this repository"
 ```
 
-Then restart the shell.
-
-## macOS Notes
-
-- Install Python 3.11+ with `uv`, Homebrew, or python.org.
-- Install Git if Xcode command line tools are missing: `xcode-select --install`.
-- Install ripgrep for faster search: `brew install ripgrep`.
-- If shell commands cannot find `code-agent`, restart the terminal after installing with `pipx`.
-
-## Linux Notes
-
-- Install Python 3.11+ from your distribution or `uv`.
-- Install Git and ripgrep with your package manager.
-- Debian/Ubuntu example:
+Contributor and release checks:
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y git ripgrep
+uv run ruff check src tests
+uv run pytest
+uv run code-agent release-smoke
+uv build
 ```
 
-- If editable installs fail because build tools are missing, install your distribution's Python development package.
-
-## Windows Notes
-
-- PowerShell is the tested shell for local development.
-- If script activation is blocked, run:
-
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-```
-
-- Install Git for Windows and ensure it is on PATH.
-- Install ripgrep with winget, Chocolatey, Scoop, or another package manager.
-
-## Smoke Test
-
-Run these before opening a public-alpha issue or release:
+Live evals consume provider credits and are intentionally opt-in:
 
 ```bash
-code-agent doctor --strict
-code-agent evals
-code-agent run-json --dry-run "Inspect this project"
+uv run code-agent evals --live --limit 3 --save-report
 ```
-
-`doctor --strict` exits nonzero on warnings. That is useful for CI or release checks, but local development may intentionally have warnings such as missing API keys.
 
 ## Troubleshooting
 
-- `OPENROUTER_API_KEY is required`: set `OPENROUTER_API_KEY` in `.env` or your shell environment.
-- `code-agent` command not found: use `uv run code-agent ...`, activate the virtual environment, or verify `pipx ensurepath`.
-- Slow project search: install `ripgrep`; Agent47 falls back to a slower Python search if `rg` is missing.
-- SQLite path errors: set `AGENT_DB_PATH` to a writable location.
+- **Provider key required:** configure the key matching `AGENT_PROVIDER` or the selected preset.
+- **Command not found:** use `uv run code-agent`, activate the virtual environment, or run `pipx ensurepath`.
+- **Slow repository search:** install `ripgrep` and confirm `rg` is visible to `code-agent doctor`.
+- **SQLite errors:** set `AGENT_DB_PATH` to a writable local path; network filesystems are not recommended.
+- **Docker CLI found but daemon unavailable:** start the runtime and rerun `sandbox health`.
+- **Strict doctor warns about memory:** project memory is optional until the repository needs stable facts.
+- **Tests are slow:** run focused files during iteration and use `release-smoke` or CI for the complete gate.

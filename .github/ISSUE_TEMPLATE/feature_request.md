@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an improvement
+about: Propose a measurable Agent47 capability
 title: "[Feature]: "
 labels: enhancement
 assignees: ""
@@ -9,8 +9,11 @@ assignees: ""
 ## Problem
 
 
-## Proposed Solution
+## Proposed Capability
 
 
-## Alternatives
+## Acceptance Evidence
+
+
+## Alternatives And Risks
 

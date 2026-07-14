@@ -1,23 +1,29 @@
 # Changelog
 
-All notable Agent47 changes are tracked here.
-
-This project follows semantic versioning once public alpha releases begin.
+Notable user-facing and engineering changes are recorded here.
 
 ## 0.1.0 - Unreleased
 
 ### Added
 
-- CLI-first Agent47 runner with one-shot, interactive, JSON protocol, history, resume, doctor, and eval commands.
-- Disk-verified mutation tracking for writes, exact edits, patches, and deletes.
-- Structured patch application with approval preview, workspace path validation, check-before-apply, and multi-file change-set metadata.
-- Versioned newline-delimited JSON protocol for frontend integrations with correlated approval requests and responses.
-- Prompt-injection defenses that mark tool output as untrusted model context.
-- Shell, network, path, and secret-redaction safety policies.
-- Release checklist, install guide, and package metadata for public alpha preparation.
+- CLI, interactive terminal, and versioned NDJSON interfaces.
+- Repository context maps, ranking, symbols, dependencies, memory, and git awareness.
+- Durable execution phases, enforceable plans, bounded context compaction, and repeated-outcome blocking.
+- Verification detection, automatic checks, diagnostics, reviewer passes, resume, and safe revert.
+- OpenAI-compatible providers, profiles, presets, bounded retries, fallback, usage, and cost records.
+- Run history, redacted debug bundles, eval reports, collaboration helpers, deletion, and retention pruning.
+- Local, copied-workspace, Docker, and Podman execution modes.
 
 ### Security
 
-- Local credential files are refused by default.
-- Tool outputs are redacted before model/storage use.
-- Destructive shell commands are blocked by policy.
+- Workspace path validation and sensitive-file refusal.
+- Shell-free local argv execution with command classification and process-tree cleanup.
+- Secret redaction before model context and persistence.
+- Mutation evidence and rejection of unsupported completion claims.
+- Container image, digest, resource, pid, root-filesystem, environment, and network controls.
+
+### Quality
+
+- Cross-platform CI for supported Python versions.
+- Deterministic coding and safety evals, opt-in live evals, and bounded release smoke checks.
+- Consolidated implementation-backed documentation.

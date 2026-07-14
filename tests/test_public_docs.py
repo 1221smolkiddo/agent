@@ -10,58 +10,56 @@ def read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8").lower()
 
 
-def test_public_security_docs_exist() -> None:
+def test_only_canonical_public_docs_exist() -> None:
     for path in [
-        "SECURITY.md",
-        "docs/THREAT_MODEL.md",
-        "docs/DATA_HANDLING.md",
+        "README.md",
+        "docs/ARCHITECTURE.md",
+        "docs/INSTALL.md",
         "docs/KNOWN_LIMITATIONS.md",
     ]:
         assert (ROOT / path).exists(), path
 
 
-def test_security_policy_covers_core_cli_agent_risks() -> None:
-    content = read("SECURITY.md")
+def test_readme_covers_security_data_and_release_workflow() -> None:
+    content = read("README.md")
 
     for phrase in [
         "alpha",
         "workspace",
-        "shell commands",
-        "sensitive credential files",
-        "destructive commands",
-        "dry-run",
-        "sandbox",
-        "not a malware sandbox",
+        "permissions and safety",
+        "security reports",
+        "local and provider data",
+        "history prune",
+        "release-smoke",
     ]:
         assert phrase in content
 
 
-def test_threat_model_covers_public_alpha_boundaries() -> None:
-    content = read("docs/THREAT_MODEL.md")
+def test_architecture_covers_current_autonomy_and_trust_boundaries() -> None:
+    content = read("docs/ARCHITECTURE.md")
 
     for phrase in [
-        "prompt injection",
-        "secret exfiltration",
-        "repository files are untrusted",
-        "command output is untrusted",
-        "false success claims",
-        "residual risks",
-        "not an os jail",
+        "execution state",
+        "workspace generation",
+        "context engine",
+        "shell-free argv",
+        "trust boundaries",
+        "verification confidence",
+        "sqlite",
     ]:
         assert phrase in content
 
 
-def test_data_handling_discloses_provider_and_local_state() -> None:
-    content = read("docs/DATA_HANDLING.md")
+def test_install_covers_supported_setup_and_runtime_controls() -> None:
+    content = read("docs/INSTALL.md")
 
     for phrase in [
-        ".code-agent",
-        "agent.db",
-        "debug-bundles",
-        "eval-reports",
-        "model provider",
-        "web search",
-        "delete `.code-agent/`",
+        "python 3.11",
+        "uv sync",
+        "editable pip",
+        "pipx",
+        "agent_context_max_chars",
+        "sandbox health",
     ]:
         assert phrase in content
 
@@ -70,12 +68,11 @@ def test_known_limitations_are_honest_about_alpha_status() -> None:
     content = read("docs/KNOWN_LIMITATIONS.md")
 
     for phrase in [
-        "credible alpha",
-        "not a finished industry product",
-        "provider credits",
+        "capable alpha",
+        "model reliability",
         "not os-level isolation",
-        "network-deny mode",
-        "per-repo memory",
-        "editor integration",
+        "context budgeting",
+        "pattern matching cannot identify every secret",
+        "release gate",
     ]:
         assert phrase in content

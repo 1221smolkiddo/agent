@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report something broken
+about: Report incorrect or unsafe Agent47 behavior
 title: "[Bug]: "
 labels: bug
 assignees: ""
@@ -17,6 +17,10 @@ assignees: ""
 
 ## Environment
 
+- Agent47 commit/version:
 - OS:
 - Python:
-- uv:
+- Provider/model:
+- Dry-run, local, copied sandbox, or container mode:
+
+Do not include credentials, private source, or unredacted logs.

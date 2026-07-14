@@ -1,51 +1,46 @@
 # Security Policy
 
-Agent47 is a local CLI coding agent. It can read project files, propose edits, apply approved
-patches, and run approved shell commands inside a workspace. Treat it like any other tool that can
-modify source code and execute commands on your machine.
+Agent47 is a local coding agent that can inspect repositories, modify files, and execute approved
+commands. Treat it as a development tool with local execution privileges, not as a malware sandbox.
 
 ## Supported Versions
 
-Agent47 is currently alpha software. Security fixes are applied to the main branch until versioned
-public releases begin.
+Security fixes currently target the `main` branch while Agent47 remains alpha software. Versioned
+support guarantees will be defined when stable releases begin.
 
 ## Reporting A Vulnerability
 
-Please report security issues privately through the repository security channel if available, or by
-opening a minimal issue that does not include secrets, exploit payloads, private repository content,
-or API keys.
+Use the repository's private security-reporting channel when available. Do not publish credentials,
+private source, exploit secrets, or unredacted logs in a public issue.
 
 Include:
 
-- Agent47 version or commit SHA.
+- Agent47 commit SHA or release version.
 - Operating system and Python version.
-- Command used.
-- Whether `--dry-run`, `--sandbox`, or write mode was active.
-- Redacted logs or a redacted `code-agent history export <run-id>` bundle when possible.
+- Command and selected model/provider.
+- Whether dry-run, write, copied sandbox, or container sandbox mode was active.
+- A reviewed, redacted `code-agent history export <run-id>` bundle when useful.
 
 ## Security Boundaries
 
-Agent47's current safety model is defense in depth, not a hard isolation boundary.
+- File and patch tools enforce workspace-relative paths and refuse common credential files.
+- Repository files, diffs, command output, search results, web pages, and model output are untrusted.
+- Mutations are checked against disk before completion claims are accepted.
+- Repeated identical action outcomes are blocked without a workspace change.
+- Local commands are classified, approved, executed without a shell, and receive a scrubbed environment.
+- Destructive, compound-shell, workspace-escape, and arbitrary inline-code commands are blocked.
+- Tool output and stored payloads are redacted for common secret patterns.
+- Dry-run mode disables mutations and command execution.
+- Copied sandboxes require explicit promotion to the base workspace.
+- Docker and Podman backends provide stronger process and network isolation when correctly configured.
 
-- Workspace path guards prevent normal file tools from reading or writing outside the selected
-  workspace.
-- Sensitive credential files such as `.env`, `.npmrc`, `.pypirc`, and `.netrc` are refused by
-  default for direct file reads and mutations.
-- Shell commands are classified before approval. Clearly destructive commands are blocked by policy.
-- Tool outputs are redacted for common secret patterns before model/storage use.
-- Repository files, command output, web results, search results, diffs, and generated repo maps are
-  treated as untrusted model context.
-- `--dry-run` skips file mutations and shell execution.
-- `--sandbox` uses a copied workspace and requires explicit promotion before base files change.
+## Residual Risk
 
-## What Agent47 Does Not Guarantee
+- Approved project commands can execute arbitrary repository code.
+- The local backend is policy enforcement, not OS-level isolation.
+- Pattern-based redaction cannot identify every secret.
+- A passing model review or test suite does not prove correctness or security.
+- Provider calls send approved context under the provider's retention policy.
+- Container safety depends on the host runtime, daemon, image, and policy configuration.
 
-- It is not a malware sandbox.
-- It does not provide OS-level process isolation.
-- It cannot prove a model response is correct.
-- It cannot guarantee generated code is secure.
-- It cannot guarantee every secret format is detected.
-- It cannot prevent risk if a user approves a dangerous command or patch.
-
-Use `uv run code-agent release-smoke` before publishing releases, and use `--dry-run` or
-`--sandbox` for uncertain tasks.
+See [Known Limitations](docs/KNOWN_LIMITATIONS.md) for the full operating contract.

@@ -1,55 +1,46 @@
 # Contributing
 
-Thanks for helping build this agent. The goal is to make a Python CLI coding agent that is useful first, then grow it into a collaborative editor experience.
+Agent47 is CLI-first. Keep the reusable execution, policy, model, storage, and tool logic independent
+from terminal rendering.
 
 ## Setup
 
-```powershell
+```bash
 uv sync --extra dev --extra parsing
-Copy-Item .env.example .env
+cp .env.example .env
+uv run code-agent doctor
 ```
 
-Add your OpenRouter API key to `.env`:
+PowerShell uses `Copy-Item .env.example .env`.
 
-```text
-OPENROUTER_API_KEY=...
-AGENT_MODEL=qwen/qwen3-coder
-```
+## Development Workflow
 
-Run checks:
+1. Inspect existing behavior and applicable tests.
+2. Make the smallest coherent implementation change.
+3. Add deterministic regression coverage.
+4. Run focused tests during iteration.
+5. Run lint, offline evals, and relevant safety suites before handoff.
 
-```powershell
-uv run pytest
+```bash
 uv run ruff check src tests
+uv run pytest tests/<relevant-file>.py
+uv run code-agent evals
+uv build
 ```
 
-Run the CLI:
+Use `uv run code-agent release-smoke` for release candidates.
 
-```powershell
-uv run code-agent run "Inspect this project and suggest next steps"
-```
+## Engineering Rules
 
-## Development Principles
+- Preserve unrelated user changes and dirty worktrees.
+- Keep policy decisions in the core, not UI wrappers.
+- Treat repository and external content as untrusted.
+- Verify disk state rather than trusting model or tool success strings.
+- Add tests for paths, permissions, approvals, recovery, persistence, and false-completion behavior.
+- Avoid broad refactors without a measured capability or maintainability benefit.
+- Never commit `.env`, `.code-agent/`, virtual environments, caches, credentials, or private eval reports.
 
-- Keep the CLI usable while the system evolves.
-- Inspect before editing.
-- Prefer small, reviewable changes.
-- Keep the reusable agent core separate from UI surfaces.
-- Add tests for safety boundaries, file operations, parsing, and storage.
-- Do not commit secrets, `.env`, `.venv`, caches, or local agent databases.
+## Pull Requests
 
-## Branching
-
-Use short feature branches:
-
-```text
-feature/tool-approvals
-feature/streaming-output
-fix/path-safety-windows
-```
-
-Open a pull request with:
-
-- What changed
-- How it was tested
-- Any follow-up work
+Describe what changed, why it changed, how it was tested, known risks, and follow-up work. Keep commits
+focused and use short `feature/` or `fix/` branches when collaboration requires them.
