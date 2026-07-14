@@ -125,6 +125,21 @@ def test_settings_treats_blank_optional_cost_fields_as_none(tmp_path, monkeypatc
     assert settings.agent_output_cost_per_million is None
 
 
+def test_create_agent_applies_context_budget(tmp_path) -> None:
+    settings = Settings(
+        _env_file=None,
+        openrouter_api_key="test-key",
+        agent_model_preset=None,
+        agent_context_max_chars=24_000,
+        agent_reviewer_pass=False,
+        agent_db_path=tmp_path / "agent.db",
+    )
+
+    agent = create_agent(settings=settings, cwd=tmp_path, model=None, dry_run=True, max_steps=1)
+
+    assert agent.context_max_chars == 24_000
+
+
 def test_model_preset_resolves_provider_and_model() -> None:
     preset = resolve_model_preset("glm-5.2")
 

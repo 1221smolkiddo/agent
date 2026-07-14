@@ -148,6 +148,97 @@ def make_real_tool_agent(tmp_path: Path, model: FakeModel) -> CodingAgent:
     )
 
 
+def test_agent_blocks_repeated_tool_loop_and_requires_new_strategy(tmp_path: Path) -> None:
+    model = FakeModel(
+        [
+            '{"type":"read_file","path":"missing.py"}',
+            '{"type":"read_file","path":"missing.py"}',
+            '{"type":"read_file","path":"missing.py"}',
+            '{"type":"list_files","path":"."}',
+            '{"type":"final","message":"Could not find the requested file."}',
+        ]
+    )
+    tools = RecoveringTools(tmp_path)
+    agent = CodingAgent(
+        cwd=tmp_path,
+        dry_run=False,
+        max_steps=6,
+        max_failures=4,
+        model_client=model,
+        tools=tools,  # type: ignore[arg-type]
+        storage=AgentStorage(tmp_path / "agent.db"),
+    )
+
+    result = agent.run_detailed("inspect the missing project file")
+
+    assert result.message == "Could not find the requested file."
+    assert tools.calls == 3
+    assert any(item.get("type") == "action_loop" for item in result.failed_actions)
+    assert "Blocked repeated action loop" in model.messages_seen[3][-1]["content"]
+    assert result.execution_state["phase"] == "finalize"
+
+
+def test_agent_compacts_large_history_without_losing_task(tmp_path: Path) -> None:
+    class LargeOutputTools(RecoveringTools):
+        def run(self, action: AgentAction) -> ToolResult:
+            self.calls += 1
+            return ToolResult(ok=True, output=f"{action.type}:" + ("x" * 3500))
+
+    model = FakeModel(
+        [
+            *[
+                f'{{"type":"read_file","path":"file-{index}.py"}}'
+                for index in range(5)
+            ],
+            '{"type":"final","message":"Analysis complete."}',
+        ]
+    )
+    agent = CodingAgent(
+        cwd=tmp_path,
+        dry_run=False,
+        max_steps=6,
+        max_failures=3,
+        model_client=model,
+        tools=LargeOutputTools(tmp_path),  # type: ignore[arg-type]
+        storage=AgentStorage(tmp_path / "agent.db"),
+        context_max_chars=10_000,
+    )
+
+    result = agent.run_detailed("inspect this project without changing it")
+
+    assert result.message == "Analysis complete."
+    assert result.execution_state["compacted_messages"] > 0
+    compacted_context = "\n".join(
+        message["content"] for call in model.messages_seen for message in call
+    )
+    assert "inspect this project without changing it" in compacted_context
+    assert "Deterministic execution-history checkpoint" in compacted_context
+
+
+def test_agent_enforces_plan_completion_before_success_claim(tmp_path: Path) -> None:
+    model = FakeModel(
+        [
+            '{"type":"update_plan","steps":['
+            '{"step":"Update app","status":"in_progress"}],"checks":[]}',
+            '{"type":"write_file","path":"app.py","content":"value = 1\\n"}',
+            '{"type":"final","message":"Updated app.py."}',
+            '{"type":"update_plan","steps":['
+            '{"step":"Update app","status":"completed"}],"checks":[]}',
+            '{"type":"final","message":"Updated app.py."}',
+        ]
+    )
+    agent = make_agent(tmp_path, model, RecoveringTools())
+
+    result = agent.run_detailed("update this project app")
+
+    assert result.message == "Updated app.py."
+    assert any("unfinished steps" in str(item.get("output")) for item in result.failed_actions)
+    assert len(result.plan_updates) == 2
+    assert result.execution_state["plan_steps"] == [
+        {"step": "Update app", "status": "completed"}
+    ]
+
+
 def test_agent_uses_streaming_client_when_available(tmp_path: Path) -> None:
     model = StreamingFakeModel(
         [

@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     agent_model_retry_base_seconds: float = Field(default=0.5, ge=0, le=60)
     agent_model_retry_max_seconds: float = Field(default=4.0, ge=0, le=300)
     agent_max_failures: int = 3
+    agent_context_max_chars: int = Field(default=60_000, ge=8_000, le=1_000_000)
     agent_db_path: Path = Path(".code-agent/agent.db")
     agent_stream: bool = True
     agent_reviewer_pass: bool = True

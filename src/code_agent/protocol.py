@@ -273,6 +273,7 @@ def result_payload(result: AgentRunResult) -> dict[str, Any]:
         "review_records": result.review_records,
         "failed_actions": result.failed_actions,
         "denied_actions": result.denied_actions,
+        "execution_state": result.execution_state,
     }
 
 

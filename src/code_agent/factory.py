@@ -134,6 +134,7 @@ def create_agent(
         reporter=reporter,
         stream_model=settings.agent_stream if stream_model is None else stream_model,
         reviewer_client=resolved_reviewer,
+        context_max_chars=settings.agent_context_max_chars,
     )
 
 

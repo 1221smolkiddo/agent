@@ -90,6 +90,8 @@ def _summarize_payload(payload: dict[str, Any]) -> str:
             f"{payload.get('purpose', '<unknown>')} `{payload.get('command', '<unknown>')}` "
             f"{payload.get('status', 'unknown')}"
         )
+    if payload_type == "execution_state":
+        return _summarize_execution_state(payload)
     if payload_type == "final":
         return f"final: {payload.get('message', '')}"
     if payload_type:
@@ -168,6 +170,28 @@ def _summarize_tool_result(payload: dict[str, Any]) -> str:
     output = payload.get("output", "")
     if output:
         parts.append("output=" + _single_line(str(output), max_chars=600))
+    return "; ".join(parts)
+
+
+def _summarize_execution_state(payload: dict[str, Any]) -> str:
+    plan_steps = payload.get("plan_steps", [])
+    pending = [
+        str(item.get("step"))
+        for item in plan_steps
+        if isinstance(item, dict) and item.get("status") != "completed"
+    ]
+    parts = [
+        f"execution phase={payload.get('phase', 'unknown')}",
+        f"step={payload.get('step', 0)}/{payload.get('max_steps', 0)}",
+        f"generation={payload.get('workspace_generation', 0)}",
+    ]
+    if pending:
+        parts.append("remaining=" + ", ".join(pending))
+    if criteria := payload.get("acceptance_criteria"):
+        parts.append("criteria=" + ", ".join(str(item) for item in criteria))
+    if failures := payload.get("failed_hypotheses"):
+        parts.append("failed_hypotheses=" + " | ".join(str(item) for item in failures[-3:]))
+    parts.append(f"verification_confidence={payload.get('verification_confidence', 'none')}")
     return "; ".join(parts)
 
 

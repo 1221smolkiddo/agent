@@ -264,6 +264,7 @@ def _make_agent_with_reviewer(workspace: Path, reviewer_client=None):
     from code_agent.tools import ToolRegistry
 
     storage = AgentStorage(workspace / ".code-agent" / "test.db")
+    storage.create_run(task="review fixture", model="primary", cwd=workspace)
     return CodingAgent(
         cwd=workspace,
         dry_run=False,

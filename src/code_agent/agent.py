@@ -10,6 +10,7 @@ from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 
+from .execution_state import ExecutionState, compact_message_history
 from .models import ChatMessage, ModelClient
 from .patches import git_style_unified_diff
 from .prompts import system_prompt
@@ -52,6 +53,7 @@ class AgentRunResult:
     review_records: list[dict[str, Any]] = field(default_factory=list)
     failed_actions: list[dict[str, Any]] = field(default_factory=list)
     denied_actions: list[dict[str, Any]] = field(default_factory=list)
+    execution_state: dict[str, Any] = field(default_factory=dict)
     blocked: bool = False
 
 
@@ -68,6 +70,7 @@ class CodingAgent:
         reporter: StatusReporter | None = None,
         stream_model: bool = True,
         reviewer_client: ModelClient | None = None,
+        context_max_chars: int = 60_000,
     ) -> None:
         self.cwd = cwd
         self.dry_run = dry_run
@@ -79,6 +82,8 @@ class CodingAgent:
         self.reporter = reporter
         self.stream_model = stream_model
         self.reviewer_client = reviewer_client
+        self.context_max_chars = context_max_chars
+        self._active_execution_state: ExecutionState | None = None
 
     def run(self, task: str) -> str:
         return self.run_detailed(task).message
@@ -95,6 +100,8 @@ class CodingAgent:
     def run_detailed(self, task: str) -> AgentRunResult:
         clean_task = self._extract_user_task(task)
         run_id = self.storage.create_run(task=clean_task, model=self.model_client.model, cwd=self.cwd)
+        execution_state = ExecutionState(task=clean_task, max_steps=self.max_steps)
+        self._active_execution_state = execution_state
         workspace_task = self._is_workspace_task(task)
         consecutive_failures = 0
         previous_tool_failed = False
@@ -128,6 +135,15 @@ class CodingAgent:
             )
 
         for step in range(1, self.max_steps + 1):
+            execution_state.begin_step(step)
+            messages, compacted_count = compact_message_history(
+                messages,
+                max_chars=self.context_max_chars,
+            )
+            execution_state.record_context(
+                chars=sum(len(message.get("content", "")) for message in messages),
+                compacted_messages=compacted_count,
+            )
             self._report_thinking(step)
             try:
                 response = self._complete_model(run_id, messages, step, model_usage_records)
@@ -240,9 +256,11 @@ class CodingAgent:
 
             if isinstance(action, UpdatePlanAction):
                 self._report_action(action)
+                execution_state.update_plan(action)
                 plan_payload = self._plan_payload(step, action)
                 plan_updates.append(plan_payload)
                 self.storage.add_step(run_id, "tool", plan_payload)
+                self.storage.add_step(run_id, "tool", execution_state.snapshot())
                 consecutive_failures = 0
                 previous_tool_failed = False
                 previous_failure_allows_final = False
@@ -252,12 +270,16 @@ class CodingAgent:
                 continue
 
             if isinstance(action, FinalAction):
+                execution_blocker = execution_state.finalization_blocker(
+                    claims_success=self._final_claims_mutation_success(action.message),
+                    verification_results=verification_results,
+                )
                 final_claim_rejection = self._final_claim_rejection(action.message, mutation_records)
                 verification_claim_rejection = self._final_verification_claim_rejection(
                     action.message,
                     verification_results,
                 )
-                if final_claim_rejection or (
+                if execution_blocker or final_claim_rejection or (
                     verification_claim_rejection
                     or
                     blocked_mutation_failure and self._final_claims_mutation_success(action.message)
@@ -267,6 +289,7 @@ class CodingAgent:
                         step=step,
                         kind="false_completion",
                         output=final_claim_rejection
+                        or execution_blocker
                         or verification_claim_rejection
                         or (
                             "A file write/edit/patch was blocked, but the final answer claimed the change was completed. "
@@ -379,6 +402,47 @@ class CodingAgent:
                     )
                 )
 
+            loop_detail = execution_state.repeated_action_detail(action)
+            if loop_detail is not None:
+                consecutive_failures += 1
+                execution_state.recover(loop_detail)
+                payload = self._failure_payload(
+                    step=step,
+                    kind="action_loop",
+                    output=loop_detail,
+                    consecutive_failures=consecutive_failures,
+                )
+                payload["execution_state"] = execution_state.snapshot()
+                self.storage.add_step(run_id, "tool", payload)
+                failed_actions.append(payload)
+                self._report_recovery("repeated action loop blocked; requiring a different strategy")
+                if consecutive_failures >= self.max_failures:
+                    return self._finalize_run(
+                        AgentRunResult(
+                            message=self._failure_summary(consecutive_failures, loop_detail),
+                            run_id=run_id,
+                            task=task,
+                            clean_task=clean_task,
+                            changed_paths=self._successful_mutation_paths(mutation_records),
+                            mutation_records=mutation_records,
+                            command_records=command_records,
+                            verification_results=verification_results,
+                            context_records=context_records,
+                            model_usage_records=model_usage_records,
+                            plan_updates=plan_updates,
+                            review_records=review_records,
+                            failed_actions=failed_actions,
+                            denied_actions=denied_actions,
+                            blocked=True,
+                        )
+                    )
+                messages.append({"role": "assistant", "content": action.model_dump_json()})
+                messages.append({"role": "user", "content": json.dumps(payload)})
+                previous_tool_failed = True
+                previous_failure_allows_final = False
+                continue
+
+            execution_state.begin_action(action)
             before_mutation = self._mutation_state_for_action(action)
             # File operation preview before execution
             if action.type in {"write_file", "edit_file", "apply_patch", "delete_file"} and self.reporter:
@@ -403,6 +467,7 @@ class CodingAgent:
                 context_records.append(context_record)
             if verification_result:
                 verification_results.append(verification_result)
+                execution_state.record_verification([verification_result])
             if result.ok:
                 consecutive_failures = 0
                 previous_tool_failed = False
@@ -427,7 +492,7 @@ class CodingAgent:
                 "ok": result.ok,
                 "output": result.output,
                 "elapsed_ms": tool_elapsed_ms,
-                "recovery_instruction": self._recovery_instruction(result)
+                "recovery_instruction": self._recovery_instruction(action, result)
                 if not result.ok
                 else "Continue with the task.",
                 "consecutive_failures": consecutive_failures,
@@ -445,6 +510,7 @@ class CodingAgent:
                     changed_paths=changed_paths,
                 )
                 if automatic_results:
+                    execution_state.record_verification(automatic_results)
                     verification_results.extend(automatic_results)
                     tool_payload["automatic_verification_results"] = automatic_results
                     if any(not item["ok"] for item in automatic_results):
@@ -470,6 +536,8 @@ class CodingAgent:
                 tool_payload["verification_result"] = verification_result
             if new_mutation_records:
                 tool_payload["mutation_records"] = new_mutation_records
+            execution_state.record_action(action, result, changed_paths)
+            tool_payload["execution_state"] = execution_state.snapshot()
             self.storage.add_step(run_id, "tool", tool_payload)
             if consecutive_failures >= self.max_failures:
                 return self._finalize_run(
@@ -526,6 +594,9 @@ class CodingAgent:
         )
 
     def _finalize_run(self, result: AgentRunResult) -> AgentRunResult:
+        if self._active_execution_state is not None:
+            self._active_execution_state.finalize()
+            result.execution_state = self._active_execution_state.snapshot()
         self._report_done()
         if should_show_work_report(result):
             payload = build_work_report_payload(result)
@@ -722,7 +793,7 @@ class CodingAgent:
         return records
 
     @staticmethod
-    def _recovery_instruction(result: ToolResult) -> str:
+    def _recovery_instruction(action: AgentAction, result: ToolResult) -> str:
         if "Permission denied" in result.output:
             return (
                 "The user denied permission. Respect the denial, choose a read-only alternative, "
@@ -738,6 +809,39 @@ class CodingAgent:
                 "The web search did not find results. Revise the query once with clearer terms, "
                 "or answer from stable general knowledge if the question does not require current information. "
                 "Do not inspect workspace files for a non-workspace question."
+            )
+        lowered = result.output.lower()
+        if action.type == "read_file" and any(
+            phrase in lowered for phrase in ["does not exist", "missing file", "no such file"]
+        ):
+            return (
+                "The requested path is stale or incorrect. List the nearest directory or search for the "
+                "filename/symbol, then read the discovered path. Do not retry the same read unchanged."
+            )
+        if action.type == "edit_file" and any(
+            phrase in lowered for phrase in ["find text was not found", "missing exact text"]
+        ):
+            return (
+                "The edit was based on stale content. Re-read the file, construct a new exact edit or patch "
+                "from current content, and preserve unrelated user changes."
+            )
+        if action.type == "apply_patch":
+            return (
+                "The patch did not apply cleanly. Read the affected files and current git diff, then create "
+                "a fresh minimal patch against the observed content instead of retrying the same patch."
+            )
+        if action.type == "search" and any(
+            phrase in lowered for phrase in ["no matches", "no results"]
+        ):
+            return (
+                "Broaden the query using a filename, symbol fragment, or related concept, or inspect the repo "
+                "map. Do not repeat the identical search."
+            )
+        if action.type == "run_shell":
+            return (
+                "Treat the command output as evidence. Diagnose the first actionable failure, inspect the "
+                "relevant source and tests, change the implementation, then rerun the narrowest useful check. "
+                "Do not rerun the unchanged failing command without a new hypothesis or code change."
             )
         return (
             "The tool failed. Diagnose the failure from the output, inspect more context if needed, "
