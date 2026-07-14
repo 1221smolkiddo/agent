@@ -96,6 +96,24 @@ Local commands pass through:
 Python verification commands are pinned to the active interpreter so Windows executable lookup cannot
 escape the managed environment.
 
+### Language Intelligence
+
+`lsp.py` is a native Language Server Protocol client and manager. It discovers installed servers by source
+extension, starts them on demand with shell-free stdio JSON-RPC, synchronizes documents, and closes all
+started servers during cancellation or run finalization. A crashed server is restarted once and the active
+document is reopened before the interrupted request is retried.
+
+The built-in registry supports Python, TypeScript/JavaScript, Rust, Go, Java, and C/C++ servers. Semantic
+tools expose definition, references, hover, completion, workspace symbols, and push or pull diagnostics.
+Rename, formatting, and code-action edits are converted from UTF-16 LSP ranges into workspace-validated
+unified patches. They do not write directly; the model must submit the patch through the normal transactional
+`apply_patch` permission, mutation, revert, and verification path. Resource operations such as server-requested
+file creation, rename, or deletion are reported as unsupported rather than executed implicitly.
+
+Language servers are local developer tools and may execute project-aware logic. Therefore `ToolRegistry`
+disables host LSP startup whenever sandbox policy requires process isolation. This is fail-closed: strict
+container sandbox runs do not silently launch an unisolated host language server.
+
 Container execution supports Docker and Podman with offline networking by default, read-only root filesystems,
 resource and pid limits, dropped capabilities, isolated environment variables, and image policy validation.
 Commands are parsed into argv and passed directly to the container image without an inner shell.
@@ -196,6 +214,7 @@ a cross-platform Python matrix and a live Docker security job.
 | Tools and safety | `tools.py`, `permissions.py`, `safety.py`, `processes.py` |
 | Sandboxes | `sandbox.py`, `sandbox_security.py` |
 | Repository context | `repo_index.py`, `parsing.py`, `memory.py` |
+| Language intelligence | `lsp.py`, `schema.py`, `tools.py` |
 | Verification and review | `verification.py`, `verification_diagnostics.py`, `reviewer.py` |
 | Models | `models.py`, `model_registry.py`, `model_profiles.py`, `model_presets.py` |
 | Persistence and recovery | `storage.py`, `session.py`, `resume.py`, `revert.py`, `work_report.py` |

@@ -132,6 +132,78 @@ class SymbolIndexAction(BaseModel):
     max_symbols: int = Field(default=120, ge=10, le=500)
 
 
+class LspStatusAction(BaseModel):
+    type: Literal["lsp_status"]
+    path: Optional[str] = None
+
+
+class LspDefinitionAction(BaseModel):
+    type: Literal["lsp_definition"]
+    path: str
+    line: int = Field(ge=1)
+    column: int = Field(ge=1)
+
+
+class LspReferencesAction(BaseModel):
+    type: Literal["lsp_references"]
+    path: str
+    line: int = Field(ge=1)
+    column: int = Field(ge=1)
+    include_declaration: bool = True
+
+
+class LspHoverAction(BaseModel):
+    type: Literal["lsp_hover"]
+    path: str
+    line: int = Field(ge=1)
+    column: int = Field(ge=1)
+
+
+class LspRenameAction(BaseModel):
+    type: Literal["lsp_rename"]
+    path: str
+    line: int = Field(ge=1)
+    column: int = Field(ge=1)
+    new_name: str = Field(min_length=1, max_length=300)
+
+
+class LspWorkspaceSymbolsAction(BaseModel):
+    type: Literal["lsp_workspace_symbols"]
+    query: str = Field(max_length=500)
+    max_results: int = Field(default=100, ge=1, le=500)
+
+
+class LspCompletionAction(BaseModel):
+    type: Literal["lsp_completion"]
+    path: str
+    line: int = Field(ge=1)
+    column: int = Field(ge=1)
+    max_results: int = Field(default=50, ge=1, le=200)
+
+
+class LspDiagnosticsAction(BaseModel):
+    type: Literal["lsp_diagnostics"]
+    path: str
+    wait_seconds: float = Field(default=1.0, ge=0, le=10)
+
+
+class LspFormattingAction(BaseModel):
+    type: Literal["lsp_formatting"]
+    path: str
+    tab_size: int = Field(default=4, ge=1, le=16)
+    insert_spaces: bool = True
+
+
+class LspCodeActionsAction(BaseModel):
+    type: Literal["lsp_code_actions"]
+    path: str
+    start_line: int = Field(ge=1)
+    start_column: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+    end_column: int = Field(ge=1)
+    only: list[str] = Field(default_factory=list, max_length=20)
+
+
 class DependencyGraphAction(BaseModel):
     type: Literal["dependency_graph"]
     max_files: int = Field(default=60, ge=5, le=200)
@@ -183,6 +255,16 @@ AgentAction = Union[
     RepoMapAction,
     RankContextAction,
     SymbolIndexAction,
+    LspStatusAction,
+    LspDefinitionAction,
+    LspReferencesAction,
+    LspHoverAction,
+    LspRenameAction,
+    LspWorkspaceSymbolsAction,
+    LspCompletionAction,
+    LspDiagnosticsAction,
+    LspFormattingAction,
+    LspCodeActionsAction,
     DependencyGraphAction,
     ReadMemoryAction,
     UpdateMemoryAction,

@@ -57,6 +57,16 @@ hard security sandbox. These limitations are part of the operating contract.
 ## Repository Understanding
 
 - Symbol and dependency extraction is strongest for supported syntax and may be incomplete without optional tree-sitter parsing.
+- LSP features require separately installed language-server executables and inherit each server's indexing,
+  configuration, startup-time, and protocol limitations.
+- Host language servers are intentionally unavailable in strict `--sandbox` mode. Container-backed persistent
+  LSP transport is not implemented, so semantic tools fail closed instead of escaping process isolation.
+- Workspace symbol search aggregates relevant installed servers, but very large polyglot monorepos can make
+  server startup and indexing expensive.
+- Code actions that contain edits are previewed as patches. Server commands and resource operations such as
+  create, rename, or delete are reported but are not executed automatically.
+- Diagnostics are consumed from LSP push notifications or pull requests when the diagnostics tool runs; the
+  terminal does not yet maintain a continuously rendered diagnostics panel between agent actions.
 - Dynamic imports, generated code, macros, reflection, build-time code generation, and monorepo tooling can evade static indexing.
 - Repository ranking is heuristic and may miss relevant files in very large or unconventional projects.
 - Git-aware workflows assume a valid local Git repository and do not replace remote branch protection or code review.

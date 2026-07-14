@@ -14,6 +14,8 @@ changes and approved commands still require human review. Read
 - CLI, interactive terminal, and versioned NDJSON interfaces.
 - Workspace-aware file reads, exact edits, writes, deletes, unified patches, search, and code summaries.
 - Repository maps, ranked context, symbol indexes, dependency graphs, project memory, and git-diff awareness.
+- Native JSON-RPC language-server clients with definition, references, hover, completion, workspace symbols,
+  diagnostics, rename previews, formatting previews, code actions, crash restart, and deterministic cleanup.
 - Durable execution phases, enforceable plans, acceptance checks, failed-hypothesis tracking, and resume state.
 - Outcome-aware loop prevention tied to workspace generations.
 - Bounded context compaction that preserves the original task and recent evidence.
@@ -197,9 +199,11 @@ Core controls include:
 - Untrusted-context markers for repository content, diffs, command output, search results, and web results.
 - Private HOME, temporary, and cache directories for local commands.
 - Disk, process, CPU, memory, timeout, image, digest, and network controls for configured sandboxes.
+- Language-server edits are converted to unified patches and never bypass normal patch approval and verification.
 
 Ordinary runs use the hardened local subprocess policy. `--sandbox` is a strict security mode: it
 selects a healthy Docker or Podman backend and refuses to start if process isolation cannot be proven.
+Host language servers are disabled in strict sandbox runs until a container-backed LSP transport is available.
 
 ### Security Reports
 

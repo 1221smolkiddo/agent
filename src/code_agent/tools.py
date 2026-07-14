@@ -4,6 +4,7 @@ import base64
 import difflib
 import html.parser
 import inspect
+import json
 import os
 import re
 import shutil
@@ -21,6 +22,7 @@ from .memory import (
     read_project_memory,
     write_memory_plan,
 )
+from .lsp import LspError, LspManager, WorkspaceEditPreview
 from .processes import CancellationToken, ProcessSupervisor, terminate_process_tree
 from .schema import (
     AgentAction,
@@ -31,6 +33,16 @@ from .schema import (
     EditFileAction,
     InspectGitDiffAction,
     ListFilesAction,
+    LspCodeActionsAction,
+    LspCompletionAction,
+    LspDefinitionAction,
+    LspDiagnosticsAction,
+    LspFormattingAction,
+    LspHoverAction,
+    LspReferencesAction,
+    LspRenameAction,
+    LspStatusAction,
+    LspWorkspaceSymbolsAction,
     RankContextAction,
     ReadMemoryAction,
     ReadFileAction,
@@ -118,6 +130,7 @@ class ToolRegistry:
         cancellation_token: CancellationToken | None = None,
         process_supervisor: ProcessSupervisor | None = None,
         sandbox_policy: SandboxPolicy | None = None,
+        lsp_manager: LspManager | None = None,
     ) -> None:
         self.workspace = workspace.resolve()
         self.dry_run = dry_run
@@ -127,6 +140,16 @@ class ToolRegistry:
         self.cancellation_token = cancellation_token or CancellationToken()
         self.process_supervisor = process_supervisor or ProcessSupervisor()
         self.sandbox_policy = sandbox_policy or SandboxPolicy.from_workspace(self.workspace)
+        self.lsp_manager = lsp_manager or LspManager(
+            self.workspace,
+            enabled=not self.sandbox_policy.process_isolation_required,
+            disabled_reason=(
+                "Host language-server processes are refused because this sandbox requires "
+                "process isolation. Use a non-isolated profile or a future container-backed LSP."
+                if self.sandbox_policy.process_isolation_required
+                else ""
+            ),
+        )
         self.audit_log = SandboxAuditLog(
             self.workspace,
             enabled=self.sandbox_policy.audit_enabled,
@@ -142,7 +165,10 @@ class ToolRegistry:
 
     def cancel_running_processes(self, reason: str = "cancelled") -> int:
         self.cancellation_token.cancel(reason)
-        return self.process_supervisor.cancel_all(reason)
+        return self.process_supervisor.cancel_all(reason) + self.lsp_manager.close()
+
+    def close(self) -> int:
+        return self.lsp_manager.close()
 
     def reset_cancellation(self) -> None:
         self.cancellation_token.reset()
@@ -180,6 +206,82 @@ class ToolRegistry:
             return self._rank_context(action.task, action.max_results)
         if isinstance(action, SymbolIndexAction):
             return self._symbol_index(action.max_files, action.max_symbols)
+        if isinstance(action, LspStatusAction):
+            return self._lsp_status(action.path)
+        if isinstance(action, LspDefinitionAction):
+            return self._run_lsp(
+                "lsp_definition",
+                action.path,
+                lambda path: self.lsp_manager.definition(path, action.line, action.column),
+            )
+        if isinstance(action, LspReferencesAction):
+            return self._run_lsp(
+                "lsp_references",
+                action.path,
+                lambda path: self.lsp_manager.references(
+                    path,
+                    action.line,
+                    action.column,
+                    include_declaration=action.include_declaration,
+                ),
+            )
+        if isinstance(action, LspHoverAction):
+            return self._run_lsp(
+                "lsp_hover",
+                action.path,
+                lambda path: self.lsp_manager.hover(path, action.line, action.column),
+            )
+        if isinstance(action, LspRenameAction):
+            return self._run_lsp(
+                "lsp_rename",
+                action.path,
+                lambda path: self.lsp_manager.rename(
+                    path, action.line, action.column, action.new_name
+                ),
+            )
+        if isinstance(action, LspWorkspaceSymbolsAction):
+            return self._run_lsp(
+                "lsp_workspace_symbols",
+                None,
+                lambda _path: self.lsp_manager.workspace_symbols(
+                    action.query, max_results=action.max_results
+                ),
+            )
+        if isinstance(action, LspCompletionAction):
+            return self._run_lsp(
+                "lsp_completion",
+                action.path,
+                lambda path: self.lsp_manager.completion(
+                    path, action.line, action.column, max_results=action.max_results
+                ),
+            )
+        if isinstance(action, LspDiagnosticsAction):
+            return self._run_lsp(
+                "lsp_diagnostics",
+                action.path,
+                lambda path: self.lsp_manager.diagnostics(path, wait=action.wait_seconds),
+            )
+        if isinstance(action, LspFormattingAction):
+            return self._run_lsp(
+                "lsp_formatting",
+                action.path,
+                lambda path: self.lsp_manager.formatting(
+                    path, tab_size=action.tab_size, insert_spaces=action.insert_spaces
+                ),
+            )
+        if isinstance(action, LspCodeActionsAction):
+            return self._run_lsp(
+                "lsp_code_actions",
+                action.path,
+                lambda path: self.lsp_manager.code_actions(
+                    path,
+                    action.start_line,
+                    action.start_column,
+                    action.end_line,
+                    action.end_column,
+                    only=tuple(action.only),
+                ),
+            )
         if isinstance(action, DependencyGraphAction):
             return self._dependency_graph(action.max_files, action.max_edges)
         if isinstance(action, ReadMemoryAction):
@@ -577,6 +679,62 @@ class ToolRegistry:
                 max_symbols=max_symbols,
                 cache=self.index_cache,
             ),
+        )
+
+    def _lsp_status(self, requested_path: str | None) -> ToolResult:
+        if not self._approve("lsp_status", requested_path or "."):
+            return ToolResult(ok=False, output="Permission denied for lsp_status.")
+        path = self.resolve_inside_workspace(requested_path) if requested_path else None
+        try:
+            status = self.lsp_manager.status(path)
+        except (LspError, OSError, ValueError) as exc:
+            return ToolResult(ok=False, output=f"LSP status failed: {exc}")
+        return ToolResult(ok=True, output=json.dumps(status, indent=2, ensure_ascii=False))
+
+    def _run_lsp(
+        self,
+        action: str,
+        requested_path: str | None,
+        operation: Callable[[Path | None], Any],
+    ) -> ToolResult:
+        detail = requested_path or "workspace"
+        if not self._approve(action, detail):
+            return ToolResult(ok=False, output=f"Permission denied for {action}.")
+        path = self.resolve_inside_workspace(requested_path) if requested_path else None
+        try:
+            result = operation(path)
+        except (LspError, OSError, UnicodeError, ValueError) as exc:
+            return ToolResult(ok=False, output=f"{action} failed: {exc}")
+        if isinstance(result, WorkspaceEditPreview):
+            metadata = {
+                "paths": list(result.paths),
+                "unsupported_operations": list(result.unsupported_operations),
+                "patch": result.patch,
+            }
+            if not result.patch:
+                return ToolResult(
+                    ok=False,
+                    output="The language server returned no applicable text edits.",
+                    metadata=metadata,
+                )
+            output = [
+                "Language-server edit preview; no files were changed.",
+                "Inspect this diff, then use apply_patch to apply it transactionally.",
+                "",
+                result.patch,
+            ]
+            if result.unsupported_operations:
+                output.extend(
+                    [
+                        "",
+                        "Unsupported resource operations: "
+                        + ", ".join(result.unsupported_operations),
+                    ]
+                )
+            return ToolResult(ok=True, output="\n".join(output), metadata=metadata)
+        return ToolResult(
+            ok=True,
+            output=json.dumps(result, indent=2, ensure_ascii=False, default=str),
         )
 
     def _dependency_graph(self, max_files: int, max_edges: int) -> ToolResult:

@@ -80,6 +80,25 @@ Install development extras only in contributor environments; normal CLI use does
 
 Tree-sitter parsing is optional. Install the `parsing` extra for richer symbol extraction across languages.
 
+## Optional Language Servers
+
+Agent47 discovers language servers from `PATH` and starts only the server needed for a semantic action.
+Install the servers for the languages you use:
+
+| Language | Discovered executable |
+| --- | --- |
+| Python | `basedpyright-langserver`, `pyright-langserver`, or `pylsp` |
+| TypeScript / JavaScript | `typescript-language-server` |
+| Rust | `rust-analyzer` |
+| Go | `gopls` |
+| Java | `jdtls` |
+| C / C++ | `clangd` |
+
+The server executable must be available in the environment that launches Agent47. Missing servers degrade
+cleanly: `lsp_status` reports availability and semantic actions return an installation-oriented error.
+Language servers run as local subprocesses in ordinary mode. Strict `--sandbox` runs disable host LSP
+processes rather than weakening the container isolation boundary.
+
 ## Provider Configuration
 
 Agent47 supports these direct OpenAI-compatible providers:

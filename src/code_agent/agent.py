@@ -597,6 +597,9 @@ class CodingAgent:
         if self._active_execution_state is not None:
             self._active_execution_state.finalize()
             result.execution_state = self._active_execution_state.snapshot()
+        close_tools = getattr(self.tools, "close", None)
+        if callable(close_tools):
+            close_tools()
         self._report_done()
         if should_show_work_report(result):
             payload = build_work_report_payload(result)
@@ -1044,6 +1047,16 @@ class CodingAgent:
             "repo_map",
             "rank_context",
             "symbol_index",
+            "lsp_status",
+            "lsp_definition",
+            "lsp_references",
+            "lsp_hover",
+            "lsp_rename",
+            "lsp_workspace_symbols",
+            "lsp_completion",
+            "lsp_diagnostics",
+            "lsp_formatting",
+            "lsp_code_actions",
             "dependency_graph",
             "read_memory",
             "update_memory",
@@ -1304,6 +1317,16 @@ class CodingAgent:
             "repo_map",
             "rank_context",
             "symbol_index",
+            "lsp_status",
+            "lsp_definition",
+            "lsp_references",
+            "lsp_hover",
+            "lsp_rename",
+            "lsp_workspace_symbols",
+            "lsp_completion",
+            "lsp_diagnostics",
+            "lsp_formatting",
+            "lsp_code_actions",
             "dependency_graph",
             "read_memory",
         }:
@@ -1329,6 +1352,16 @@ class CodingAgent:
             "repo_map",
             "rank_context",
             "symbol_index",
+            "lsp_status",
+            "lsp_definition",
+            "lsp_references",
+            "lsp_hover",
+            "lsp_rename",
+            "lsp_workspace_symbols",
+            "lsp_completion",
+            "lsp_diagnostics",
+            "lsp_formatting",
+            "lsp_code_actions",
             "dependency_graph",
             "read_memory",
             "web_search",

@@ -33,6 +33,11 @@ Operating protocol:
   architecture notes, commands, pitfalls, glossary terms, and successful patterns.
 - Use rank_context with the user's task to choose relevant files before reading several files.
 - Use symbol_index when you need to locate functions, classes, or exported declarations before reading or patching implementation files.
+- Use lsp_status when language-server availability is unknown.
+- Prefer lsp_definition, lsp_references, and lsp_hover over text search when resolving symbol meaning.
+- Use lsp_workspace_symbols for semantic project-wide symbol search and lsp_completion for context-aware candidates.
+- Use lsp_diagnostics after relevant edits when a language server is available.
+- lsp_rename, lsp_formatting, and lsp_code_actions return reviewable patches without changing files. Inspect their output, then use apply_patch to apply selected edits.
 - Use dependency_graph when import relationships would clarify blast radius, test impact, or where a change should be made.
 - Before editing, use inspect_git_diff to understand existing user changes and avoid overwriting them.
 - Inspect the relevant files before changing them.
@@ -99,6 +104,16 @@ Action schema:
 {{ "type": "repo_map", "max_files": 80 }}
 {{ "type": "rank_context", "task": "user task or focused subtask", "max_results": 12 }}
 {{ "type": "symbol_index", "max_files": 40, "max_symbols": 120 }}
+{{ "type": "lsp_status", "path": "optional/source.py" }}
+{{ "type": "lsp_definition", "path": "src/app.py", "line": 10, "column": 5 }}
+{{ "type": "lsp_references", "path": "src/app.py", "line": 10, "column": 5, "include_declaration": true }}
+{{ "type": "lsp_hover", "path": "src/app.py", "line": 10, "column": 5 }}
+{{ "type": "lsp_rename", "path": "src/app.py", "line": 10, "column": 5, "new_name": "better_name" }}
+{{ "type": "lsp_workspace_symbols", "query": "Client", "max_results": 100 }}
+{{ "type": "lsp_completion", "path": "src/app.py", "line": 10, "column": 5, "max_results": 50 }}
+{{ "type": "lsp_diagnostics", "path": "src/app.py", "wait_seconds": 1.0 }}
+{{ "type": "lsp_formatting", "path": "src/app.py", "tab_size": 4, "insert_spaces": true }}
+{{ "type": "lsp_code_actions", "path": "src/app.py", "start_line": 10, "start_column": 1, "end_line": 10, "end_column": 20, "only": ["quickfix"] }}
 {{ "type": "dependency_graph", "max_files": 60, "max_edges": 160 }}
 {{ "type": "read_memory", "max_chars": 12000 }}
 {{ "type": "update_memory", "entries": [{{ "section": "project_conventions", "content": "Use Ruff for linting." }}, {{ "section": "user_preferences", "content": "Prefer dependency injection over module-level singletons." }}] }}

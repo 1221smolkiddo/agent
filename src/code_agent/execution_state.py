@@ -278,12 +278,26 @@ def _phase_for_action(action: AgentAction) -> ExecutionPhase:
         "repo_map",
         "rank_context",
         "symbol_index",
+        "lsp_status",
+        "lsp_definition",
+        "lsp_references",
+        "lsp_hover",
+        "lsp_rename",
+        "lsp_workspace_symbols",
+        "lsp_completion",
+        "lsp_formatting",
+        "lsp_code_actions",
         "dependency_graph",
         "read_memory",
         "web_search",
     }:
         return ExecutionPhase.DISCOVER
-    if action.type in {"detect_verification", "suggest_verification", "run_shell"}:
+    if action.type in {
+        "detect_verification",
+        "suggest_verification",
+        "lsp_diagnostics",
+        "run_shell",
+    }:
         return ExecutionPhase.VERIFY
     return ExecutionPhase.EXECUTE
 

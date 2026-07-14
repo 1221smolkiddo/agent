@@ -16,6 +16,16 @@ from .schema import (
     EditFileAction,
     InspectGitDiffAction,
     ListFilesAction,
+    LspCodeActionsAction,
+    LspCompletionAction,
+    LspDefinitionAction,
+    LspDiagnosticsAction,
+    LspFormattingAction,
+    LspHoverAction,
+    LspReferencesAction,
+    LspRenameAction,
+    LspStatusAction,
+    LspWorkspaceSymbolsAction,
     RankContextAction,
     ReadFileAction,
     RepoMapAction,
@@ -202,7 +212,30 @@ def _semantic_stage(action: AgentAction) -> tuple[str, str]:
         if any(w in action.command.lower() for w in ["test", "pytest", "lint", "check"]):
             return "Running Verification", f"Ran {action.command}"
         return "Applying Fixes", f"Ran {action.command}"
-    if isinstance(action, (ReadFileAction, ListFilesAction, SummarizeCodeAction, RepoMapAction, RankContextAction, SymbolIndexAction, DependencyGraphAction, SearchAction, InspectGitDiffAction)):
+    if isinstance(
+        action,
+        (
+            ReadFileAction,
+            ListFilesAction,
+            SummarizeCodeAction,
+            RepoMapAction,
+            RankContextAction,
+            SymbolIndexAction,
+            DependencyGraphAction,
+            SearchAction,
+            InspectGitDiffAction,
+            LspStatusAction,
+            LspDefinitionAction,
+            LspReferencesAction,
+            LspHoverAction,
+            LspWorkspaceSymbolsAction,
+            LspCompletionAction,
+            LspDiagnosticsAction,
+            LspRenameAction,
+            LspFormattingAction,
+            LspCodeActionsAction,
+        ),
+    ):
         path = getattr(action, "path", "") or getattr(action, "query", "") or "project"
         return "Inspecting Project", f"Inspected {path}"
     if isinstance(action, WebSearchAction):
