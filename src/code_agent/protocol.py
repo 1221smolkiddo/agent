@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TextIO
 
 from .permissions import MANUAL_APPROVAL_ACTIONS
-from .schema import AgentAction
+from .schema import AgentAction, ToolResult
 from .status import _semantic_stage
 from .work_report import build_work_report_payload, should_show_work_report
 
@@ -77,6 +77,21 @@ class JsonProtocolReporter:
         # Only emit recovery events on 2nd+ consecutive retry
         if self._consecutive_retries >= 2:
             self.emitter.emit("recovery", label="RETRYING", detail=_friendly_retry_detail(detail))
+
+    def tool_result(
+        self,
+        action: AgentAction,
+        result: ToolResult,
+        elapsed_ms: float,
+    ) -> None:
+        self.emitter.emit(
+            "action_finished",
+            action_type=action.type,
+            ok=result.ok,
+            elapsed_ms=elapsed_ms,
+            output=result.output,
+            metadata=result.metadata,
+        )
 
     def done(self) -> None:
         # Suppress DONE — response itself implies completion

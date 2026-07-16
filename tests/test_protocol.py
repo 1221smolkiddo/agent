@@ -19,7 +19,7 @@ from code_agent.protocol import (
     protocol_event,
     result_payload,
 )
-from code_agent.schema import ReadFileAction
+from code_agent.schema import ReadFileAction, RunShellAction, ToolResult
 
 
 def parse_json_lines(output: str) -> list[dict[str, Any]]:
@@ -56,6 +56,31 @@ def test_json_protocol_reporter_emits_action_events() -> None:
     assert events[1]["action_type"] == "read_file"
     assert events[1]["label"] == "Inspecting Project"
     assert events[1]["action"] == {"type": "read_file", "path": "README.md"}
+
+
+def test_json_protocol_emits_machine_readable_command_diagnostics() -> None:
+    stream = StringIO()
+    reporter = JsonProtocolReporter(JsonEventEmitter(stream))
+    action = RunShellAction(type="run_shell", command="npm run build")
+    result = ToolResult(
+        ok=False,
+        output="build failed",
+        metadata={
+            "execution": {"exit_code": 1, "duration_ms": 12.0},
+            "diagnostics": {
+                "summary": "typescript reported a type error",
+                "diagnostics": [{"path": "src/app.ts", "line": 4, "column": 10}],
+            },
+        },
+    )
+
+    reporter.tool_result(action, result, 12.0)
+
+    event = parse_json_lines(stream.getvalue())[0]
+    assert event["event"] == "action_finished"
+    assert event["action_type"] == "run_shell"
+    assert event["metadata"]["execution"]["exit_code"] == 1
+    assert event["metadata"]["diagnostics"]["diagnostics"][0]["path"] == "src/app.ts"
 
 
 def test_json_approval_callback_fails_closed_by_default() -> None:

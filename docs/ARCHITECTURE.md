@@ -96,6 +96,31 @@ Local commands pass through:
 Python verification commands are pinned to the active interpreter so Windows executable lookup cannot
 escape the managed environment.
 
+### Command Diagnostics
+
+`processes.py` captures local command stdout and stderr independently while retaining a timestamped sequence
+of output events, exit code, duration, argv, cwd, safe-environment fingerprint, timeout, cancellation, signal,
+and cleanup state. Readers continuously drain both pipes to avoid subprocess deadlocks. Stream and event
+buffers are bounded in memory and explicitly mark truncation. Container execution propagates the same result
+contract through the sandbox boundary.
+
+`command_diagnostics.py` normalizes compiler, type-checker, test, linter, build, and runtime failures into a
+common schema containing tool, source stream, path, line, column, severity, category, rule, message, raw
+evidence, code snippet, fix availability, and primary-root-cause status. Parsers cover common GCC/Clang/MSVC,
+Rust, Go, Python, Java, TypeScript, .NET, Swift, Kotlin, pytest/unittest, Jest/Vitest/Mocha, JUnit, Cargo,
+Go test, xUnit/NUnit, Ruff/Flake8/Pylint, ESLint/Biome, Clippy, golangci-lint, Maven/Gradle, and related
+output shapes. Unknown tools degrade to generic location, process, and runtime parsing.
+
+Diagnostics from duplicate compiler, linter, test, and LSP sources are merged, prioritized, bounded, and
+assigned a stable signature. Automatic verification marks findings as changed-file, dependent-file, or
+related evidence. Prior signatures are queried from SQLite to identify recurring failures and regression
+candidates. Diagnostic metadata is secret-redacted before persistence.
+
+The terminal groups findings by file and tool, renders severity counts, clickable `file:line:column`
+locations, and bounded highlighted snippets. NDJSON clients receive the same machine-readable payload in
+the additive `action_finished` event. Work reports retain command duration, normalized diagnostics, and
+recurrence history.
+
 ### Language Intelligence
 
 `lsp.py` is a native Language Server Protocol client and manager. It discovers installed servers by source
@@ -211,7 +236,7 @@ a cross-platform Python matrix and a live Docker security job.
 | --- | --- |
 | Orchestration | `agent.py`, `execution_state.py`, `factory.py` |
 | Actions and prompts | `schema.py`, `prompts.py`, `protocol.py` |
-| Tools and safety | `tools.py`, `permissions.py`, `safety.py`, `processes.py` |
+| Tools and safety | `tools.py`, `permissions.py`, `safety.py`, `processes.py`, `command_diagnostics.py` |
 | Sandboxes | `sandbox.py`, `sandbox_security.py` |
 | Repository context | `repo_index.py`, `parsing.py`, `memory.py` |
 | Language intelligence | `lsp.py`, `schema.py`, `tools.py` |

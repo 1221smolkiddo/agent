@@ -21,7 +21,14 @@ hard security sandbox. These limitations are part of the operating contract.
 - Context budgeting is character-based rather than provider-tokenizer-based.
 - Deterministic compaction preserves task and recent evidence but may omit older details that later become relevant.
 - Acceptance checks use command equivalence heuristics and cannot infer every project-specific success criterion.
-- Failure diagnosis supports common pytest and Node output shapes; unfamiliar tools may receive generic recovery guidance.
+- Command diagnostics support broad common compiler, test, linter, build, and runtime output shapes, but
+  vendor wording and custom reporters can still fall back to generic diagnostics.
+- Output ordering is timestamped at the client pipe readers; operating-system and tool buffering can delay
+  when an individual partial line becomes observable.
+- Logs and normalized findings are deliberately bounded. Truncation is reported with original character
+  counts and hashes, but extremely verbose commands may require inspecting their native artifact files.
+- Recurring diagnostic signatures identify repeated evidence across stored runs. A recurrence is marked as a
+  regression candidate rather than proof that the same underlying defect returned.
 
 ## Sandboxing And Commands
 

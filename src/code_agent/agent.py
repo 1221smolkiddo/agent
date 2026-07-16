@@ -32,6 +32,7 @@ from .status import StatusReporter, analyze_workspace
 from .tools import ToolRegistry
 from .verification import select_verification_commands
 from .verification_diagnostics import diagnose_verification_failure
+from .command_diagnostics import annotate_incremental_scope, verification_payload_from_report
 from .work_report import build_work_report_payload, should_show_work_report
 
 ACTION_ADAPTER = TypeAdapter(AgentAction)
@@ -45,7 +46,7 @@ class AgentRunResult:
     clean_task: str = ""
     changed_paths: list[str] = field(default_factory=list)
     mutation_records: list[dict[str, Any]] = field(default_factory=list)
-    command_records: list[dict[str, str | bool]] = field(default_factory=list)
+    command_records: list[dict[str, Any]] = field(default_factory=list)
     verification_results: list[dict[str, Any]] = field(default_factory=list)
     context_records: list[dict[str, Any]] = field(default_factory=list)
     model_usage_records: list[dict[str, Any]] = field(default_factory=list)
@@ -108,7 +109,7 @@ class CodingAgent:
         previous_failure_allows_final = False
         blocked_mutation_failure = False
         verification_results: list[dict[str, Any]] = []
-        command_records: list[dict[str, str | bool]] = []
+        command_records: list[dict[str, Any]] = []
         context_records: list[dict[str, Any]] = []
         model_usage_records: list[dict[str, Any]] = []
         plan_updates: list[dict[str, Any]] = []
@@ -462,7 +463,20 @@ class CodingAgent:
             command_record = self._command_record_from_action(action, result)
             context_record = self._context_record_from_action(action, result)
             if command_record:
+                diagnostic_payload = command_record.get("diagnostics")
+                if isinstance(diagnostic_payload, dict):
+                    signature = str(diagnostic_payload.get("signature") or "")
+                    prior_count = self.storage.diagnostic_occurrence_count(
+                        signature,
+                        before_run_id=run_id,
+                    )
+                    diagnostic_payload["history"] = {
+                        "prior_occurrences": prior_count,
+                        "recurring": prior_count > 0,
+                        "regression_candidate": prior_count > 0,
+                    }
                 command_records.append(command_record)
+            self._report_tool_result(action, result, tool_elapsed_ms)
             if context_record:
                 context_records.append(context_record)
             if verification_result:
@@ -615,7 +629,7 @@ class CodingAgent:
         step: int,
         changed_paths: list[str],
         mutation_records: list[dict[str, Any]],
-        command_records: list[dict[str, str | bool]],
+        command_records: list[dict[str, Any]],
         verification_results: list[dict[str, Any]],
         model_usage_records: list[dict[str, Any]],
         review_records: list[dict[str, Any]],
@@ -1299,16 +1313,21 @@ class CodingAgent:
     @staticmethod
     def _command_record_from_action(
         action: AgentAction, result: ToolResult
-    ) -> dict[str, str | bool] | None:
+    ) -> dict[str, Any] | None:
         if action.type != "run_shell":
             return None
         command = getattr(action, "command", "")
-        return {
+        record: dict[str, Any] = {
             "command": command,
             "ok": result.ok,
             "status": "passed" if result.ok else "failed",
             "output": result.output,
         }
+        for key in ("execution", "logs", "diagnostics"):
+            value = result.metadata.get(key)
+            if value is not None:
+                record[key] = value
+        return record
 
     @staticmethod
     def _context_record_from_action(action: AgentAction, result: ToolResult) -> dict[str, Any] | None:
@@ -1410,6 +1429,9 @@ class CodingAgent:
                 "output": result.output,
                 "automatic": True,
             }
+            normalized = result.metadata.get("diagnostics")
+            if isinstance(normalized, dict):
+                annotate_incremental_scope(normalized, changed_paths)
             diagnostics = self._verification_diagnostics(command.command, result)
             if diagnostics:
                 item["diagnostics"] = diagnostics
@@ -1431,6 +1453,9 @@ class CodingAgent:
     def _verification_diagnostics(command: str, result: ToolResult) -> dict[str, object] | None:
         if result.ok:
             return None
+        normalized = result.metadata.get("diagnostics")
+        if isinstance(normalized, dict):
+            return verification_payload_from_report(normalized)
         return diagnose_verification_failure(command, result.output)
 
     @staticmethod
@@ -1557,6 +1582,18 @@ class CodingAgent:
     def _report_action(self, action: AgentAction) -> None:
         if self.reporter:
             self.reporter.action(action)
+
+    def _report_tool_result(
+        self,
+        action: AgentAction,
+        result: ToolResult,
+        elapsed_ms: float,
+    ) -> None:
+        if not self.reporter:
+            return
+        callback = getattr(self.reporter, "tool_result", None)
+        if callable(callback):
+            callback(action, result, elapsed_ms)
 
     def _report_recovery(self, detail: str) -> None:
         if self.reporter:

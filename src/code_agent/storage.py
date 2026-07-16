@@ -176,6 +176,35 @@ class AgentStorage:
             )
         return payloads
 
+    def diagnostic_occurrence_count(
+        self,
+        signature: str,
+        *,
+        before_run_id: int,
+        limit: int = 100,
+    ) -> int:
+        if not signature:
+            return 0
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                select payload
+                from steps
+                where run_id < ? and payload like ?
+                order by id desc
+                limit ?
+                """,
+                (before_run_id, f"%{signature}%", limit),
+            ).fetchall()
+        count = 0
+        for row in rows:
+            try:
+                payload = json.loads(row["payload"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            count += int(_contains_diagnostic_signature(payload, signature))
+        return count
+
     def delete_run(self, run_id: int) -> bool:
         with self._connect() as conn:
             exists = conn.execute("select 1 from runs where id = ?", (run_id,)).fetchone()
@@ -392,3 +421,13 @@ class AgentStorage:
         }
         if column not in columns:
             conn.execute(f"alter table {table} add column {column} {column_type}")
+
+
+def _contains_diagnostic_signature(value: Any, signature: str) -> bool:
+    if isinstance(value, dict):
+        return value.get("signature") == signature or any(
+            _contains_diagnostic_signature(item, signature) for item in value.values()
+        )
+    if isinstance(value, list):
+        return any(_contains_diagnostic_signature(item, signature) for item in value)
+    return False

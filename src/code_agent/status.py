@@ -34,6 +34,7 @@ from .schema import (
     SuggestVerificationAction,
     SymbolIndexAction,
     SummarizeCodeAction,
+    ToolResult,
     UpdatePlanAction,
     WebSearchAction,
     WriteFileAction,
@@ -143,6 +144,44 @@ class StatusReporter:
                 self._stages.append((self._current_detail, "in-progress"))
             self._update()
 
+    def tool_result(
+        self,
+        action: AgentAction,
+        result: ToolResult,
+        elapsed_ms: float,
+    ) -> None:
+        if action.type != "run_shell":
+            return
+        diagnostics = result.metadata.get("diagnostics")
+        if not isinstance(diagnostics, dict):
+            return
+        items = diagnostics.get("diagnostics", [])
+        failed_tests = diagnostics.get("failed_tests", [])
+        if not isinstance(items, list) or (not items and not failed_tests):
+            return
+        summary = str(diagnostics.get("summary") or "Command diagnostics")
+        counts = diagnostics.get("counts", {})
+        count_detail = ""
+        if isinstance(counts, dict):
+            count_detail = (
+                f"  errors={counts.get('error', 0)} warnings={counts.get('warning', 0)}"
+            )
+        console.print(
+            Text("DIAGNOSTICS", style="bold red") + Text(f"   {summary}{count_detail}")
+        )
+        grouped: dict[str, list[dict[str, object]]] = {}
+        for item in items[:8]:
+            if isinstance(item, dict):
+                grouped.setdefault(str(item.get("path") or "<process>"), []).append(item)
+        for path, group in grouped.items():
+            tool = str(group[0].get("tool") or "command")
+            console.print(Text(f"  {path} [{tool}]", style="bold"))
+            for item in group:
+                _print_terminal_diagnostic(item)
+        if len(items) > 8:
+            console.print(Text(f"  … {len(items) - 8} more diagnostics", style="dim"))
+        console.print(Text(f"  completed in {elapsed_ms:.0f}ms", style="dim"))
+
     def done(self) -> None:
         if self._stopped:
             return
@@ -243,6 +282,44 @@ def _semantic_stage(action: AgentAction) -> tuple[str, str]:
     if isinstance(action, (DetectVerificationAction, SuggestVerificationAction)):
         return "Inspecting Project", "Checked verification commands"
     return "Working", f"Executed {action.type}"
+
+
+def _print_terminal_diagnostic(item: dict[str, object]) -> None:
+    severity = str(item.get("severity") or "error")
+    style = {
+        "error": "bold red",
+        "warning": "yellow",
+        "information": "cyan",
+        "hint": "dim",
+    }.get(severity, "default")
+    path = str(item.get("path") or "")
+    line = item.get("line")
+    column = item.get("column")
+    location = path
+    if line is not None:
+        location += f":{line}"
+    if column is not None:
+        location += f":{column}"
+    text = Text("  • ")
+    if location:
+        try:
+            target = Path(path).resolve().as_uri()
+            text.append(location, style=f"underline {style} link {target}")
+        except ValueError:
+            text.append(location, style=style)
+        text.append(" ")
+    rule = str(item.get("rule") or "")
+    if rule:
+        text.append(f"[{rule}] ", style="magenta")
+    text.append(str(item.get("message") or ""), style=style)
+    console.print(text)
+    snippet = str(item.get("snippet") or "")
+    if snippet:
+        target_line = item.get("line")
+        for snippet_line in snippet.splitlines():
+            line_label = snippet_line.split("|", 1)[0].strip()
+            snippet_style = "bold red" if line_label == str(target_line) else "dim"
+            console.print(Text(f"      {snippet_line}", style=snippet_style))
 
 
 def friendly_retry_detail(detail: str) -> str:

@@ -12,9 +12,11 @@ import subprocess
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+from .command_diagnostics import diagnose_command, format_diagnostic_summary
 from .memory import (
     MemoryUpdate,
     build_memory_write_plan,
@@ -517,6 +519,41 @@ class ToolRegistry:
         timeout_output = str(process_result["output"])
         cleanup_attempted = bool(process_result["cleanup_attempted"])
         disk_metadata = dict(process_result["metadata"])
+        duration_ms = float(process_result["duration_ms"])
+        events = list(process_result["events"])
+        stdout = completed.stdout or ""
+        stderr = completed.stderr or ""
+        ordered_output = timeout_output or "\n".join(
+            part for part in [stdout, stderr] if part
+        ).strip()
+        execution = {
+            "exit_code": completed.returncode,
+            "duration_ms": duration_ms,
+            "cwd": disk_metadata.get("cwd", str(self.workspace)),
+            "argv": disk_metadata.get("argv", []),
+            "environment_keys": disk_metadata.get("environment_keys", []),
+            "environment_sha256": disk_metadata.get("environment_sha256"),
+            "timed_out": timed_out,
+            "cancelled": cancelled,
+            "signal": disk_metadata.get("signal"),
+            "termination_reason": disk_metadata.get("termination_reason", "exit"),
+            "timeout_seconds": self.sandbox_policy.effective_timeout(policy),
+            "sandbox_backend": self.sandbox_policy.backend,
+        }
+        diagnostic_report = diagnose_command(
+            command,
+            stdout=stdout,
+            stderr=stderr,
+            ordered_output=ordered_output,
+            execution=execution,
+            workspace=self.workspace,
+        )
+        diagnostic_payload = self._redact_payload(diagnostic_report.as_payload())
+        log_metadata = {
+            "stdout": self._bounded_log(redact_secrets(stdout)),
+            "stderr": self._bounded_log(redact_secrets(stderr)),
+            "events": self._bounded_events(events),
+        }
         common_metadata = {
             "category": policy.category,
             "risk": policy.risk,
@@ -526,10 +563,13 @@ class ToolRegistry:
             "shell_network_policy": self.shell_network_policy,
             "sandbox_backend": self.sandbox_policy.backend,
             "audit_log": str(self.audit_log.path),
+            "execution": execution,
+            "logs": log_metadata,
+            "diagnostics": diagnostic_payload,
             **disk_metadata,
         }
         if cancelled:
-            output = timeout_output.strip()
+            output = ordered_output.strip()
             detail = f"Shell command cancelled: {self.cancellation_token.reason}."
             if output:
                 detail += "\n" + output
@@ -542,7 +582,7 @@ class ToolRegistry:
                 },
             )
         if timed_out:
-            output = timeout_output.strip()
+            output = ordered_output.strip()
             detail = f"Shell command timed out after {self.sandbox_policy.effective_timeout(policy)}s."
             if output:
                 detail += "\n" + output
@@ -551,7 +591,10 @@ class ToolRegistry:
                 output=redact_secrets(self._truncate(detail, MAX_SHELL_OUTPUT_CHARS)),
                 metadata=common_metadata,
             )
-        output = "\n".join(part for part in [completed.stdout, completed.stderr] if part).strip()
+        output = ordered_output
+        diagnostic_summary = format_diagnostic_summary(diagnostic_report)
+        if diagnostic_report.diagnostics or diagnostic_report.failed_tests:
+            output = "\n\n".join(part for part in [output, diagnostic_summary] if part)
         return ToolResult(
             ok=completed.returncode == 0,
             output=redact_secrets(self._truncate(output, MAX_SHELL_OUTPUT_CHARS)) or "<no output>",
@@ -1006,6 +1049,8 @@ class ToolRegistry:
             result.cancelled,
             result.cleanup_attempted,
             result.metadata or {},
+            [event.as_payload() for event in result.events],
+            result.duration_ms,
         )
 
     @staticmethod
@@ -1018,6 +1063,10 @@ class ToolRegistry:
         cancelled = bool(rest[0]) if len(rest) >= 1 else False
         cleanup_attempted = bool(rest[1]) if len(rest) >= 2 else bool(timed_out or cancelled)
         metadata = rest[2] if len(rest) >= 3 and isinstance(rest[2], dict) else {}
+        events = rest[3] if len(rest) >= 4 and isinstance(rest[3], list) else []
+        duration_ms = float(rest[4]) if len(rest) >= 5 else float(
+            metadata.get("duration_ms", 0.0)
+        )
         return {
             "completed": completed,
             "timed_out": timed_out,
@@ -1025,7 +1074,59 @@ class ToolRegistry:
             "cancelled": cancelled,
             "cleanup_attempted": cleanup_attempted,
             "metadata": metadata,
+            "events": events,
+            "duration_ms": duration_ms,
         }
+
+    @staticmethod
+    def _bounded_log(value: str, max_chars: int = MAX_SHELL_OUTPUT_CHARS) -> dict[str, Any]:
+        digest = sha256(value.encode("utf-8")).hexdigest()
+        if len(value) <= max_chars:
+            rendered = value
+            truncated = False
+        else:
+            rendered = value[:max_chars].rstrip() + f"\n<truncated {len(value) - max_chars} chars>"
+            truncated = True
+        return {
+            "text": rendered,
+            "chars": len(value),
+            "sha256": digest,
+            "truncated": truncated,
+        }
+
+    @staticmethod
+    def _bounded_events(
+        events: list[dict[str, Any]],
+        *,
+        max_events: int = 1000,
+        max_chars: int = MAX_SHELL_OUTPUT_CHARS * 2,
+    ) -> dict[str, Any]:
+        output: list[dict[str, Any]] = []
+        chars = 0
+        for event in events:
+            text = redact_secrets(str(event.get("text", "")))
+            if len(output) >= max_events or chars + len(text) > max_chars:
+                break
+            output.append({**event, "text": text})
+            chars += len(text)
+        return {
+            "items": output,
+            "event_count": len(events),
+            "captured_event_count": len(output),
+            "truncated": len(output) < len(events),
+        }
+
+    @staticmethod
+    def _redact_payload(value: Any) -> Any:
+        if isinstance(value, str):
+            return redact_secrets(value)
+        if isinstance(value, dict):
+            return {key: ToolRegistry._redact_payload(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [ToolRegistry._redact_payload(item) for item in value]
+        if isinstance(value, tuple):
+            return [ToolRegistry._redact_payload(item) for item in value]
+        return value
 
     @staticmethod
     def _is_python_test_command(command: str) -> bool:

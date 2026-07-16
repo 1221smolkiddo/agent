@@ -37,6 +37,7 @@ def build_work_report_payload(result: AgentRunResult) -> dict[str, Any]:
         "context_analysis": _context_items(result),
         "model_usage": _model_usage_items(result),
         "commands_executed": _command_items(result),
+        "command_diagnostics": _diagnostic_items(result),
         "validation_status": _validation_items(result),
         "reviewer_pass": _reviewer_items(result),
         "modified_files": result.changed_paths,
@@ -91,6 +92,9 @@ def _meaningful_sections(result: AgentRunResult) -> list[tuple[str, str]]:
     commands = _commands_summary(result)
     if commands:
         sections.append(("Commands Executed", commands))
+    diagnostics = _diagnostics_summary(result)
+    if diagnostics:
+        sections.append(("Diagnostics", diagnostics))
     validation = _validation_summary(result)
     if validation:
         sections.append(("Validation", validation))
@@ -153,7 +157,9 @@ def _latest_plan_list(plan_updates: list[dict[str, Any]], key: str) -> list[str]
 
 def _commands_summary(result: AgentRunResult) -> str:
     commands = _command_items(result)
-    return "\n".join(f"- `{item['command']}`: {item['status']}" for item in commands)
+    return "\n".join(
+        f"- `{item['command']}`: {item['status']}{item['detail']}" for item in commands
+    )
 
 
 def _context_summary(result: AgentRunResult) -> str:
@@ -188,8 +194,56 @@ def _command_items(result: AgentRunResult) -> list[dict[str, str]]:
             continue
         seen.add(command)
         status = str(item.get("status", "passed" if item.get("ok") else "failed"))
-        commands.append({"command": command, "status": status})
+        execution = item.get("execution")
+        duration = ""
+        if isinstance(execution, dict) and execution.get("duration_ms") is not None:
+            duration = f" ({float(execution['duration_ms']):.0f}ms)"
+        commands.append({"command": command, "status": status, "detail": duration})
     return commands
+
+
+def _diagnostics_summary(result: AgentRunResult) -> str:
+    return "\n".join(
+        f"- {item['location']}{item['severity']} {item['category']}: {item['message']}"
+        f"{item['history']}"
+        for item in _diagnostic_items(result)
+    )
+
+
+def _diagnostic_items(result: AgentRunResult) -> list[dict[str, str]]:
+    output: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for record in result.command_records:
+        report = record.get("diagnostics")
+        if not isinstance(report, dict):
+            continue
+        history = report.get("history")
+        history_suffix = ""
+        if isinstance(history, dict) and history.get("recurring"):
+            history_suffix = (
+                f" (recurring; {int(history.get('prior_occurrences', 0))} prior occurrence(s))"
+            )
+        for item in report.get("diagnostics", []):
+            if not isinstance(item, dict):
+                continue
+            location = str(item.get("location") or "")
+            message = _single_line(str(item.get("message") or ""), max_chars=200)
+            key = (location, str(item.get("rule") or ""), message)
+            if key in seen:
+                continue
+            seen.add(key)
+            output.append(
+                {
+                    "location": f"`{location}` " if location else "",
+                    "severity": str(item.get("severity") or "error"),
+                    "category": str(item.get("category") or "unknown"),
+                    "message": message,
+                    "history": history_suffix,
+                }
+            )
+            if len(output) >= 20:
+                return output
+    return output
 
 
 def _model_usage_summary(result: AgentRunResult) -> str:

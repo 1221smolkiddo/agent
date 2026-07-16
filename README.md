@@ -20,6 +20,8 @@ changes and approved commands still require human review. Read
 - Outcome-aware loop prevention tied to workspace generations.
 - Bounded context compaction that preserves the original task and recent evidence.
 - Automatic test, lint, typecheck, and build detection with verification diagnostics and reviewer passes.
+- Timestamped command execution with separate stdout/stderr, ordered event logs, structured cross-language
+  compiler/test/linter/runtime diagnostics, root-cause ranking, fix suggestions, and JSON export.
 - Mutation verification that rejects false completion claims.
 - Permission modes, sensitive-file refusal, secret redaction, path guards, and command classification.
 - Dry-run mode, copied-workspace sandboxes, and Docker or Podman container backends.

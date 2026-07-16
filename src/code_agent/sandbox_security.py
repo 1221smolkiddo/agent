@@ -18,7 +18,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .processes import CancellationToken, ProcessSupervisor, ShellProcessResult
+from .processes import (
+    CancellationToken,
+    ProcessSupervisor,
+    ShellProcessResult,
+    capture_process_streams,
+)
 from .safety import ShellPolicy, redact_secrets
 
 
@@ -553,6 +558,8 @@ class SandboxRunner:
                         cancelled=result.cancelled,
                         output=result.output,
                         cleanup_attempted=result.cleanup_attempted,
+                        events=result.events,
+                        duration_ms=result.duration_ms,
                         metadata={
                             **(result.metadata or {}),
                             **runtime.metadata(),
@@ -570,6 +577,7 @@ class SandboxRunner:
             **(result.metadata or {}),
             **post_run_disk.to_metadata(),
             "original_returncode": result.completed.returncode,
+            "duration_ms": result.duration_ms or elapsed_ms,
             **isolation_metadata,
         }
         if post_run_disk.exceeded:
@@ -587,6 +595,8 @@ class SandboxRunner:
                 cancelled=result.cancelled,
                 output="\n".join(part for part in [result.output, stderr] if part),
                 cleanup_attempted=result.cleanup_attempted,
+                events=result.events,
+                duration_ms=result.duration_ms,
                 metadata=result_metadata,
             )
         else:
@@ -596,6 +606,8 @@ class SandboxRunner:
                 cancelled=result.cancelled,
                 output=result.output,
                 cleanup_attempted=result.cleanup_attempted,
+                events=result.events,
+                duration_ms=result.duration_ms,
                 metadata=result_metadata,
             )
         self.audit_log.record(
@@ -784,6 +796,8 @@ class SandboxRunner:
                 container_command,
                 timeout_seconds=timeout_seconds,
                 cancellation_token=cancellation_token,
+                cwd=self.workspace,
+                env=_container_runtime_env(),
             )
         except OSError as exc:
             result = ShellProcessResult(
@@ -813,6 +827,8 @@ class SandboxRunner:
             cancelled=result.cancelled,
             output=result.output,
             cleanup_attempted=True,
+            events=result.events,
+            duration_ms=result.duration_ms,
             metadata={
                 **(result.metadata or {}),
                 "container_name": container_name,
@@ -833,7 +849,24 @@ def _wait_for_container_process(
     *,
     timeout_seconds: int,
     cancellation_token: CancellationToken | None,
+    cwd: Path,
+    env: dict[str, str],
 ) -> ShellProcessResult:
+    if all(
+        stream is not None and callable(getattr(stream, "readline", None))
+        for stream in (getattr(process, "stdout", None), getattr(process, "stderr", None))
+    ):
+        started = time.monotonic()
+        return capture_process_streams(
+            process,
+            " ".join(container_command),
+            deadline=started + timeout_seconds,
+            started=started,
+            cwd=cwd,
+            env=env,
+            cancellation_token=cancellation_token,
+            poll_seconds=0.2,
+        )
     deadline = time.monotonic() + timeout_seconds
     while True:
         if cancellation_token is not None and cancellation_token.cancelled:

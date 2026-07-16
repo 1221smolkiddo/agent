@@ -41,6 +41,33 @@ def test_storage_returns_run_and_decoded_steps(tmp_path: Path) -> None:
     assert "repo_index_meta" in tables
 
 
+def test_storage_counts_recurring_diagnostic_signatures(tmp_path: Path) -> None:
+    storage = AgentStorage(tmp_path / "agent.db")
+    first_run = storage.create_run("first", "fake-model", tmp_path)
+    storage.add_step(
+        first_run,
+        "tool",
+        {
+            "type": "tool_result",
+            "metadata": {
+                "diagnostics": {
+                    "signature": "same-failure",
+                    "summary": "type error",
+                }
+            },
+        },
+    )
+    second_run = storage.create_run("second", "fake-model", tmp_path)
+
+    assert (
+        storage.diagnostic_occurrence_count(
+            "same-failure",
+            before_run_id=second_run,
+        )
+        == 1
+    )
+
+
 def test_storage_migrates_legacy_database_and_creates_backup(tmp_path: Path) -> None:
     db_path = tmp_path / "agent.db"
     with sqlite3.connect(db_path) as conn:
