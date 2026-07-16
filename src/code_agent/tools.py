@@ -45,6 +45,11 @@ from .schema import (
     LspRenameAction,
     LspStatusAction,
     LspWorkspaceSymbolsAction,
+    ListTransactionsAction,
+    MoveFileAction,
+    RecoverTransactionsAction,
+    RedoTransactionAction,
+    RestoreSnapshotAction,
     RankContextAction,
     ReadMemoryAction,
     ReadFileAction,
@@ -56,6 +61,7 @@ from .schema import (
     SummarizeCodeAction,
     ToolResult,
     UpdateMemoryAction,
+    UndoTransactionAction,
     WebSearchAction,
     WriteFileAction,
 )
@@ -76,6 +82,12 @@ from .sandbox_security import (
     validate_workspace_boundary,
 )
 from .verification import detect_verification_commands, suggest_verification_commands
+from .transactions import (
+    TransactionConflict,
+    TransactionError,
+    TransactionPlan,
+    WorkspaceTransactionManager,
+)
 
 IGNORED_NAMES = {
     ".code-agent",
@@ -133,6 +145,8 @@ class ToolRegistry:
         process_supervisor: ProcessSupervisor | None = None,
         sandbox_policy: SandboxPolicy | None = None,
         lsp_manager: LspManager | None = None,
+        transaction_manager: WorkspaceTransactionManager | None = None,
+        transaction_validator: Callable[[TransactionPlan], tuple[bool, str]] | None = None,
     ) -> None:
         self.workspace = workspace.resolve()
         self.dry_run = dry_run
@@ -152,6 +166,10 @@ class ToolRegistry:
                 else ""
             ),
         )
+        self.transaction_manager = transaction_manager or WorkspaceTransactionManager(
+            self.workspace
+        )
+        self.transaction_validator = transaction_validator
         self.audit_log = SandboxAuditLog(
             self.workspace,
             enabled=self.sandbox_policy.audit_enabled,
@@ -172,6 +190,19 @@ class ToolRegistry:
     def close(self) -> int:
         return self.lsp_manager.close()
 
+    def attach_transaction_context(
+        self,
+        transaction_id: str,
+        *,
+        run_id: int,
+        step: int,
+    ) -> None:
+        self.transaction_manager.attach_run_context(
+            transaction_id,
+            run_id=run_id,
+            step=step,
+        )
+
     def reset_cancellation(self) -> None:
         self.cancellation_token.reset()
 
@@ -188,6 +219,30 @@ class ToolRegistry:
             return self._apply_patch(action.patch)
         if isinstance(action, DeleteFileAction):
             return self._delete_file(action.path)
+        if isinstance(action, MoveFileAction):
+            return self._move_file(action.source, action.destination)
+        if isinstance(action, ListTransactionsAction):
+            return self._list_transactions(action.run_id)
+        if isinstance(action, UndoTransactionAction):
+            return self._transaction_history_action(
+                "undo_transaction",
+                action.transaction_id,
+                action.paths,
+            )
+        if isinstance(action, RedoTransactionAction):
+            return self._transaction_history_action(
+                "redo_transaction",
+                action.transaction_id,
+                action.paths,
+            )
+        if isinstance(action, RestoreSnapshotAction):
+            return self._transaction_history_action(
+                "restore_snapshot",
+                action.transaction_id,
+                action.paths,
+            )
+        if isinstance(action, RecoverTransactionsAction):
+            return self._recover_transactions()
         if isinstance(action, RunShellAction):
             return self._run_shell(action.command)
         if isinstance(action, SearchAction):
@@ -335,13 +390,35 @@ class ToolRegistry:
         target = self.resolve_inside_workspace(requested_path)
         if is_sensitive_path(target, self.workspace):
             return ToolResult(ok=False, output=f"Refusing to write sensitive file: {requested_path}.")
-        before = target.read_text(encoding="utf-8") if target.exists() else ""
+        try:
+            before_state, before = self.transaction_manager.read_text(requested_path)
+            plan = self.transaction_manager.plan_text(
+                "write_file",
+                requested_path,
+                content,
+                expected=before_state,
+            )
+        except TransactionError as exc:
+            return ToolResult(ok=False, output=str(exc))
         diff = self._diff(requested_path, before, content)
-        if not self._approve("write_file", diff or f"Create or overwrite {requested_path}"):
+        approval_metadata = self._transaction_preview_metadata(plan)
+        if not self._approve(
+            "write_file",
+            diff or f"Create or overwrite {requested_path}",
+            approval_metadata,
+        ):
+            plan.abort("permission denied")
             return ToolResult(ok=False, output="Permission denied for write_file.")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
-        return ToolResult(ok=True, output=self._truncate(diff, MAX_MUTATION_OUTPUT_CHARS))
+        result = plan.commit(validator=self.transaction_validator)
+        return ToolResult(
+            ok=result.ok,
+            output=(
+                self._truncate(diff, MAX_MUTATION_OUTPUT_CHARS)
+                if result.ok
+                else result.output
+            ),
+            metadata=result.as_metadata(),
+        )
 
     def _edit_file(self, requested_path: str, find: str, replace: str) -> ToolResult:
         if self.dry_run:
@@ -355,15 +432,40 @@ class ToolRegistry:
         target = self.resolve_inside_workspace(requested_path)
         if is_sensitive_path(target, self.workspace):
             return ToolResult(ok=False, output=f"Refusing to edit sensitive file: {requested_path}.")
-        before = target.read_text(encoding="utf-8")
+        try:
+            before_state, before = self.transaction_manager.read_text(requested_path)
+        except TransactionError as exc:
+            return ToolResult(ok=False, output=str(exc))
         if find not in before:
             return ToolResult(ok=False, output=f"Could not find exact text in {requested_path}")
         after = before.replace(find, replace, 1)
         diff = self._diff(requested_path, before, after)
-        if not self._approve("edit_file", diff):
+        try:
+            plan = self.transaction_manager.plan_text(
+                "edit_file",
+                requested_path,
+                after,
+                expected=before_state,
+            )
+        except TransactionError as exc:
+            return ToolResult(ok=False, output=str(exc))
+        if not self._approve(
+            "edit_file",
+            diff,
+            self._transaction_preview_metadata(plan),
+        ):
+            plan.abort("permission denied")
             return ToolResult(ok=False, output="Permission denied for edit_file.")
-        target.write_text(after, encoding="utf-8")
-        return ToolResult(ok=True, output=self._truncate(diff, MAX_MUTATION_OUTPUT_CHARS))
+        result = plan.commit(validator=self.transaction_validator)
+        return ToolResult(
+            ok=result.ok,
+            output=(
+                self._truncate(diff, MAX_MUTATION_OUTPUT_CHARS)
+                if result.ok
+                else result.output
+            ),
+            metadata=result.as_metadata(),
+        )
 
     def _apply_patch(self, patch: str) -> ToolResult:
         if self.dry_run:
@@ -385,19 +487,26 @@ class ToolRegistry:
                     return ToolResult(ok=False, output=f"Refusing to patch sensitive file: {path}.")
         except ValueError as exc:
             return ToolResult(ok=False, output=str(exc))
+        try:
+            plan = self.transaction_manager.plan_patch(
+                "apply_patch",
+                patch,
+                paths,
+                metadata=metadata,
+            )
+        except (TransactionConflict, TransactionError) as exc:
+            return ToolResult(ok=False, output=str(exc), metadata=metadata | {"stage": "check"})
         approval_detail = self._patch_approval_detail(patch, metadata)
-        if not self._approve("apply_patch", approval_detail, metadata):
+        approval_metadata = metadata | self._transaction_preview_metadata(plan)
+        if not self._approve("apply_patch", approval_detail, approval_metadata):
+            plan.abort("permission denied")
             return ToolResult(ok=False, output="Permission denied for apply_patch.")
-
-        check = self._git_apply(patch, check=True)
-        if not check.ok:
-            check.metadata = metadata | {"stage": "check"}
-            return check
-        applied = self._git_apply(patch, check=False)
-        applied.metadata = metadata | {"stage": "apply"}
-        if applied.ok:
-            applied.output = self._patch_applied_output(metadata)
-        return applied
+        result = plan.commit(validator=self.transaction_validator)
+        return ToolResult(
+            ok=result.ok,
+            output=self._patch_applied_output(metadata) if result.ok else result.output,
+            metadata=metadata | {"stage": "apply"} | result.as_metadata(),
+        )
 
     def _delete_file(self, requested_path: str) -> ToolResult:
         if self.dry_run:
@@ -418,14 +527,164 @@ class ToolRegistry:
             return ToolResult(ok=False, output=f"File does not exist: {requested_path}")
         if not target.is_file():
             return ToolResult(ok=False, output=f"Refusing to delete non-file path: {requested_path}")
-        before = target.read_text(encoding="utf-8")
+        try:
+            before_state, before = self.transaction_manager.read_text(requested_path)
+            plan = self.transaction_manager.plan_delete(
+                "delete_file",
+                requested_path,
+                expected=before_state,
+            )
+        except TransactionError as exc:
+            return ToolResult(ok=False, output=str(exc))
         diff = self._diff(requested_path, before, "")
-        if not self._approve("delete_file", diff or f"Delete {requested_path}"):
+        if not self._approve(
+            "delete_file",
+            diff or f"Delete {requested_path}",
+            self._transaction_preview_metadata(plan),
+        ):
+            plan.abort("permission denied")
             return ToolResult(ok=False, output="Permission denied for delete_file.")
-        target.unlink()
+        result = plan.commit(validator=self.transaction_validator)
+        return ToolResult(
+            ok=result.ok,
+            output=(
+                self._truncate(
+                    f"Deleted {requested_path}.\n{diff}",
+                    MAX_MUTATION_OUTPUT_CHARS,
+                )
+                if result.ok
+                else result.output
+            ),
+            metadata=result.as_metadata(),
+        )
+
+    def _move_file(self, source: str, destination: str) -> ToolResult:
+        if self.dry_run:
+            return ToolResult(
+                ok=False,
+                output="Dry-run mode skipped move_file. Enable write mode before moving files.",
+            )
+        try:
+            source_target = self.resolve_inside_workspace(source)
+            destination_target = self.resolve_inside_workspace(destination)
+        except ValueError as exc:
+            return ToolResult(ok=False, output=str(exc))
+        if is_sensitive_path(source_target, self.workspace) or is_sensitive_path(
+            destination_target, self.workspace
+        ):
+            return ToolResult(ok=False, output="Refusing to move a sensitive file.")
+        try:
+            plan = self.transaction_manager.plan_move(
+                "move_file",
+                source,
+                destination,
+            )
+        except TransactionError as exc:
+            return ToolResult(ok=False, output=str(exc))
+        detail = self.transaction_manager.format_preview(plan)
+        if not self._approve(
+            "move_file",
+            detail,
+            self._transaction_preview_metadata(plan),
+        ):
+            plan.abort("permission denied")
+            return ToolResult(ok=False, output="Permission denied for move_file.")
+        result = plan.commit(validator=self.transaction_validator)
+        return ToolResult(
+            ok=result.ok,
+            output=(
+                f"Moved {source} to {destination} transactionally."
+                if result.ok
+                else result.output
+            ),
+            metadata=result.as_metadata(),
+        )
+
+    def _list_transactions(self, run_id: int | None) -> ToolResult:
+        if not self._approve(
+            "list_transactions",
+            f"List transaction history{f' for run {run_id}' if run_id else ''}.",
+        ):
+            return ToolResult(ok=False, output="Permission denied for list_transactions.")
+        transactions = self.transaction_manager.list_transactions()
+        if run_id is not None:
+            transactions = [
+                item for item in transactions if item.get("run_id") == run_id
+            ]
         return ToolResult(
             ok=True,
-            output=self._truncate(f"Deleted {requested_path}.\n{diff}", MAX_MUTATION_OUTPUT_CHARS),
+            output=json.dumps(transactions, indent=2, ensure_ascii=False),
+            metadata={"transactions": transactions},
+        )
+
+    def _transaction_history_action(
+        self,
+        action: str,
+        transaction_id: str,
+        paths: list[str],
+    ) -> ToolResult:
+        if self.dry_run:
+            return ToolResult(
+                ok=False,
+                output=f"Dry-run mode skipped {action}. Enable write mode first.",
+            )
+        try:
+            if action == "undo_transaction":
+                plan = self.transaction_manager.plan_undo(
+                    transaction_id,
+                    paths=paths or None,
+                )
+            elif action == "redo_transaction":
+                plan = self.transaction_manager.plan_redo(
+                    transaction_id,
+                    paths=paths or None,
+                )
+            else:
+                plan = self.transaction_manager.plan_restore_snapshot(
+                    transaction_id,
+                    paths=paths or None,
+                )
+        except TransactionError as exc:
+            return ToolResult(ok=False, output=str(exc))
+        detail = self.transaction_manager.format_preview(plan)
+        if not self._approve(
+            action,
+            detail,
+            self._transaction_preview_metadata(plan),
+        ):
+            plan.abort("permission denied")
+            return ToolResult(ok=False, output=f"Permission denied for {action}.")
+        result = plan.commit(validator=self.transaction_validator)
+        return ToolResult(
+            ok=result.ok,
+            output=result.output,
+            metadata=result.as_metadata(),
+        )
+
+    def _recover_transactions(self) -> ToolResult:
+        if not self._approve(
+            "recover_transactions",
+            "Recover interrupted transaction journals without overwriting newer user edits.",
+        ):
+            return ToolResult(ok=False, output="Permission denied for recover_transactions.")
+        results = [
+            *self.transaction_manager.consume_recovery_results(),
+            *self.transaction_manager.recover_incomplete(),
+        ]
+        payload = [
+            {
+                "id": result.transaction_id,
+                "ok": result.ok,
+                "state": result.state,
+                "paths": list(result.paths),
+                "conflicts": list(result.conflicts),
+            }
+            for result in results
+        ]
+        return ToolResult(
+            ok=all(item["ok"] for item in payload),
+            output=json.dumps(payload, indent=2) if payload else "No interrupted transactions.",
+            metadata={"recoveries": payload},
         )
 
     def _run_shell(self, command: str) -> ToolResult:
@@ -1114,6 +1373,19 @@ class ToolRegistry:
             "event_count": len(events),
             "captured_event_count": len(output),
             "truncated": len(output) < len(events),
+        }
+
+    @staticmethod
+    def _transaction_preview_metadata(plan: Any) -> dict[str, Any]:
+        return {
+            "transaction": {
+                "id": plan.transaction_id,
+                "state": plan.state,
+                "action": plan.action,
+                "paths": plan.paths,
+                "checkpoint": True,
+                "atomic": True,
+            }
         }
 
     @staticmethod

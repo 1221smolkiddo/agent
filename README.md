@@ -13,6 +13,8 @@ changes and approved commands still require human review. Read
 
 - CLI, interactive terminal, and versioned NDJSON interfaces.
 - Workspace-aware file reads, exact edits, writes, deletes, unified patches, search, and code summaries.
+- Journaled workspace transactions with automatic checkpoints, atomic multi-file commit/rollback, crash
+  recovery, three-way merge, move support, undo/redo, and selective or whole-workspace snapshot restore.
 - Repository maps, ranked context, symbol indexes, dependency graphs, project memory, and git-diff awareness.
 - Native JSON-RPC language-server clients with definition, references, hover, completion, workspace symbols,
   diagnostics, rename previews, formatting previews, code actions, crash restart, and deterministic cleanup.
@@ -124,6 +126,7 @@ code-agent release-smoke
 code-agent history
 code-agent resume
 code-agent revert
+code-agent transactions
 code-agent sandbox
 code-agent collab
 ```
@@ -139,6 +142,11 @@ uv run code-agent history delete 12 --yes
 uv run code-agent history prune --keep-last 20 --yes
 uv run code-agent resume 12 "Continue from the failed verification"
 uv run code-agent revert 12
+uv run code-agent transactions list
+uv run code-agent transactions undo <transaction-id>
+uv run code-agent transactions redo <transaction-id>
+uv run code-agent transactions restore <transaction-id>
+uv run code-agent transactions recover
 uv run code-agent sandbox health --backend docker
 uv run code-agent collab review --run-id 12 --strict
 ```

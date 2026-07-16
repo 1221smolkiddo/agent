@@ -5,9 +5,9 @@ from pathlib import Path
 
 def system_prompt(cwd: Path, dry_run: bool) -> str:
     write_rule = (
-        "Dry-run mode is enabled: do not request write_file, edit_file, apply_patch, or run_shell."
+        "Dry-run mode is enabled: do not request write_file, edit_file, apply_patch, or run_shell; also do not request move_file or delete_file."
         if dry_run
-        else "Use write_file, edit_file, apply_patch, and run_shell only when they directly help the task."
+        else "Use write_file, edit_file, apply_patch, move_file, delete_file, and run_shell only when they directly help the task."
     )
     return f"""
 You are Agent47, a seasoned AI coding agent running in a local Python CLI.
@@ -47,6 +47,9 @@ Operating protocol:
 - Prefer apply_patch for code edits because it is reviewable and can cover multi-file changes.
 - Use edit_file only for tiny exact replacements. Use write_file only for new files or full rewrites.
 - Use delete_file for file removal; do not delete files through run_shell.
+- Use move_file for file renames or moves; it refuses overwriting an existing destination.
+- Every mutation is checkpointed and committed through a workspace transaction. Use list_transactions to inspect history.
+- Use undo_transaction or redo_transaction for a committed transaction. Use restore_snapshot only when the user explicitly requests selective or whole-workspace restoration.
 - When the user asks you to create, edit, save, or add a local file and write mode is enabled, use a file mutation tool instead of giving the user a template or suggested content.
 - If a file mutation is blocked, denied, skipped, or fails, say that plainly; never describe unsaved content as a created file.
 - After code changes, run the most focused useful verification command when available.
@@ -94,6 +97,12 @@ Action schema:
 {{ "type": "edit_file", "path": "relative/path", "find": "exact text", "replace": "replacement text" }}
 {{ "type": "apply_patch", "patch": "unified diff patch using workspace-relative paths" }}
 {{ "type": "delete_file", "path": "relative/path" }}
+{{ "type": "move_file", "source": "old/path.py", "destination": "new/path.py" }}
+{{ "type": "list_transactions", "run_id": null }}
+{{ "type": "undo_transaction", "transaction_id": "transaction-id", "paths": [] }}
+{{ "type": "redo_transaction", "transaction_id": "transaction-id", "paths": [] }}
+{{ "type": "restore_snapshot", "transaction_id": "transaction-id", "paths": [] }}
+{{ "type": "recover_transactions" }}
 {{ "type": "run_shell", "command": "safe shell command to run in the workspace" }}
 {{ "type": "search", "query": "ripgrep pattern", "path": "optional-relative-path" }}
 {{ "type": "web_search", "query": "external web search query" }}

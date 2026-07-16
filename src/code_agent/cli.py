@@ -65,6 +65,7 @@ from .sandbox_security import (
 from .storage import AgentStorage
 from .status import StatusReporter
 from .terminal_ui import print_work_report_panel
+from .transactions import TransactionError, WorkspaceTransactionManager
 from .work_report import should_show_work_report
 
 app = typer.Typer(help="A CLI-first coding agent.")
@@ -75,9 +76,11 @@ history_app = typer.Typer(
 )
 sandbox_app = typer.Typer(help="Inspect and promote sandbox workspace changes.")
 collab_app = typer.Typer(help="Branch, commit, PR, changelog, and collaboration helpers.")
+transactions_app = typer.Typer(help="Inspect, recover, undo, redo, and restore transactions.")
 app.add_typer(history_app, name="history")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(collab_app, name="collab")
+app.add_typer(transactions_app, name="transactions")
 
 
 def validate_profile_option(value: Optional[str]) -> Optional[str]:
@@ -700,6 +703,127 @@ def revert_command(
     )
     typer.echo(result.output)
     typer.echo(f"Revert run id: {result.run_id}")
+    if not result.ok:
+        raise typer.Exit(code=1)
+
+
+@transactions_app.command("list")
+def transactions_list_command(
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    run_id: Optional[int] = typer.Option(None, "--run-id", help="Filter by Agent47 run ID."),
+) -> None:
+    """List workspace transaction journals."""
+    manager = WorkspaceTransactionManager(cwd.resolve())
+    transactions = manager.list_transactions()
+    if run_id is not None:
+        transactions = [item for item in transactions if item.get("run_id") == run_id]
+    if not transactions:
+        typer.echo("No transactions.")
+        return
+    for item in transactions:
+        typer.echo(
+            f"{item['id']}  {item['state']}  {item['action']}  "
+            f"run={item.get('run_id') or '-'}  paths={', '.join(item['paths'])}"
+        )
+
+
+@transactions_app.command("undo")
+def transactions_undo_command(
+    transaction_id: str = typer.Argument(..., help="Committed transaction ID."),
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    path: Optional[list[str]] = typer.Option(None, "--path", help="Restore only this path."),
+) -> None:
+    """Undo a committed transaction without overwriting newer edits."""
+    _run_transaction_command(
+        WorkspaceTransactionManager(cwd.resolve()),
+        "undo",
+        transaction_id,
+        path or [],
+    )
+
+
+@transactions_app.command("redo")
+def transactions_redo_command(
+    transaction_id: str = typer.Argument(..., help="Committed transaction ID."),
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    path: Optional[list[str]] = typer.Option(None, "--path", help="Reapply only this path."),
+) -> None:
+    """Redo a committed transaction after it has been undone."""
+    _run_transaction_command(
+        WorkspaceTransactionManager(cwd.resolve()),
+        "redo",
+        transaction_id,
+        path or [],
+    )
+
+
+@transactions_app.command("restore")
+def transactions_restore_command(
+    transaction_id: str = typer.Argument(..., help="Transaction checkpoint ID."),
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    path: Optional[list[str]] = typer.Option(
+        None,
+        "--path",
+        help="Restore only this path; omit to restore the complete workspace snapshot.",
+    ),
+) -> None:
+    """Restore selected files or the complete workspace checkpoint."""
+    _run_transaction_command(
+        WorkspaceTransactionManager(cwd.resolve()),
+        "restore",
+        transaction_id,
+        path or [],
+    )
+
+
+@transactions_app.command("recover")
+def transactions_recover_command(
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+) -> None:
+    """Recover interrupted transaction journals."""
+    manager = WorkspaceTransactionManager(cwd.resolve())
+    results = [*manager.consume_recovery_results(), *manager.recover_incomplete()]
+    if not results:
+        typer.echo("No interrupted transactions.")
+        return
+    for result in results:
+        typer.echo(result.output)
+        if result.conflicts:
+            typer.echo("Conflicts: " + ", ".join(result.conflicts))
+    if any(not result.ok for result in results):
+        raise typer.Exit(code=1)
+
+
+def _run_transaction_command(
+    manager: WorkspaceTransactionManager,
+    operation: str,
+    transaction_id: str,
+    paths: list[str],
+) -> None:
+    try:
+        if operation == "undo":
+            plan = manager.plan_undo(transaction_id, paths=paths or None)
+        elif operation == "redo":
+            plan = manager.plan_redo(transaction_id, paths=paths or None)
+        else:
+            plan = manager.plan_restore_snapshot(transaction_id, paths=paths or None)
+    except TransactionError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1)
+    preview = manager.format_preview(plan)
+    typer.echo(preview)
+    approval_action = {
+        "undo": "undo_transaction",
+        "redo": "redo_transaction",
+        "restore": "restore_snapshot",
+    }[operation]
+    if confirm_permission(approval_action, preview) not in {"y", "a"}:
+        plan.abort("permission denied")
+        typer.echo("Permission denied.")
+        raise typer.Exit(code=1)
+    result = plan.commit()
+    typer.echo(result.output)
+    typer.echo(f"Transaction id: {result.transaction_id}")
     if not result.ok:
         raise typer.Exit(code=1)
 

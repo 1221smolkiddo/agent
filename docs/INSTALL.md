@@ -135,6 +135,24 @@ AGENT_SANDBOX_IMAGE=python:3.13-slim
 
 The model retry count is bounded from 0-10. The context budget must be at least 8,000 characters.
 
+## Transaction Recovery
+
+Workspace mutations create journals and deduplicated checkpoints under `.code-agent/transactions/`.
+Keep this directory private and do not commit it. Useful commands:
+
+```bash
+uv run code-agent transactions list
+uv run code-agent transactions list --run-id 12
+uv run code-agent transactions undo <transaction-id>
+uv run code-agent transactions redo <transaction-id>
+uv run code-agent transactions restore <transaction-id>
+uv run code-agent transactions restore <transaction-id> --path src/app.py
+uv run code-agent transactions recover
+```
+
+Omitting `--path` from `transactions restore` restores the complete recorded workspace checkpoint and can
+remove files created after that checkpoint. Agent47 always shows the affected paths and diff before approval.
+
 ## Platform Notes
 
 ### Windows

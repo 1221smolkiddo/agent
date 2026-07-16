@@ -23,6 +23,7 @@ READ_ONLY_ACTIONS = frozenset({
     "read_memory",
     "detect_verification",
     "suggest_verification",
+    "list_transactions",
 })
 
 
@@ -30,6 +31,11 @@ HIGH_RISK_ACTIONS = frozenset({
     "apply_patch",
     "run_shell",
     "delete_file",
+    "move_file",
+    "undo_transaction",
+    "redo_transaction",
+    "restore_snapshot",
+    "recover_transactions",
     "inspect_git_diff",
     "search",
     "update_memory",
@@ -91,6 +97,12 @@ def confirm_permission(action: str, detail: str) -> str:
     action_labels = {
         "run_shell": "Run shell command",
         "delete_file": "Delete file",
+        "move_file": "Move file",
+        "list_transactions": "List transactions",
+        "undo_transaction": "Undo transaction",
+        "redo_transaction": "Redo transaction",
+        "restore_snapshot": "Restore workspace snapshot",
+        "recover_transactions": "Recover interrupted transactions",
         "apply_patch": "Apply patch",
         "inspect_git_diff": "Inspect git diff",
         "search": "Search workspace",

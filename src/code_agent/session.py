@@ -39,7 +39,14 @@ class SessionState:
             self.last_created_files = [
                 record["path"]
                 for record in result.mutation_records
-                if record.get("ok") is True and record.get("action") == "write_file"
+                if record.get("ok") is True
+                and (
+                    record.get("action") == "write_file"
+                    or (
+                        record.get("action") == "move_file"
+                        and record.get("operation") == "move_destination"
+                    )
+                )
             ]
             self.last_edited_files = [
                 record["path"]
@@ -49,7 +56,14 @@ class SessionState:
             self.last_deleted_files = [
                 record["path"]
                 for record in result.mutation_records
-                if record.get("ok") is True and record.get("action") == "delete_file"
+                if record.get("ok") is True
+                and (
+                    record.get("action") == "delete_file"
+                    or (
+                        record.get("action") == "move_file"
+                        and record.get("operation") == "move_source"
+                    )
+                )
             ]
             if self.last_deleted_files:
                 self.last_created_files = [

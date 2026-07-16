@@ -234,6 +234,9 @@ def promote_sandbox_changes(
         workspace=diff.base,
         dry_run=False,
         approval_callback=approval_callback,
+        transaction_validator=lambda _plan: (
+            (False, error) if (error := _verify_promoted_files(diff)) else (True, "")
+        ),
     )
     result = tools.run(ApplyPatchAction(type="apply_patch", patch=diff.patch))
     if not result.ok:
@@ -244,14 +247,6 @@ def promote_sandbox_changes(
             metadata=result.metadata,
         )
 
-    verification_error = _verify_promoted_files(diff)
-    if verification_error:
-        return SandboxApplyResult(
-            ok=False,
-            changed_paths=diff.changed_paths,
-            output=verification_error,
-            metadata=result.metadata,
-        )
     return SandboxApplyResult(
         ok=True,
         changed_paths=diff.changed_paths,

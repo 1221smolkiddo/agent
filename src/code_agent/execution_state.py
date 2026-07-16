@@ -287,6 +287,7 @@ def _phase_for_action(action: AgentAction) -> ExecutionPhase:
         "lsp_completion",
         "lsp_formatting",
         "lsp_code_actions",
+        "list_transactions",
         "dependency_graph",
         "read_memory",
         "web_search",

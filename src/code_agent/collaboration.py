@@ -688,6 +688,7 @@ def _friendly_action(record: dict[str, Any]) -> str:
         "edit_file": "Modified",
         "apply_patch": "Patched",
         "delete_file": "Deleted",
+        "move_file": "Moved",
     }.get(str(record.get("action", "")), "Changed")
 
 

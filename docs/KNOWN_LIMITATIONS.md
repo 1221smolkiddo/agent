@@ -29,6 +29,16 @@ hard security sandbox. These limitations are part of the operating contract.
   counts and hashes, but extremely verbose commands may require inspecting their native artifact files.
 - Recurring diagnostic signatures identify repeated evidence across stored runs. A recurrence is marked as a
   regression candidate rather than proof that the same underlying defect returned.
+- Multi-file transactions provide journaled all-or-rollback behavior, not a single operating-system primitive
+  spanning multiple files. A process crash can expose an intermediate state until startup recovery completes.
+- Full workspace checkpoints hash files before every approved mutation. Content-addressed deduplication limits
+  repeated storage, but very large repositories can experience checkpoint latency and disk growth.
+- Normal text tools refuse to replace symlink paths. Snapshot recovery preserves symlink identity, while
+  editing the symlink target requires addressing the target file directly.
+- POSIX mode bits and timestamps are preserved where the operating system exposes them. Windows permission
+  preservation is limited by Python and filesystem ACL semantics.
+- Three-way merge is conservative. Non-overlapping text changes can merge automatically; overlapping,
+  binary, move, delete, and symlink conflicts require explicit user resolution.
 
 ## Sandboxing And Commands
 

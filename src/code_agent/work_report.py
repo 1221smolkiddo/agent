@@ -42,6 +42,7 @@ def build_work_report_payload(result: AgentRunResult) -> dict[str, Any]:
         "reviewer_pass": _reviewer_items(result),
         "modified_files": result.changed_paths,
         "change_summary": _change_items(result),
+        "transactions": _transaction_items(result),
         "diff_review": _diff_review_lines(result),
         "final_outcome": _single_line(result.message, max_chars=900),
     }
@@ -86,6 +87,9 @@ def _meaningful_sections(result: AgentRunResult) -> list[tuple[str, str]]:
     changes = _compact_change_summary(result)
     if changes:
         sections.append(("Changes", changes))
+    transactions = _transactions_summary(result)
+    if transactions:
+        sections.append(("Transactions", transactions))
     context = _context_summary(result)
     if context:
         sections.append(("Analyzed", context))
@@ -338,6 +342,35 @@ def _change_summary(result: AgentRunResult) -> str:
     )
 
 
+def _transactions_summary(result: AgentRunResult) -> str:
+    return "\n".join(
+        f"- `{item['id']}`: {item['state']} ({item['paths']})"
+        for item in _transaction_items(result)
+    )
+
+
+def _transaction_items(result: AgentRunResult) -> list[dict[str, str]]:
+    grouped: dict[str, dict[str, str]] = {}
+    for record in result.mutation_records:
+        transaction_id = str(record.get("transaction_id") or "")
+        if not transaction_id:
+            continue
+        item = grouped.setdefault(
+            transaction_id,
+            {
+                "id": transaction_id,
+                "state": str(record.get("transaction_state") or "unknown"),
+                "paths": "",
+            },
+        )
+        paths = [path for path in item["paths"].split(", ") if path]
+        path = str(record.get("path") or "")
+        if path and path not in paths:
+            paths.append(path)
+        item["paths"] = ", ".join(paths)
+    return list(grouped.values())
+
+
 def _compact_change_summary(result: AgentRunResult) -> str:
     """Compact checklist-style change summary for user-facing reports."""
     items = _change_items_filtered(result)
@@ -359,6 +392,7 @@ def _friendly_action_label(action: str) -> str:
         "edit_file": "Modified",
         "apply_patch": "Patched",
         "delete_file": "Deleted",
+        "move_file": "Moved",
     }.get(action, action.replace("_", " ").capitalize())
 
 

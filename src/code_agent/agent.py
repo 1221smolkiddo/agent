@@ -446,16 +446,47 @@ class CodingAgent:
             execution_state.begin_action(action)
             before_mutation = self._mutation_state_for_action(action)
             # File operation preview before execution
-            if action.type in {"write_file", "edit_file", "apply_patch", "delete_file"} and self.reporter:
+            if action.type in {
+                "write_file",
+                "edit_file",
+                "apply_patch",
+                "delete_file",
+                "move_file",
+                "undo_transaction",
+                "redo_transaction",
+                "restore_snapshot",
+            } and self.reporter:
                 preview_paths = self._changed_paths_from_action(action)
                 creates = [p for p in preview_paths if not (self.cwd / p).exists()]
-                modifies = [p for p in preview_paths if (self.cwd / p).exists() and action.type != "delete_file"]
-                deletes = [p for p in preview_paths if action.type == "delete_file"]
+                modifies = [
+                    p
+                    for p in preview_paths
+                    if (self.cwd / p).exists()
+                    and action.type not in {"delete_file", "move_file"}
+                ]
+                deletes = [
+                    p
+                    for p in preview_paths
+                    if action.type == "delete_file"
+                    or (
+                        action.type == "move_file"
+                        and p == getattr(action, "source", "")
+                    )
+                ]
                 self.reporter.mutation_preview(creates, modifies, deletes)
             self._report_action(action)
             tool_started = perf_counter()
             result = self._run_tool(action)
             tool_elapsed_ms = round((perf_counter() - tool_started) * 1000, 2)
+            transaction = result.metadata.get("transaction")
+            if isinstance(transaction, dict) and transaction.get("id"):
+                attach_transaction = getattr(self.tools, "attach_transaction_context", None)
+                if callable(attach_transaction):
+                    attach_transaction(
+                        str(transaction["id"]),
+                        run_id=run_id,
+                        step=step,
+                    )
             new_mutation_records = self._mutation_records_from_action(action, result, before_mutation)
             changed_paths = self._successful_mutation_paths(new_mutation_records)
             mutation_records.extend(new_mutation_records)
@@ -1052,6 +1083,12 @@ class CodingAgent:
             "edit_file",
             "apply_patch",
             "delete_file",
+            "move_file",
+            "list_transactions",
+            "undo_transaction",
+            "redo_transaction",
+            "restore_snapshot",
+            "recover_transactions",
             "run_shell",
             "search",
             "summarize_code",
@@ -1078,7 +1115,16 @@ class CodingAgent:
 
     @staticmethod
     def _is_blocked_mutation(action: AgentAction, result: ToolResult) -> bool:
-        if action.type not in {"write_file", "edit_file", "apply_patch", "delete_file"}:
+        if action.type not in {
+            "write_file",
+            "edit_file",
+            "apply_patch",
+            "delete_file",
+            "move_file",
+            "undo_transaction",
+            "redo_transaction",
+            "restore_snapshot",
+        }:
             return False
         return "Permission denied" in result.output or "Dry-run mode skipped" in result.output
 
@@ -1093,10 +1139,34 @@ class CodingAgent:
         if action.type == "apply_patch":
             patch = getattr(action, "patch", "")
             return sorted(ToolRegistry._paths_from_patch(patch))
+        if action.type == "move_file":
+            return [
+                path
+                for path in [
+                    getattr(action, "source", ""),
+                    getattr(action, "destination", ""),
+                ]
+                if path
+            ]
+        if action.type in {
+            "undo_transaction",
+            "redo_transaction",
+            "restore_snapshot",
+        }:
+            return list(getattr(action, "paths", []) or [])
         return []
 
     def _mutation_state_for_action(self, action: AgentAction) -> dict[str, dict[str, Any]]:
-        if action.type not in {"write_file", "edit_file", "apply_patch", "delete_file"}:
+        if action.type not in {
+            "write_file",
+            "edit_file",
+            "apply_patch",
+            "delete_file",
+            "move_file",
+            "undo_transaction",
+            "redo_transaction",
+            "restore_snapshot",
+        }:
             return {}
         state: dict[str, dict[str, Any]] = {}
         for path in self._changed_paths_from_action(action):
@@ -1120,8 +1190,32 @@ class CodingAgent:
         result: ToolResult,
         before_mutation: dict[str, dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        if action.type not in {"write_file", "edit_file", "apply_patch", "delete_file"}:
+        if action.type not in {
+            "write_file",
+            "edit_file",
+            "apply_patch",
+            "delete_file",
+            "move_file",
+            "undo_transaction",
+            "redo_transaction",
+            "restore_snapshot",
+        }:
             return []
+        transaction = result.metadata.get("transaction")
+        if isinstance(transaction, dict):
+            transaction_records = transaction.get("records")
+            if isinstance(transaction_records, list) and transaction_records:
+                return [
+                    {
+                        **record,
+                        "action": action.type,
+                        "transaction_id": transaction.get("id"),
+                        "transaction_state": transaction.get("state"),
+                        "output": result.output,
+                    }
+                    for record in transaction_records
+                    if isinstance(record, dict)
+                ]
         paths = CodingAgent._changed_paths_from_action(action)
         if not paths:
             paths = ["<unknown>"]
@@ -1191,6 +1285,10 @@ class CodingAgent:
                 record["verification_error"] = "delete_file reported success but file still exists"
             elif not before_exists:
                 record["verification_error"] = "delete_file target did not exist before mutation"
+        elif action.type == "move_file":
+            record["ok"] = content_changed
+            if not content_changed:
+                record["verification_error"] = "move_file did not change the expected paths"
         if record.get("ok") is True and content_changed:
             record["inverse_patch"] = git_style_unified_diff(
                 path,

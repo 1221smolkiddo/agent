@@ -26,16 +26,22 @@ from .schema import (
     LspRenameAction,
     LspStatusAction,
     LspWorkspaceSymbolsAction,
+    ListTransactionsAction,
+    MoveFileAction,
     RankContextAction,
     ReadFileAction,
+    RecoverTransactionsAction,
+    RedoTransactionAction,
     RepoMapAction,
     RunShellAction,
     SearchAction,
+    RestoreSnapshotAction,
     SuggestVerificationAction,
     SymbolIndexAction,
     SummarizeCodeAction,
     ToolResult,
     UpdatePlanAction,
+    UndoTransactionAction,
     WebSearchAction,
     WriteFileAction,
 )
@@ -150,6 +156,16 @@ class StatusReporter:
         result: ToolResult,
         elapsed_ms: float,
     ) -> None:
+        transaction = result.metadata.get("transaction")
+        if isinstance(transaction, dict) and transaction.get("id"):
+            style = "bold green" if result.ok else "bold red"
+            console.print(
+                Text("TRANSACTION", style=style)
+                + Text(
+                    f"   {transaction['id']}  {transaction.get('state', 'unknown')}  "
+                    f"files={len(transaction.get('paths', []))}"
+                )
+            )
         if action.type != "run_shell":
             return
         diagnostics = result.metadata.get("diagnostics")
@@ -247,6 +263,20 @@ def _semantic_stage(action: AgentAction) -> tuple[str, str]:
         return "Editing Files", f"Updated {path}"
     if isinstance(action, DeleteFileAction):
         return "Editing Files", f"Deleted {action.path}"
+    if isinstance(action, MoveFileAction):
+        return "Editing Files", f"Moved {action.source} to {action.destination}"
+    if isinstance(action, ListTransactionsAction):
+        return "Inspecting Project", "Inspected transaction history"
+    if isinstance(
+        action,
+        (
+            UndoTransactionAction,
+            RedoTransactionAction,
+            RestoreSnapshotAction,
+            RecoverTransactionsAction,
+        ),
+    ):
+        return "Recovering", f"Executed {action.type}"
     if isinstance(action, RunShellAction):
         if any(w in action.command.lower() for w in ["test", "pytest", "lint", "check"]):
             return "Running Verification", f"Ran {action.command}"

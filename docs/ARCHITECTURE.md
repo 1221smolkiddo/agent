@@ -139,6 +139,39 @@ Language servers are local developer tools and may execute project-aware logic. 
 disables host LSP startup whenever sandbox policy requires process isolation. This is fail-closed: strict
 container sandbox runs do not silently launch an unisolated host language server.
 
+### Transactional Editing
+
+`transactions.py` provides the single mutation boundary beneath `write_file`, `edit_file`, `apply_patch`,
+`move_file`, deletion, run reverts, sandbox promotion, and LSP-produced patches. Tools first capture the
+expected file state and a content-addressed workspace checkpoint, render a diff preview, and request
+approval. Commit then rechecks optimistic hashes so user edits made during approval are never overwritten
+silently.
+
+Each transaction has an fsync-backed JSON journal under `.code-agent/transactions/journals/`, immutable
+SHA-256 content blobs, a full workspace manifest excluding credentials and generated state, and an append-only
+audit log. File records retain existence, type, hashes, size, encoding, newline style, permission mode, access
+time, modification time, symlink target, operation, and run/step context.
+
+Multi-file commits stage replacement files beside their targets and apply them with atomic `os.replace`
+operations. Files are verified by hash after commit. Any write, formatting, merge, or validation exception
+triggers reverse-order rollback. Rollback restores content and metadata only when the current state still
+matches the transaction's intended result; unexpected newer edits produce an explicit conflict instead of
+being overwritten.
+
+If a file changes after preview, text transactions attempt a conservative three-way merge using the preview
+base, current user state, and desired state. Non-overlapping line changes merge automatically. Conflicts,
+binary changes, deletions, moves, and symlink mutations fail closed.
+
+Startup recovery scans journals left in prepared, applying, or rolling-back states. Applied entries are
+restored from content-addressed checkpoints with the same newer-edit protection. Proposed transactions that
+never mutated files are marked abandoned. An exclusive workspace lock prevents concurrent Agent47 commits.
+
+Committed transactions support undo, redo, individual-file restore, and whole-workspace snapshot restore.
+Every recovery operation is itself a new approved transaction, preserving complete history rather than
+rewriting the original journal. The `transactions` CLI group and typed agent actions expose listing, recovery,
+undo, redo, and restore. Transaction IDs and records are exported through SQLite run steps, NDJSON results,
+terminal status, work reports, and audit logs.
+
 Container execution supports Docker and Podman with offline networking by default, read-only root filesystems,
 resource and pid limits, dropped capabilities, isolated environment variables, and image policy validation.
 Commands are parsed into argv and passed directly to the container image without an inner shell.
@@ -240,6 +273,7 @@ a cross-platform Python matrix and a live Docker security job.
 | Sandboxes | `sandbox.py`, `sandbox_security.py` |
 | Repository context | `repo_index.py`, `parsing.py`, `memory.py` |
 | Language intelligence | `lsp.py`, `schema.py`, `tools.py` |
+| Transactional editing | `transactions.py`, `revert.py`, `tools.py` |
 | Verification and review | `verification.py`, `verification_diagnostics.py`, `reviewer.py` |
 | Models | `models.py`, `model_registry.py`, `model_profiles.py`, `model_presets.py` |
 | Persistence and recovery | `storage.py`, `session.py`, `resume.py`, `revert.py`, `work_report.py` |

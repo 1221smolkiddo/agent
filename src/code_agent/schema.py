@@ -79,6 +79,39 @@ class DeleteFileAction(BaseModel):
     path: str
 
 
+class MoveFileAction(BaseModel):
+    type: Literal["move_file"]
+    source: str
+    destination: str
+
+
+class ListTransactionsAction(BaseModel):
+    type: Literal["list_transactions"]
+    run_id: Optional[int] = Field(default=None, ge=1)
+
+
+class UndoTransactionAction(BaseModel):
+    type: Literal["undo_transaction"]
+    transaction_id: str
+    paths: list[str] = Field(default_factory=list, max_length=100)
+
+
+class RedoTransactionAction(BaseModel):
+    type: Literal["redo_transaction"]
+    transaction_id: str
+    paths: list[str] = Field(default_factory=list, max_length=100)
+
+
+class RestoreSnapshotAction(BaseModel):
+    type: Literal["restore_snapshot"]
+    transaction_id: str
+    paths: list[str] = Field(default_factory=list, max_length=100)
+
+
+class RecoverTransactionsAction(BaseModel):
+    type: Literal["recover_transactions"]
+
+
 class RunShellAction(BaseModel):
     type: Literal["run_shell"]
     command: str
@@ -245,6 +278,12 @@ AgentAction = Union[
     EditFileAction,
     ApplyPatchAction,
     DeleteFileAction,
+    MoveFileAction,
+    ListTransactionsAction,
+    UndoTransactionAction,
+    RedoTransactionAction,
+    RestoreSnapshotAction,
+    RecoverTransactionsAction,
     RunShellAction,
     SearchAction,
     WebSearchAction,
