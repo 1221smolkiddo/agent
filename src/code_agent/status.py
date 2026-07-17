@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import TypeVar
 
 from rich.console import Group
 from rich.live import Live
@@ -55,6 +57,8 @@ from .schema import (
 )
 from .terminal_ui import console
 
+CallbackResult = TypeVar("CallbackResult")
+
 
 class StatusReporter:
     _seen_workspace_summaries: set[str] = set()
@@ -65,10 +69,15 @@ class StatusReporter:
         self._current_detail = ""
         self._is_generating = False
         self._stopped = False
+        self._paused = False
         # stages: list of tuples (stage_detail, status) where status is 'pending','in-progress','done'
         self._stages: list[tuple[str, str]] = []
-        self._live = Live(console=console, transient=True, refresh_per_second=10)
+        self._live = self._new_live()
         self._live.start()
+
+    @staticmethod
+    def _new_live() -> Live:
+        return Live(console=console, transient=True, refresh_per_second=4)
 
     @classmethod
     def mark_workspace_seen(cls, summary: str) -> None:
@@ -85,7 +94,7 @@ class StatusReporter:
             text.append(label, style="bold cyan")
             if detail:
                 text.append(f" — {detail}", style="default")
-            spinner = Spinner("dots", text=text, style="cyan", speed=0.1)
+            spinner = Spinner("dots", text=text, style="cyan", speed=0.8)
             lines.append(spinner)
         else:
             lines.append(Text("Ready. /help /history /report /diff", style="muted"))
@@ -110,11 +119,11 @@ class StatusReporter:
         return Group(*lines)
 
     def _update(self) -> None:
-        if self._stopped:
+        if self._stopped or self._paused:
             return
         self._live.update(self._render())
 
-    def _complete_current(self) -> None:
+    def _complete_current(self, *, refresh: bool = True) -> None:
         if self._current_detail:
             # Mark the corresponding stage as done
             for idx in range(len(self._stages) - 1, -1, -1):
@@ -123,7 +132,35 @@ class StatusReporter:
                     break
         self._current_label = ""
         self._current_detail = ""
+        if refresh:
+            self._update()
+
+    def pause(self) -> None:
+        if self._stopped or self._paused:
+            return
+        self._paused = True
+        self._live.stop()
+
+    def resume(self) -> None:
+        if self._stopped or not self._paused:
+            return
+        self._paused = False
+        self._live = self._new_live()
+        self._live.start()
         self._update()
+
+    def guard_prompt(
+        self,
+        callback: Callable[..., CallbackResult],
+    ) -> Callable[..., CallbackResult]:
+        def guarded(*args: object, **kwargs: object) -> CallbackResult:
+            self.pause()
+            try:
+                return callback(*args, **kwargs)
+            finally:
+                self.resume()
+
+        return guarded
 
     def thinking(self, step: int) -> None:
         if self._current_label or self._stages:
@@ -134,7 +171,7 @@ class StatusReporter:
 
     def action(self, action: AgentAction) -> None:
         self._consecutive_retries = 0
-        self._complete_current()
+        self._complete_current(refresh=False)
         stage, detail = _semantic_stage(action)
         if stage:
             self._current_label = stage
@@ -151,7 +188,7 @@ class StatusReporter:
     def recovery(self, detail: str) -> None:
         self._consecutive_retries += 1
         if self._consecutive_retries >= 2:
-            self._complete_current()
+            self._complete_current(refresh=False)
             self._current_label = "Recovering"
             self._current_detail = friendly_retry_detail(detail)
             if not any(s == self._current_detail for s, _ in self._stages):
@@ -221,7 +258,8 @@ class StatusReporter:
         self._is_generating = False
         self._stages.clear()
         self._stopped = True
-        self._live.stop()
+        if not self._paused:
+            self._live.stop()
 
     def model_stream_start(self, step: int) -> None:
         self._is_generating = True

@@ -198,6 +198,7 @@ def main() -> None:
 
         permission_policy.reset_task()
         agent: InteractiveAgent | None = None
+        reporter = StatusReporter()
         try:
             agent = create_agent(
                 settings=settings,
@@ -207,8 +208,8 @@ def main() -> None:
                 dry_run=dry_run,
                 max_steps=max_steps,
                 max_failures=max_failures,
-                approval_callback=permission_policy.approve,
-                reporter=StatusReporter(),
+                approval_callback=reporter.guard_prompt(permission_policy.approve),
+                reporter=reporter,
                 stream_model=stream_model,
                 require_process_isolation=sandbox_enabled,
             )
@@ -640,6 +641,7 @@ def run_resume_command(
         storage.get_work_report(run_id),
     )
     try:
+        reporter = StatusReporter()
         agent = create_agent(
             settings=settings,
             cwd=cwd,
@@ -648,8 +650,8 @@ def run_resume_command(
             dry_run=dry_run,
             max_steps=max_steps,
             max_failures=max_failures,
-            approval_callback=confirm_permission,
-            reporter=StatusReporter(),
+            approval_callback=reporter.guard_prompt(confirm_permission),
+            reporter=reporter,
             stream_model=stream_model,
             require_process_isolation=sandbox_enabled,
         )

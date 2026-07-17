@@ -501,6 +501,94 @@ def test_status_reporter_done_clears_live_state(monkeypatch) -> None:
     assert reporter._stages == []
 
 
+def test_status_reporter_suspends_live_display_while_prompting(monkeypatch) -> None:
+    live_instances = []
+
+    class FakeLive:
+        def __init__(self, *args, **kwargs) -> None:
+            self.started = False
+            self.stopped = False
+            live_instances.append(self)
+
+        def start(self) -> None:
+            self.started = True
+
+        def update(self, _renderable) -> None:
+            pass
+
+        def stop(self) -> None:
+            self.stopped = True
+
+    monkeypatch.setattr("code_agent.status.Live", FakeLive)
+    reporter = StatusReporter()
+
+    def prompt() -> str:
+        assert reporter._paused is True
+        assert live_instances[0].stopped is True
+        return "y"
+
+    guarded = reporter.guard_prompt(prompt)
+
+    assert guarded() == "y"
+    assert reporter._paused is False
+    assert len(live_instances) == 2
+    assert live_instances[1].started is True
+
+
+def test_status_reporter_restores_live_display_after_prompt_error(monkeypatch) -> None:
+    live_instances = []
+
+    class FakeLive:
+        def __init__(self, *args, **kwargs) -> None:
+            live_instances.append(self)
+
+        def start(self) -> None:
+            pass
+
+        def update(self, _renderable) -> None:
+            pass
+
+        def stop(self) -> None:
+            pass
+
+    monkeypatch.setattr("code_agent.status.Live", FakeLive)
+    reporter = StatusReporter()
+
+    def prompt() -> str:
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        reporter.guard_prompt(prompt)()
+
+    assert reporter._paused is False
+    assert len(live_instances) == 2
+
+
+def test_status_reporter_action_uses_one_live_update(monkeypatch) -> None:
+    class FakeLive:
+        def __init__(self, *args, **kwargs) -> None:
+            self.update_count = 0
+
+        def start(self) -> None:
+            pass
+
+        def update(self, _renderable) -> None:
+            self.update_count += 1
+
+        def stop(self) -> None:
+            pass
+
+    monkeypatch.setattr("code_agent.status.Live", FakeLive)
+    reporter = StatusReporter()
+    reporter._current_label = "Thinking"
+
+    from code_agent.schema import ReadFileAction
+
+    reporter.action(ReadFileAction(type="read_file", path="README.md"))
+
+    assert reporter._live.update_count == 1
+
+
 def test_is_persona_instruction() -> None:
     assert is_persona_instruction("You are a senior frontend engineer")
     assert is_persona_instruction("Act as a concise reviewer")

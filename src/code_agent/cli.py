@@ -206,6 +206,7 @@ def run(
         typer.echo(f"Sandbox: {workspace}")
         typer.echo(format_sandbox_limits(sandbox_workspace.policy))
 
+    reporter = StatusReporter()
     agent = create_agent(
         settings=settings,
         cwd=workspace,
@@ -213,8 +214,8 @@ def run(
         dry_run=dry_run,
         max_steps=max_steps,
         max_failures=max_failures,
-        approval_callback=confirm_permission,
-        reporter=StatusReporter(),
+        approval_callback=reporter.guard_prompt(confirm_permission),
+        reporter=reporter,
         stream_model=stream,
         profile=profile,
         provider=provider,
@@ -726,6 +727,7 @@ def resume(
         instruction or None,
         storage.get_work_report(run_id),
     )
+    reporter = StatusReporter()
     agent = create_agent(
         settings=settings,
         cwd=workspace,
@@ -733,8 +735,8 @@ def resume(
         dry_run=dry_run,
         max_steps=max_steps,
         max_failures=max_failures,
-        approval_callback=confirm_permission,
-        reporter=StatusReporter(),
+        approval_callback=reporter.guard_prompt(confirm_permission),
+        reporter=reporter,
         stream_model=stream,
         profile=profile,
         provider=provider,

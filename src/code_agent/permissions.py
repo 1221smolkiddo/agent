@@ -172,6 +172,7 @@ def confirm_permission(action: str, detail: str) -> str:
             default="n",
             show_choices=False,
             show_default=True,
+            console=console,
         )
         if response == "v":
             console.print(
