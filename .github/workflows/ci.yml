@@ -41,7 +41,8 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: uv sync --extra dev --extra parsing
       - run: uv run ruff check src tests
-      - run: uv run pytest
+      - name: Run unit and cross-platform tests
+        run: uv run pytest -m "not docker_security"
 
   docker-security:
     if: github.event_name != 'workflow_dispatch' || inputs.docker_security_tests == 'true'
