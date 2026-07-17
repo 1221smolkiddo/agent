@@ -57,8 +57,8 @@ hard security sandbox. These limitations are part of the operating contract.
 - Readiness monitoring currently proves localhost TCP acceptance, not application-level HTTP correctness.
 - Linux and Windows expose process-tree CPU and memory sampling. Other POSIX platforms may report monitoring as
   unavailable. Local resource limits are monitor-and-terminate thresholds, not kernel-enforced quotas.
-- Persistent container jobs are not implemented. Strict Docker/Podman profiles refuse `start_process` rather than
-  launching a durable process on the host outside the isolation boundary.
+- Reusable containers survive individual commands and Agent47 CLI runs, but not explicit removal, runtime data
+  resets, or host reboot. Managed jobs fail or follow their configured restart policy if their container vanishes.
 - Rotating logs and events deliberately discard the oldest backup after configured limits are reached.
 - Docker and Podman isolation depend on a correctly configured daemon, host virtualization, runtime security, and
   trusted image supply chain.
@@ -87,8 +87,8 @@ hard security sandbox. These limitations are part of the operating contract.
 - Symbol and dependency extraction is strongest for supported syntax and may be incomplete without optional tree-sitter parsing.
 - LSP features require separately installed language-server executables and inherit each server's indexing,
   configuration, startup-time, and protocol limitations.
-- Host language servers are intentionally unavailable in strict `--sandbox` mode. Container-backed persistent
-  LSP transport is not implemented, so semantic tools fail closed instead of escaping process isolation.
+- Container-backed LSP requires the selected image to contain the relevant language-server binary. Environment
+  detection does not install tools or implicitly build or pull unreviewed images.
 - Workspace symbol search aggregates relevant installed servers, but very large polyglot monorepos can make
   server startup and indexing expensive.
 - Code actions that contain edits are previewed as patches. Server commands and resource operations such as

@@ -72,4 +72,4 @@ jobs:
       - name: Inspect Docker sandbox health
         run: uv run code-agent sandbox health --backend docker
       - name: Run live Docker sandbox security tests
-        run: uv run pytest tests/test_sandbox.py -m docker_security
+        run: uv run pytest tests/test_sandbox.py tests/test_container_manager.py -m docker_security

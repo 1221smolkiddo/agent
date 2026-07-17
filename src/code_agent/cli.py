@@ -20,6 +20,7 @@ from .collaboration import (
     load_pr_template,
 )
 from .config import Settings
+from .container_manager import ContainerError, ContainerManager
 from .debug_bundle import export_debug_bundle
 from .doctor import run_doctor
 from .eval_reports import (
@@ -89,11 +90,13 @@ sandbox_app = typer.Typer(help="Inspect and promote sandbox workspace changes.")
 collab_app = typer.Typer(help="Branch, commit, PR, changelog, and collaboration helpers.")
 transactions_app = typer.Typer(help="Inspect, recover, undo, redo, and restore transactions.")
 processes_app = typer.Typer(help="Start, monitor, control, and recover managed processes.")
+containers_app = typer.Typer(help="Create, inspect, stop, and clean reusable workspace containers.")
 app.add_typer(history_app, name="history")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(collab_app, name="collab")
 app.add_typer(transactions_app, name="transactions")
 app.add_typer(processes_app, name="processes")
+app.add_typer(containers_app, name="containers")
 
 
 def validate_profile_option(value: Optional[str]) -> Optional[str]:
@@ -419,6 +422,60 @@ def sandbox_health_command(
         typer.echo(f"Sandbox unavailable: {exc}")
         raise typer.Exit(code=1)
     typer.echo(sandbox_health(policy).format_text())
+
+
+def _workspace_container(cwd: Path, backend: Optional[str]) -> ContainerManager:
+    settings = Settings()
+    policy = resolve_sandbox_policy(
+        cwd.resolve(),
+        backend=backend or settings.sandbox_backend,
+        container_image=settings.agent_sandbox_image,
+        require_process_isolation=True,
+    )
+    return ContainerManager(cwd.resolve(), policy)
+
+
+@containers_app.command("start")
+def container_start_command(
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    backend: Optional[str] = typer.Option(None, "--backend", help="Docker or Podman."),
+) -> None:
+    """Lazily create or reuse the hardened workspace execution container."""
+    try:
+        record = _workspace_container(cwd, backend).ensure_running()
+    except (ContainerError, SandboxIsolationError) as exc:
+        typer.echo(f"Container unavailable: {exc}")
+        raise typer.Exit(code=1)
+    typer.echo(json.dumps(record.__dict__, indent=2, ensure_ascii=False))
+
+
+@containers_app.command("status")
+def container_status_command(
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    backend: Optional[str] = typer.Option(None, "--backend", help="Docker or Podman."),
+) -> None:
+    """Inspect persisted and live workspace container state."""
+    try:
+        payload = _workspace_container(cwd, backend).reconcile()
+    except (ContainerError, SandboxIsolationError) as exc:
+        typer.echo(f"Container unavailable: {exc}")
+        raise typer.Exit(code=1)
+    typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
+
+
+@containers_app.command("stop")
+def container_stop_command(
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    backend: Optional[str] = typer.Option(None, "--backend", help="Docker or Podman."),
+    remove: bool = typer.Option(False, "--remove", help="Remove container state instead of stopping."),
+) -> None:
+    """Gracefully stop or fully remove the reusable workspace container."""
+    try:
+        changed = _workspace_container(cwd, backend).stop(remove=remove)
+    except (ContainerError, SandboxIsolationError) as exc:
+        typer.echo(f"Container unavailable: {exc}")
+        raise typer.Exit(code=1)
+    typer.echo("Container removed." if remove and changed else "Container stopped." if changed else "No container found.")
 
 
 @sandbox_app.command("apply")

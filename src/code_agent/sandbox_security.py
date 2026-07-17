@@ -115,6 +115,10 @@ class SandboxPolicy:
     cleanup: bool = True
     process_isolation_required: bool = False
     requested_backend: str = "local"
+    container_workspace: str = "/workspace"
+    container_reuse: bool = True
+    container_bind_mounts: tuple[str, ...] = ()
+    container_cache_volumes: tuple[str, ...] = ()
 
     @classmethod
     def from_workspace(
@@ -174,6 +178,15 @@ class SandboxPolicy:
             ),
             audit_enabled=bool(sandbox.get("audit_enabled", True)),
             cleanup=bool(sandbox.get("cleanup", True)),
+            container_workspace=str(sandbox.get("container_workspace", "/workspace")).strip()
+            or "/workspace",
+            container_reuse=bool(sandbox.get("container_reuse", True)),
+            container_bind_mounts=tuple(
+                str(item) for item in sandbox.get("bind_mounts", []) or []
+            ),
+            container_cache_volumes=tuple(
+                str(item) for item in sandbox.get("cache_volumes", []) or []
+            ),
         )
 
     def command_rejection(self, command: str, shell_policy: ShellPolicy) -> str | None:
@@ -460,11 +473,13 @@ class SandboxRunner:
         policy: SandboxPolicy,
         process_supervisor: ProcessSupervisor,
         audit_log: SandboxAuditLog,
+        container_manager: Any | None = None,
     ) -> None:
         self.workspace = workspace.resolve()
         self.policy = policy
         self.process_supervisor = process_supervisor
         self.audit_log = audit_log
+        self.container_manager = container_manager
 
     def run_shell(
         self,
@@ -515,14 +530,22 @@ class SandboxRunner:
         )
         start = time.monotonic()
         if self.policy.backend in {"docker", "podman", "container"}:
-            runtime = "podman" if self.policy.backend == "podman" else "docker"
-            result = self._run_container(
-                runtime,
-                command,
-                timeout_seconds=timeout_seconds,
-                env=env,
-                cancellation_token=cancellation_token,
-            )
+            if self.container_manager is not None:
+                result = self._run_reusable_container(
+                    command,
+                    timeout_seconds=timeout_seconds,
+                    env=env,
+                    cancellation_token=cancellation_token,
+                )
+            else:
+                runtime = "podman" if self.policy.backend == "podman" else "docker"
+                result = self._run_container(
+                    runtime,
+                    command,
+                    timeout_seconds=timeout_seconds,
+                    env=env,
+                    cancellation_token=cancellation_token,
+                )
         else:
             path_rejection = local_command_path_rejection(command, self.workspace)
             if path_rejection:
@@ -623,6 +646,70 @@ class SandboxRunner:
             disk=result_metadata,
         )
         return result
+
+    def _run_reusable_container(
+        self,
+        command: str,
+        *,
+        timeout_seconds: int,
+        env: dict[str, str],
+        cancellation_token: CancellationToken | None,
+    ) -> ShellProcessResult:
+        from .container_manager import ContainerError
+
+        try:
+            execution_id = uuid.uuid4().hex
+            exec_dir = self.workspace / ".code-agent" / "containers" / "exec"
+            exec_dir.mkdir(parents=True, exist_ok=True)
+            pid_file = exec_dir / f"{execution_id}.pid"
+            pid_file.touch()
+            try:
+                os.chmod(pid_file, 0o666)
+            except OSError:
+                pass
+            command_argv = shlex.split(command, posix=True)
+            if not command_argv:
+                raise ContainerError("Sandbox command cannot be empty.")
+            exec_argv = self.container_manager.exec_argv(
+                command_argv,
+                cwd=self.workspace,
+                env=env,
+                interactive=False,
+                execution_id=execution_id,
+            )
+            result = self.process_supervisor.run_shell(
+                command,
+                cwd=self.workspace,
+                timeout_seconds=timeout_seconds,
+                env=_container_runtime_env(),
+                cancellation_token=cancellation_token,
+                argv=exec_argv,
+            )
+            container_cleanup = False
+            if result.timed_out or result.cancelled:
+                container_cleanup = self.container_manager.terminate_exec(execution_id)
+            else:
+                self.container_manager.cleanup_exec(execution_id)
+            return ShellProcessResult(
+                completed=result.completed,
+                timed_out=result.timed_out,
+                cancelled=result.cancelled,
+                output=result.output,
+                cleanup_attempted=result.cleanup_attempted or container_cleanup,
+                metadata={
+                    **(result.metadata or {}),
+                    "container_reused": True,
+                    "container": self.container_manager.status(),
+                    "container_exec_cleanup": container_cleanup,
+                },
+                events=result.events,
+                duration_ms=result.duration_ms,
+            )
+        except (ContainerError, OSError, ValueError) as exc:
+            return ShellProcessResult(
+                completed=subprocess.CompletedProcess(command, 126, "", str(exc)),
+                metadata={"container_reused": False},
+            )
 
     def _run_container(
         self,

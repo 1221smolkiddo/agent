@@ -73,20 +73,21 @@ class CancellationToken:
 class ProcessSupervisor:
     """Tracks local child processes so stops and timeouts can clean up trees."""
 
-    def __init__(self, workspace: Path | None = None) -> None:
+    def __init__(self, workspace: Path | None = None, *, container_manager: Any = None) -> None:
         self._active: dict[int, subprocess.Popen[str]] = {}
         self._lock = threading.Lock()
         self._managed: Any = None
         if workspace is not None:
-            self.configure_workspace(workspace)
+            self.configure_workspace(workspace, container_manager=container_manager)
 
-    def configure_workspace(self, workspace: Path) -> None:
+    def configure_workspace(self, workspace: Path, *, container_manager: Any = None) -> None:
         resolved = workspace.resolve()
         if self._managed is not None and self._managed.workspace == resolved:
+            self._managed.container_manager = container_manager
             return
         from .managed_processes import ManagedProcessStore
 
-        self._managed = ManagedProcessStore(resolved)
+        self._managed = ManagedProcessStore(resolved, container_manager=container_manager)
 
     @property
     def active_count(self) -> int:
@@ -145,10 +146,11 @@ class ProcessSupervisor:
         env: dict[str, str],
         cancellation_token: CancellationToken | None = None,
         poll_seconds: float = 0.2,
+        argv: list[str] | None = None,
     ) -> ShellProcessResult:
         creationflags = windows_creation_flags()
         start_new_session = os.name != "nt"
-        process_args = split_command_argv(command)
+        process_args = list(argv) if argv is not None else split_command_argv(command)
         if not process_args:
             raise ValueError("Shell command cannot be empty.")
         process = subprocess.Popen(
@@ -512,11 +514,11 @@ def _coerce_process_output(value: str | bytes) -> str:
     return value
 
 
-def split_command_argv(command: str) -> list[str]:
+def split_command_argv(command: str, *, pin_python: bool = True) -> list[str]:
     argv = shlex.split(command, posix=os.name != "nt")
     if os.name == "nt":
         argv = [_strip_wrapping_quotes(item) for item in argv]
-    if argv and argv[0].lower() in {"python", "python3", "python.exe", "python3.exe"}:
+    if pin_python and argv and argv[0].lower() in {"python", "python3", "python.exe", "python3.exe"}:
         argv[0] = sys.executable
     return argv
 

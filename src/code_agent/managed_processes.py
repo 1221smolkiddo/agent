@@ -52,16 +52,22 @@ class ManagedProcessSpec:
     log_max_bytes: int = 5_000_000
     log_backups: int = 3
     created_at: str = ""
+    execution_backend: str = "local"
+    container_runtime_path: str | None = None
+    container_name: str | None = None
+    container_workspace: str | None = None
+    container_cwd: str | None = None
 
     def public_payload(self) -> dict[str, Any]:
         payload = asdict(self)
-        payload["pty_supported"] = os.name != "nt"
+        payload["pty_supported"] = os.name != "nt" or self.execution_backend == "container"
         return payload
 
 
 class ManagedProcessStore:
-    def __init__(self, workspace: Path) -> None:
+    def __init__(self, workspace: Path, *, container_manager: Any = None) -> None:
         self.workspace = workspace.resolve()
+        self.container_manager = container_manager
         self.root = self.workspace / PROCESS_ROOT
         self.jobs = self.root / "jobs"
         self.jobs.mkdir(parents=True, exist_ok=True)
@@ -86,7 +92,15 @@ class ManagedProcessStore:
         log_max_bytes: int = 5_000_000,
         log_backups: int = 3,
     ) -> dict[str, Any]:
-        argv = use_background_python(split_command_argv(command))
+        parsed_argv = split_command_argv(
+            command,
+            pin_python=self.container_manager is None,
+        )
+        argv = (
+            parsed_argv
+            if self.container_manager is not None
+            else use_background_python(parsed_argv)
+        )
         if not argv:
             raise ManagedProcessError("Process command cannot be empty.")
         resolved_cwd = cwd.resolve()
@@ -96,13 +110,14 @@ class ManagedProcessStore:
             raise ManagedProcessError("Process cwd must remain inside the workspace.") from exc
         if pty and not interactive:
             raise ManagedProcessError("PTY mode requires interactive=true.")
-        if pty and os.name == "nt":
+        if pty and os.name == "nt" and self.container_manager is None:
             raise ManagedProcessError(
                 "Native PTY is unavailable on Windows without a ConPTY backend; use interactive pipe mode."
             )
         process_id = f"proc-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}-{uuid.uuid4().hex[:8]}"
         created_at = datetime.now(UTC).isoformat()
         normalized_env = "\n".join(f"{key}={env[key]}" for key in sorted(env))
+        container = self.container_manager.ensure_running(env=env) if self.container_manager else None
         spec = ManagedProcessSpec(
             process_id=process_id,
             command=command,
@@ -124,10 +139,26 @@ class ManagedProcessStore:
             log_max_bytes=log_max_bytes,
             log_backups=log_backups,
             created_at=created_at,
+            execution_backend="container" if container else "local",
+            container_runtime_path=container.runtime_path if container else None,
+            container_name=container.name if container else None,
+            container_workspace=container.container_workspace if container else None,
+            container_cwd=(
+                self.container_manager.map_path(resolved_cwd)
+                if self.container_manager is not None
+                else None
+            ),
         )
         job_dir = self.jobs / process_id
         job_dir.mkdir(parents=True)
         (job_dir / "controls").mkdir()
+        if container is not None:
+            container_pid = job_dir / "container.pid"
+            container_pid.touch()
+            try:
+                os.chmod(container_pid, 0o666)
+            except OSError:
+                pass
         _atomic_json(job_dir / "spec.json", asdict(spec))
         _atomic_json(
             job_dir / "state.json",

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from .command_diagnostics import diagnose_command, format_diagnostic_summary
+from .container_manager import ContainerManager
 from .memory import (
     MemoryUpdate,
     build_memory_write_plan,
@@ -163,32 +164,70 @@ class ToolRegistry:
         self.shell_network_policy = shell_network_policy.strip().lower()
         self.index_cache = index_cache
         self.cancellation_token = cancellation_token or CancellationToken()
-        self.process_supervisor = process_supervisor or ProcessSupervisor(self.workspace)
-        self.process_supervisor.configure_workspace(self.workspace)
         self.sandbox_policy = sandbox_policy or SandboxPolicy.from_workspace(self.workspace)
+        self.audit_log = SandboxAuditLog(
+            self.workspace,
+            enabled=self.sandbox_policy.audit_enabled,
+        )
+        self.container_manager = (
+            ContainerManager(self.workspace, self.sandbox_policy, self.audit_log)
+            if self.sandbox_policy.process_isolated
+            else None
+        )
+        self.process_supervisor = process_supervisor or ProcessSupervisor(self.workspace)
+        self.process_supervisor.configure_workspace(
+            self.workspace,
+            container_manager=self.container_manager,
+        )
         self.lsp_manager = lsp_manager or LspManager(
             self.workspace,
-            enabled=not self.sandbox_policy.process_isolation_required,
+            enabled=(
+                not self.sandbox_policy.process_isolation_required
+                or self.container_manager is not None
+            ),
             disabled_reason=(
                 "Host language-server processes are refused because this sandbox requires "
-                "process isolation. Use a non-isolated profile or a future container-backed LSP."
+                "process isolation and no container execution backend is available."
                 if self.sandbox_policy.process_isolation_required
+                and self.container_manager is None
                 else ""
+            ),
+            process_factory=(
+                self.container_manager.popen
+                if self.container_manager is not None
+                else subprocess.Popen
+            ),
+            command_resolver=(
+                self.container_manager.resolve_command
+                if self.container_manager is not None
+                else None
+            ),
+            runtime_workspace=(
+                self.container_manager.container_workspace
+                if self.container_manager is not None
+                else None
+            ),
+            host_uri_to_runtime=(
+                self.container_manager.host_uri_to_container
+                if self.container_manager is not None
+                else None
+            ),
+            runtime_uri_to_host=(
+                self.container_manager.container_uri_to_host
+                if self.container_manager is not None
+                else None
             ),
         )
         self.transaction_manager = transaction_manager or WorkspaceTransactionManager(
             self.workspace
         )
         self.transaction_validator = transaction_validator
-        self.audit_log = SandboxAuditLog(
-            self.workspace,
-            enabled=self.sandbox_policy.audit_enabled,
-        )
         self.sandbox_runner = SandboxRunner(
             self.workspace,
             self.sandbox_policy,
             self.process_supervisor,
             self.audit_log,
+            container_manager=self.container_manager,
         )
         if self.shell_network_policy not in {"allow", "deny"}:
             raise ValueError("shell_network_policy must be one of: allow, deny")
@@ -906,7 +945,7 @@ class ToolRegistry:
         sandbox_rejection = self.sandbox_policy.command_rejection(action.command, policy)
         if sandbox_rejection:
             return ToolResult(ok=False, output=sandbox_rejection)
-        if self.sandbox_policy.backend != "local":
+        if self.sandbox_policy.backend != "local" and self.container_manager is None:
             return ToolResult(
                 ok=False,
                 output=(

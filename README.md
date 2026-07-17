@@ -211,11 +211,12 @@ Core controls include:
 - Untrusted-context markers for repository content, diffs, command output, search results, and web results.
 - Private HOME, temporary, and cache directories for local commands.
 - Disk, process, CPU, memory, timeout, image, digest, and network controls for configured sandboxes.
+- Per-workspace reusable Docker/Podman containers shared by shell commands, LSP servers, and managed jobs.
 - Language-server edits are converted to unified patches and never bypass normal patch approval and verification.
 
 Ordinary runs use the hardened local subprocess policy. `--sandbox` is a strict security mode: it
 selects a healthy Docker or Podman backend and refuses to start if process isolation cannot be proven.
-Host language servers are disabled in strict sandbox runs until a container-backed LSP transport is available.
+Strict sandbox runs transport language-server JSON-RPC and managed workloads through the workspace container.
 
 ### Security Reports
 
@@ -234,6 +235,7 @@ Agent47 stores local state under `.code-agent/`:
 - `debug-bundles/`: explicitly exported redacted diagnostics.
 - `eval-reports/`: saved benchmark results.
 - `processes/jobs/`: managed-process specifications, state, rotating logs, events, and one-shot controls.
+- `containers/state.json`: reusable workspace-container identity, image, runtime, mount, and health metadata.
 
 Model-backed runs send the user task, system instructions, approved context, bounded project memory,
 tool evidence, and verification output to the configured provider. Provider retention is governed by
@@ -263,6 +265,8 @@ launch environment and are never written to the job specification. Output is red
 and event persistence. Readiness can use an explicit localhost port or a port detected from common local URLs.
 Unexpected non-zero exits can restart with bounded exponential backoff. Stop requests first signal the process
 group, wait for the grace period, and then force the remaining tree.
+When container execution is enabled, the detached control worker remains on the host while the actual project
+workload, readiness probe, and resource scope run inside the reusable workspace container.
 
 ## Sandboxes
 
@@ -276,11 +280,19 @@ uv run code-agent sandbox diff .code-agent/sandboxes/<name>
 uv run code-agent sandbox apply .code-agent/sandboxes/<name>
 ```
 
-Container commands execute directly as parsed argv without an inner shell. Backends add read-only root
+Container commands execute through one lazily created workspace container as direct `docker exec` or
+`podman exec` argv. Backends add read-only root
 filesystems, dropped capabilities, pid and resource limits, isolated environment variables, and offline
 networking by default. Strict health requires a rootless runtime, seccomp, an explicit non-root container
-UID, and a locally reviewed image that resolves to an immutable digest. Containers receive unique names,
-CID files, audit labels, and forced cleanup after success, failure, cancellation, or timeout.
+UID, and a locally reviewed image that resolves to an immutable digest. Containers receive deterministic
+workspace names, audit labels, persistent dependency caches, stale-state reconciliation, and explicit cleanup.
+
+```bash
+uv run code-agent containers start --backend docker
+uv run code-agent containers status --backend docker
+uv run code-agent containers stop --backend docker
+uv run code-agent containers stop --backend docker --remove
+```
 
 Production policies can additionally require a Trivy vulnerability gate. Enabling shell networking with
 a domain allowlist is refused because bridge networking cannot enforce domains without a managed egress

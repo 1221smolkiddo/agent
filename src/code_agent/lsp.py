@@ -111,11 +111,17 @@ class LspClient:
         *,
         request_timeout: float = 10.0,
         process_factory: Callable[..., subprocess.Popen[bytes]] = subprocess.Popen,
+        runtime_workspace: str | None = None,
+        host_uri_to_runtime: Callable[[str], str] | None = None,
+        runtime_uri_to_host: Callable[[str], str] | None = None,
     ) -> None:
         self.workspace = workspace.resolve()
         self.server = server
         self.request_timeout = request_timeout
         self.process_factory = process_factory
+        self.runtime_workspace = runtime_workspace
+        self.host_uri_to_runtime = host_uri_to_runtime or (lambda uri: uri)
+        self.runtime_uri_to_host = runtime_uri_to_host or (lambda uri: uri)
         self.process: subprocess.Popen[bytes] | None = None
         self._next_id = 0
         self._pending: dict[int, queue.Queue[dict[str, Any]]] = {}
@@ -141,7 +147,7 @@ class LspClient:
         self.capabilities = {}
         with self._notification_condition:
             self._notifications.clear()
-        command = [part.replace("{workspace}", str(self.workspace)) for part in self.server.command]
+        command = [self._runtime_command_part(part) for part in self.server.command]
         try:
             self.process = self.process_factory(
                 command,
@@ -176,14 +182,15 @@ class LspClient:
         self._reader_thread.start()
         self._stderr_thread.start()
         try:
+            workspace_uri = _workspace_uri(self.runtime_workspace, self.workspace)
             response = self.request(
                 "initialize",
                 {
                     "processId": os.getpid(),
                     "clientInfo": {"name": "Agent47", "version": "0.1.0"},
-                    "rootUri": self.workspace.as_uri(),
+                    "rootUri": workspace_uri,
                     "workspaceFolders": [
-                        {"uri": self.workspace.as_uri(), "name": self.workspace.name}
+                        {"uri": workspace_uri, "name": self.workspace.name}
                     ],
                     "capabilities": _client_capabilities(),
                     "initializationOptions": {},
@@ -235,7 +242,7 @@ class LspClient:
         resolved = path.resolve()
         validate_workspace_boundary(resolved, self.workspace)
         content = resolved.read_text(encoding="utf-8")
-        uri = resolved.as_uri()
+        uri = self.host_uri_to_runtime(resolved.as_uri())
         digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
         previous = self._documents.get(uri)
         if previous is None:
@@ -344,7 +351,10 @@ class LspClient:
             return
         while True:
             try:
-                message = read_lsp_message(process.stdout)
+                message = _map_payload_uris(
+                    read_lsp_message(process.stdout),
+                    self.runtime_uri_to_host,
+                )
             except (EOFError, OSError, ValueError):
                 break
             if "id" in message and ("result" in message or "error" in message):
@@ -383,7 +393,8 @@ class LspClient:
             items = params.get("items", [])
             result: Any = [None] * len(items) if isinstance(items, list) else []
         elif method == "workspace/workspaceFolders":
-            result = [{"uri": self.workspace.as_uri(), "name": self.workspace.name}]
+            workspace_uri = _workspace_uri(self.runtime_workspace, self.workspace)
+            result = [{"uri": workspace_uri, "name": self.workspace.name}]
         else:
             result = None
         try:
@@ -406,6 +417,18 @@ class LspClient:
         detail = f"{self.server.spec.name} language server stopped unexpectedly."
         return detail + (f" Recent stderr:\n{suffix}" if suffix else "")
 
+    def _runtime_command_part(self, value: str) -> str:
+        value = value.replace(
+            "{workspace}",
+            self.runtime_workspace or str(self.workspace),
+        )
+        if self.runtime_workspace:
+            host = str(self.workspace)
+            if value == host or value.startswith(host + os.sep):
+                suffix = value[len(host) :].replace("\\", "/")
+                return self.runtime_workspace.rstrip("/") + suffix
+        return value
+
 
 class LspManager:
     def __init__(
@@ -419,6 +442,12 @@ class LspManager:
         client_factory: Callable[..., LspClient] = LspClient,
         enabled: bool = True,
         disabled_reason: str = "",
+        process_factory: Callable[..., subprocess.Popen[bytes]] = subprocess.Popen,
+        command_resolver: Callable[[tuple[tuple[str, ...], ...]], tuple[str, ...] | None]
+        | None = None,
+        runtime_workspace: str | None = None,
+        host_uri_to_runtime: Callable[[str], str] | None = None,
+        runtime_uri_to_host: Callable[[str], str] | None = None,
     ) -> None:
         self.workspace = workspace.resolve()
         self.specs = specs
@@ -428,6 +457,11 @@ class LspManager:
         self.client_factory = client_factory
         self.enabled = enabled
         self.disabled_reason = disabled_reason
+        self.process_factory = process_factory
+        self.command_resolver = command_resolver
+        self.runtime_workspace = runtime_workspace
+        self.host_uri_to_runtime = host_uri_to_runtime
+        self.runtime_uri_to_host = runtime_uri_to_host
         self._clients: dict[str, LspClient] = {}
         self._lock = threading.RLock()
 
@@ -711,17 +745,30 @@ class LspManager:
                 raise LspServerUnavailable(
                     f"No {spec.name} language server was found. Install one of: {commands}."
                 )
-            client = self.client_factory(
-                self.workspace,
-                resolved,
-                request_timeout=self.request_timeout,
-            )
+            client_options: dict[str, Any] = {"request_timeout": self.request_timeout}
+            if self.runtime_workspace is not None:
+                client_options.update(
+                    {
+                        "process_factory": self.process_factory,
+                        "runtime_workspace": self.runtime_workspace,
+                        "host_uri_to_runtime": self.host_uri_to_runtime,
+                        "runtime_uri_to_host": self.runtime_uri_to_host,
+                    }
+                )
+            client = self.client_factory(self.workspace, resolved, **client_options)
             client.restart_count = restart_count
             client.start()
             self._clients[spec.name] = client
             return client
 
     def _resolve_server(self, spec: LspServerSpec) -> ResolvedLspServer | None:
+        if self.command_resolver is not None:
+            command = self.command_resolver(spec.commands)
+            if command is None:
+                return None
+            if spec.name == "java":
+                command = (*command, "-data", "{workspace}/.code-agent/lsp/java")
+            return ResolvedLspServer(spec=spec, command=command)
         for candidate in spec.commands:
             executable = shutil.which(candidate[0])
             if executable:
@@ -1080,3 +1127,21 @@ def _lsp_environment() -> dict[str, str]:
 
 def _dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _map_payload_uris(value: Any, mapper: Callable[[str], str]) -> Any:
+    if isinstance(value, dict):
+        return {key: _map_payload_uris(item, mapper) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_map_payload_uris(item, mapper) for item in value]
+    if isinstance(value, str) and value.startswith("file:"):
+        return mapper(value)
+    return value
+
+
+def _workspace_uri(runtime_workspace: str | None, host_workspace: Path) -> str:
+    if runtime_workspace is None:
+        return host_workspace.as_uri()
+    from urllib.parse import quote
+
+    return "file://" + quote(runtime_workspace, safe="/")

@@ -154,8 +154,9 @@ escalating. Worker disappearance is reconciled as orphaned state rather than rep
 Typed process actions and the `processes` CLI expose start, list, inspect, logs, cursor-based events, input,
 restart, and stop. Agent run steps and work reports retain compact lifecycle records. Development commands pass
 through the same classification, workspace-path, network, approval, and environment-isolation boundaries as
-foreground commands. Strict container profiles fail closed until a durable container-job backend exists rather
-than launching a host process outside the sandbox.
+foreground commands. Under a container policy, the durable host control worker launches the project workload
+through the shared `ContainerManager`, preserving logs, input, restart, readiness, and stop APIs while project
+code stays inside the process-isolation boundary.
 
 ### Language Intelligence
 
@@ -171,9 +172,10 @@ unified patches. They do not write directly; the model must submit the patch thr
 `apply_patch` permission, mutation, revert, and verification path. Resource operations such as server-requested
 file creation, rename, or deletion are reported as unsupported rather than executed implicitly.
 
-Language servers are local developer tools and may execute project-aware logic. Therefore `ToolRegistry`
-disables host LSP startup whenever sandbox policy requires process isolation. This is fail-closed: strict
-container sandbox runs do not silently launch an unisolated host language server.
+Language servers are project-aware executables. `ToolRegistry` uses the shared container transport whenever
+policy requires process isolation. `docker exec -i` or `podman exec -i` forwards stdio JSON-RPC, while host
+file URIs map to the configured container workspace and back before higher-level normalization. Missing runtime
+or server binaries still fail closed.
 
 ### Transactional Editing
 
@@ -208,6 +210,11 @@ rewriting the original journal. The `transactions` CLI group and typed agent act
 undo, redo, and restore. Transaction IDs and records are exported through SQLite run steps, NDJSON results,
 terminal status, work reports, and audit logs.
 
+`container_manager.py` owns one deterministic, lazily started container per workspace. It detects devcontainer,
+Compose, Dockerfile, and language markers; validates the configured local image; bind-mounts the workspace;
+attaches dependency-cache volumes; reuses healthy matching containers; and reconciles stale state. Shell
+commands, LSP servers, and managed processes consume its common exec and path-mapping APIs.
+
 Container execution supports Docker and Podman with offline networking by default, read-only root filesystems,
 resource and pid limits, dropped capabilities, isolated environment variables, and image policy validation.
 Commands are parsed into argv and passed directly to the container image without an inner shell.
@@ -223,10 +230,11 @@ Container health also verifies rootless runtime operation and seccomp before exe
 selects `docker-default` when AppArmor is reported by the runtime. The workload runs
 as the configured non-root UID; disposable workspace copies receive only the POSIX permissions needed by
 that UID. Image tags are resolved to locally inspected repository digests before launch. Optional Trivy
-policy blocks configured vulnerability severities. Every workload has a unique name, CID file, and labels;
-the runtime receives an unconditional forced-remove request in `finally`, including cancellation and timeout
-paths. Only runtime connection variables such as `DOCKER_HOST` survive into the host runtime CLI process,
-and none are forwarded into the workload.
+policy blocks configured vulnerability severities. Reusable containers have deterministic workspace labels and
+configuration fingerprints; mismatched or stale instances are replaced instead of reused. The legacy disposable
+runner retains unique names, CID files, and unconditional forced cleanup for compatibility. Only runtime
+connection variables such as `DOCKER_HOST` survive into the host runtime CLI process, and none are forwarded
+into the workload.
 
 Network policy is deliberately binary at the container boundary: `none` by default or explicitly approved
 bridge access. A configured domain allowlist with bridge access is rejected because DNS names cannot be

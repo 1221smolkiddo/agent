@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -101,6 +102,7 @@ class ProcessWorker:
 
     def _start_child(self) -> None:
         creationflags = windows_creation_flags()
+        child_argv = self._child_argv()
         common: dict[str, Any] = {
             "cwd": self.spec.cwd,
             "env": dict(os.environ),
@@ -108,13 +110,13 @@ class ProcessWorker:
             "creationflags": creationflags,
             "start_new_session": os.name != "nt",
         }
-        if self.spec.pty:
+        if self.spec.pty and self.spec.execution_backend != "container":
             import pty
 
             master, slave = pty.openpty()
             self.pty_master = master
             self.process = subprocess.Popen(
-                self.spec.argv,
+                child_argv,
                 stdin=slave,
                 stdout=slave,
                 stderr=slave,
@@ -125,18 +127,19 @@ class ProcessWorker:
             self.readers = [self._start_pty_reader(master)]
         else:
             self.process = subprocess.Popen(
-                self.spec.argv,
+                child_argv,
                 stdin=subprocess.PIPE if self.spec.interactive else subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.STDOUT if self.spec.pty else subprocess.PIPE,
                 text=True,
                 bufsize=1,
                 **common,
             )
             self.readers = [
-                self._start_text_reader("stdout", self.process.stdout),
-                self._start_text_reader("stderr", self.process.stderr),
+                self._start_text_reader("terminal" if self.spec.pty else "stdout", self.process.stdout),
             ]
+            if not self.spec.pty:
+                self.readers.append(self._start_text_reader("stderr", self.process.stderr))
         self.started_monotonic = time.monotonic()
         self.last_health = None
         self.detected_port = self.spec.readiness_port
@@ -156,7 +159,39 @@ class ProcessWorker:
             restart_count=self.restart_count,
             pty=self.spec.pty,
             interactive=self.spec.interactive,
+            execution_backend=self.spec.execution_backend,
+            container_name=self.spec.container_name,
         )
+
+    def _child_argv(self) -> list[str]:
+        if self.spec.execution_backend != "container":
+            return self.spec.argv
+        if not self.spec.container_runtime_path or not self.spec.container_name:
+            raise RuntimeError("Container process spec is missing runtime metadata.")
+        pid_path = (
+            f"{(self.spec.container_workspace or '/workspace').rstrip('/')}"
+            f"/.code-agent/processes/jobs/{self.spec.process_id}/container.pid"
+        )
+        command = [self.spec.container_runtime_path, "exec", "-i"]
+        if self.spec.pty:
+            command.append("-t")
+        command.extend(["-w", self.spec.container_cwd or self.spec.container_workspace or "/workspace"])
+        for key in self.spec.environment_keys:
+            value = os.environ.get(key)
+            if value is not None and key in {"CI", "LANG", "LC_ALL", "NO_COLOR", "PYTHONUNBUFFERED", "TERM", "TZ"}:
+                command.extend(["-e", f"{key}={value}"])
+        command.extend(
+            [
+                self.spec.container_name,
+                "sh",
+                "-c",
+                'echo $$ > "$1"; shift; exec "$@"',
+                "agent47",
+                pid_path,
+                *self.spec.argv,
+            ]
+        )
+        return command
 
     def _monitor_child(self) -> int:
         assert self.process is not None
@@ -170,13 +205,13 @@ class ProcessWorker:
                 grace = 5.0
                 self._write_state(status="stopping", ready=False, health="stopping")
                 self._emit("stopping", requested_restart=self.restart_requested, grace_seconds=grace)
-                terminate_process_tree(process, grace_seconds=grace)
+                self._terminate_child(process, grace_seconds=grace)
                 break
             if self.spec.timeout_seconds and time.monotonic() - self.started_monotonic >= self.spec.timeout_seconds:
                 self.stop_requested = True
                 self.failure_reason = "timeout"
                 self._emit("timeout", timeout_seconds=self.spec.timeout_seconds, severity="error")
-                terminate_process_tree(process, grace_seconds=3.0)
+                self._terminate_child(process, grace_seconds=3.0)
                 break
             time.sleep(0.1)
         for reader in self.readers:
@@ -292,7 +327,11 @@ class ProcessWorker:
     def _monitor_health(self) -> None:
         if self.detected_port is None:
             return
-        healthy = check_local_port(self.detected_port)
+        healthy = (
+            self._container_port_ready(self.detected_port)
+            if self.spec.execution_backend == "container"
+            else check_local_port(self.detected_port)
+        )
         if healthy == self.last_health:
             return
         self.last_health = healthy
@@ -304,7 +343,11 @@ class ProcessWorker:
         if self.process is None or time.monotonic() - self.last_resource_emit < 1.0:
             return
         self.last_resource_emit = time.monotonic()
-        resources = sample_process_resources(self.process.pid)
+        resources = (
+            self._container_resources()
+            if self.spec.execution_backend == "container"
+            else sample_process_resources(self.process.pid)
+        )
         self._write_state(resources=resources)
         self._emit("resource", **resources)
         memory = resources.get("memory_mb")
@@ -329,6 +372,115 @@ class ProcessWorker:
                 actual=cpu,
                 limit=self.spec.cpu_time_limit_seconds,
             )
+
+    def _terminate_child(self, process: subprocess.Popen[Any], *, grace_seconds: float) -> None:
+        if self.spec.execution_backend != "container":
+            terminate_process_tree(process, grace_seconds=grace_seconds)
+            return
+        self._signal_container_process("TERM")
+        try:
+            process.wait(timeout=grace_seconds)
+            return
+        except subprocess.TimeoutExpired:
+            self._signal_container_process("KILL")
+        terminate_process_tree(process, grace_seconds=1.0)
+
+    def _signal_container_process(self, signal_name: str) -> None:
+        if not self.spec.container_runtime_path or not self.spec.container_name:
+            return
+        pid_path = (
+            f"{(self.spec.container_workspace or '/workspace').rstrip('/')}"
+            f"/.code-agent/processes/jobs/{self.spec.process_id}/container.pid"
+        )
+        subprocess.run(
+            [
+                self.spec.container_runtime_path,
+                "exec",
+                self.spec.container_name,
+                "sh",
+                "-c",
+                'test -f "$1" && kill -"$2" "$(cat "$1")"',
+                "agent47",
+                pid_path,
+                signal_name,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+            creationflags=windows_creation_flags(new_process_group=False),
+        )
+
+    def _container_port_ready(self, port: int) -> bool:
+        if not self.spec.container_runtime_path or not self.spec.container_name:
+            return False
+        script = (
+            "import socket,sys; s=socket.socket(); s.settimeout(.25); "
+            "s.connect(('127.0.0.1',int(sys.argv[1]))); s.close()"
+        )
+        for executable in ("python3", "python"):
+            completed = subprocess.run(
+                [
+                    self.spec.container_runtime_path,
+                    "exec",
+                    self.spec.container_name,
+                    executable,
+                    "-c",
+                    script,
+                    str(port),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+                creationflags=windows_creation_flags(new_process_group=False),
+            )
+            if completed.returncode == 0:
+                return True
+        return False
+
+    def _container_resources(self) -> dict[str, Any]:
+        if not self.spec.container_runtime_path or not self.spec.container_name:
+            return {"available": False}
+        completed = subprocess.run(
+            [
+                self.spec.container_runtime_path,
+                "stats",
+                "--no-stream",
+                "--format",
+                "{{.CPUPerc}}|{{.MemUsage}}|{{.PIDs}}",
+                self.spec.container_name,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+            creationflags=windows_creation_flags(new_process_group=False),
+        )
+        if completed.returncode != 0:
+            return {"available": False}
+        try:
+            cpu_raw, memory_raw, pids_raw = completed.stdout.strip().split("|", 2)
+            memory_match = re.fullmatch(
+                r"([0-9.]+)\s*([KMGTP]i?B)",
+                memory_raw.split("/", 1)[0].strip(),
+                re.I,
+            )
+            if memory_match is None:
+                return {"available": False}
+            memory_mb = _memory_to_mb(
+                float(memory_match.group(1)),
+                memory_match.group(2),
+            )
+            return {
+                "available": True,
+                "scope": "container",
+                "cpu_percent": float(cpu_raw.rstrip("%")),
+                "memory_mb": round(memory_mb, 3),
+                "pids": int(pids_raw.strip()),
+            }
+        except (TypeError, ValueError):
+            return {"available": False}
 
     def _append_rotating_log(self, stream: str, text: str) -> None:
         path = self.job_dir / f"{stream}.log"
@@ -402,6 +554,23 @@ class ProcessWorker:
                 if attempt == 19:
                     raise
                 time.sleep(0.02 * (attempt + 1))
+
+
+def _memory_to_mb(value: float, unit: str) -> float:
+    normalized = unit.upper()
+    factors = {
+        "KB": 1 / 1000,
+        "KIB": 1 / 1024,
+        "MB": 1.0,
+        "MIB": 1.0,
+        "GB": 1000.0,
+        "GIB": 1024.0,
+        "TB": 1_000_000.0,
+        "TIB": 1024.0 * 1024.0,
+        "PB": 1_000_000_000.0,
+        "PIB": 1024.0 * 1024.0 * 1024.0,
+    }
+    return value * factors.get(normalized, 1.0)
 
 
 def main() -> None:
