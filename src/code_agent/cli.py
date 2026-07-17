@@ -65,8 +65,19 @@ from .sandbox_security import (
 from .storage import AgentStorage
 from .status import StatusReporter
 from .terminal_ui import print_work_report_panel
+from .tools import ToolRegistry
 from .transactions import TransactionError, WorkspaceTransactionManager
 from .work_report import should_show_work_report
+from .schema import (
+    InspectProcessAction,
+    ListProcessesAction,
+    ProcessEventsAction,
+    ReadProcessLogsAction,
+    RestartProcessAction,
+    SendProcessInputAction,
+    StartProcessAction,
+    StopProcessAction,
+)
 
 app = typer.Typer(help="A CLI-first coding agent.")
 history_app = typer.Typer(
@@ -77,10 +88,12 @@ history_app = typer.Typer(
 sandbox_app = typer.Typer(help="Inspect and promote sandbox workspace changes.")
 collab_app = typer.Typer(help="Branch, commit, PR, changelog, and collaboration helpers.")
 transactions_app = typer.Typer(help="Inspect, recover, undo, redo, and restore transactions.")
+processes_app = typer.Typer(help="Start, monitor, control, and recover managed processes.")
 app.add_typer(history_app, name="history")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(collab_app, name="collab")
 app.add_typer(transactions_app, name="transactions")
+app.add_typer(processes_app, name="processes")
 
 
 def validate_profile_option(value: Optional[str]) -> Optional[str]:
@@ -791,6 +804,151 @@ def transactions_recover_command(
         if result.conflicts:
             typer.echo("Conflicts: " + ", ".join(result.conflicts))
     if any(not result.ok for result in results):
+        raise typer.Exit(code=1)
+
+
+@processes_app.command("start")
+def processes_start_command(
+    command: str = typer.Argument(..., help="Shell-free command to start."),
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    name: Optional[str] = typer.Option(None, "--name", help="Stable display name."),
+    working_directory: Optional[str] = typer.Option(
+        None,
+        "--working-directory",
+        help="Workspace-relative process working directory.",
+    ),
+    interactive: bool = typer.Option(False, "--interactive", help="Keep stdin controllable."),
+    pty: bool = typer.Option(False, "--pty", help="Allocate a native PTY where supported."),
+    timeout_seconds: int = typer.Option(0, "--timeout", min=0, help="Zero disables timeout."),
+    readiness_port: Optional[int] = typer.Option(None, "--port", min=1, max=65535),
+    auto_restart: bool = typer.Option(False, "--auto-restart"),
+    max_restarts: int = typer.Option(3, "--max-restarts", min=0, max=20),
+    memory_limit_mb: Optional[int] = typer.Option(None, "--memory-mb", min=16),
+    cpu_time_limit_seconds: Optional[int] = typer.Option(None, "--cpu-seconds", min=1),
+) -> None:
+    """Start a durable managed process."""
+    _run_process_tool(
+        cwd,
+        StartProcessAction(
+            type="start_process",
+            command=command,
+            name=name,
+            working_directory=working_directory,
+            interactive=interactive,
+            pty=pty,
+            timeout_seconds=timeout_seconds,
+            readiness_port=readiness_port,
+            auto_restart=auto_restart,
+            max_restarts=max_restarts,
+            memory_limit_mb=memory_limit_mb,
+            cpu_time_limit_seconds=cpu_time_limit_seconds,
+        ),
+    )
+
+
+@processes_app.command("list")
+def processes_list_command(
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    active: bool = typer.Option(False, "--active", help="Hide finished jobs."),
+) -> None:
+    """List persisted process state."""
+    _run_process_tool(
+        cwd,
+        ListProcessesAction(type="list_processes", include_finished=not active),
+    )
+
+
+@processes_app.command("inspect")
+def processes_inspect_command(
+    process_id: str,
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+) -> None:
+    """Inspect lifecycle, health, ports, and resources."""
+    _run_process_tool(cwd, InspectProcessAction(type="inspect_process", process_id=process_id))
+
+
+@processes_app.command("logs")
+def processes_logs_command(
+    process_id: str,
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    stream: str = typer.Option("all", "--stream", help="all, stdout, stderr, or terminal."),
+    tail_chars: int = typer.Option(20000, "--tail-chars", min=100, max=200000),
+) -> None:
+    """Read bounded persistent logs."""
+    _run_process_tool(
+        cwd,
+        ReadProcessLogsAction(
+            type="read_process_logs",
+            process_id=process_id,
+            stream=stream,
+            tail_chars=tail_chars,
+        ),
+    )
+
+
+@processes_app.command("events")
+def processes_events_command(
+    process_id: str,
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    after: int = typer.Option(0, "--after", min=0, help="Return events after this cursor."),
+    limit: int = typer.Option(500, "--limit", min=1, max=2000),
+) -> None:
+    """Consume ordered NDJSON-derived process events."""
+    _run_process_tool(
+        cwd,
+        ProcessEventsAction(type="process_events", process_id=process_id, after=after, limit=limit),
+    )
+
+
+@processes_app.command("input")
+def processes_input_command(
+    process_id: str,
+    data: str = typer.Argument(..., help="Input text; include a newline when required."),
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+) -> None:
+    """Send input through a durable interactive control channel."""
+    _run_process_tool(
+        cwd,
+        SendProcessInputAction(type="send_process_input", process_id=process_id, data=data),
+    )
+
+
+@processes_app.command("stop")
+def processes_stop_command(
+    process_id: str,
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    grace_seconds: float = typer.Option(5.0, "--grace", min=0.1, max=60.0),
+) -> None:
+    """Gracefully stop a process tree, then force it if needed."""
+    _run_process_tool(
+        cwd,
+        StopProcessAction(
+            type="stop_process",
+            process_id=process_id,
+            grace_seconds=grace_seconds,
+        ),
+    )
+
+
+@processes_app.command("restart")
+def processes_restart_command(
+    process_id: str,
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+) -> None:
+    """Request an immediate managed restart."""
+    _run_process_tool(cwd, RestartProcessAction(type="restart_process", process_id=process_id))
+
+
+def _run_process_tool(cwd: Path, action: object) -> None:
+    read_actions = {"list_processes", "inspect_process", "read_process_logs", "process_events"}
+
+    def approve(action_name: str, detail: str) -> str | bool:
+        return True if action_name in read_actions else confirm_permission(action_name, detail)
+
+    tools = ToolRegistry(workspace=cwd.resolve(), dry_run=False, approval_callback=approve)
+    result = tools.run(action)  # type: ignore[arg-type]
+    typer.echo(result.output)
+    if not result.ok:
         raise typer.Exit(code=1)
 
 

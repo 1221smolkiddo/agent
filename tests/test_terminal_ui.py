@@ -70,6 +70,35 @@ def test_should_show_work_report_stays_quiet_for_simple_chat() -> None:
     assert not should_show_work_report(AgentRunResult(message="hello", run_id=1))
 
 
+def test_work_report_renders_managed_process_lifecycle() -> None:
+    result = AgentRunResult(
+        message="Development server is ready.",
+        run_id=8,
+        command_records=[
+            {
+                "kind": "managed_process",
+                "action": "start_process",
+                "status": "ok",
+                "process": {
+                    "process_id": "proc-demo",
+                    "status": "ready",
+                    "pid": 1234,
+                    "detected_port": 5173,
+                    "ready": True,
+                },
+            }
+        ],
+    )
+
+    with console.capture() as capture:
+        print_work_report_panel(result)
+
+    text = capture.get()
+    assert "Managed Processes" in text
+    assert "proc-demo" in text
+    assert "port=5173" in text
+
+
 def test_interactive_mode_starts_write_enabled() -> None:
     assert DEFAULT_DRY_RUN is False
 

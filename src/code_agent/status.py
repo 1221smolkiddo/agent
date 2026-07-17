@@ -15,7 +15,9 @@ from .schema import (
     DetectVerificationAction,
     EditFileAction,
     InspectGitDiffAction,
+    InspectProcessAction,
     ListFilesAction,
+    ListProcessesAction,
     LspCodeActionsAction,
     LspCompletionAction,
     LspDefinitionAction,
@@ -30,18 +32,24 @@ from .schema import (
     MoveFileAction,
     RankContextAction,
     ReadFileAction,
+    ReadProcessLogsAction,
     RecoverTransactionsAction,
     RedoTransactionAction,
     RepoMapAction,
+    RestartProcessAction,
     RunShellAction,
+    SendProcessInputAction,
     SearchAction,
     RestoreSnapshotAction,
     SuggestVerificationAction,
     SymbolIndexAction,
     SummarizeCodeAction,
+    StartProcessAction,
+    StopProcessAction,
     ToolResult,
     UpdatePlanAction,
     UndoTransactionAction,
+    ProcessEventsAction,
     WebSearchAction,
     WriteFileAction,
 )
@@ -167,6 +175,13 @@ class StatusReporter:
                 )
             )
         if action.type != "run_shell":
+            process = result.metadata.get("process")
+            if isinstance(process, dict) and process.get("process_id"):
+                status = process.get("status") or ("accepted" if result.ok else "failed")
+                console.print(
+                    Text("PROCESS", style="bold green" if result.ok else "bold red")
+                    + Text(f"   {process['process_id']}  {status}")
+                )
             return
         diagnostics = result.metadata.get("diagnostics")
         if not isinstance(diagnostics, dict):
@@ -281,6 +296,15 @@ def _semantic_stage(action: AgentAction) -> tuple[str, str]:
         if any(w in action.command.lower() for w in ["test", "pytest", "lint", "check"]):
             return "Running Verification", f"Ran {action.command}"
         return "Applying Fixes", f"Ran {action.command}"
+    if isinstance(action, StartProcessAction):
+        return "Starting Process", f"Started {action.name or action.command}"
+    if isinstance(action, (StopProcessAction, RestartProcessAction, SendProcessInputAction)):
+        return "Managing Process", f"Executed {action.type} for {action.process_id}"
+    if isinstance(
+        action,
+        (ListProcessesAction, InspectProcessAction, ReadProcessLogsAction, ProcessEventsAction),
+    ):
+        return "Monitoring Process", f"Inspected {getattr(action, 'process_id', 'jobs')}"
     if isinstance(
         action,
         (

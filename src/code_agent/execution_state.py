@@ -288,6 +288,10 @@ def _phase_for_action(action: AgentAction) -> ExecutionPhase:
         "lsp_formatting",
         "lsp_code_actions",
         "list_transactions",
+        "list_processes",
+        "inspect_process",
+        "read_process_logs",
+        "process_events",
         "dependency_graph",
         "read_memory",
         "web_search",
@@ -300,6 +304,8 @@ def _phase_for_action(action: AgentAction) -> ExecutionPhase:
         "run_shell",
     }:
         return ExecutionPhase.VERIFY
+    if action.type in {"send_process_input", "stop_process", "restart_process"}:
+        return ExecutionPhase.EXECUTE
     return ExecutionPhase.EXECUTE
 
 

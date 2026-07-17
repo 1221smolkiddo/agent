@@ -15,6 +15,7 @@ from typing import Any, BinaryIO, Callable
 from urllib.parse import unquote, urlparse
 
 from .patches import git_style_unified_diff
+from .processes import windows_creation_flags
 from .sandbox_security import validate_workspace_boundary
 
 
@@ -150,6 +151,8 @@ class LspClient:
                 stderr=subprocess.PIPE,
                 env=_lsp_environment(),
                 shell=False,
+                creationflags=windows_creation_flags(),
+                start_new_session=os.name != "nt",
             )
         except OSError as exc:
             raise LspServerUnavailable(

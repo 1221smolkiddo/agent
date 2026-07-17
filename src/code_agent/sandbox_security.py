@@ -23,6 +23,7 @@ from .processes import (
     ProcessSupervisor,
     ShellProcessResult,
     capture_process_streams,
+    windows_creation_flags,
 )
 from .safety import ShellPolicy, redact_secrets
 
@@ -790,6 +791,8 @@ class SandboxRunner:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 env=_container_runtime_env(),
+                creationflags=windows_creation_flags(),
+                start_new_session=os.name != "nt",
             )
             result = _wait_for_container_process(
                 process,

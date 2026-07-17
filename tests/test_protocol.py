@@ -19,7 +19,7 @@ from code_agent.protocol import (
     protocol_event,
     result_payload,
 )
-from code_agent.schema import ReadFileAction, RunShellAction, ToolResult
+from code_agent.schema import ReadFileAction, RunShellAction, StartProcessAction, ToolResult
 
 
 def parse_json_lines(output: str) -> list[dict[str, Any]]:
@@ -81,6 +81,31 @@ def test_json_protocol_emits_machine_readable_command_diagnostics() -> None:
     assert event["action_type"] == "run_shell"
     assert event["metadata"]["execution"]["exit_code"] == 1
     assert event["metadata"]["diagnostics"]["diagnostics"][0]["path"] == "src/app.ts"
+
+
+def test_json_protocol_emits_managed_process_state() -> None:
+    stream = StringIO()
+    reporter = JsonProtocolReporter(JsonEventEmitter(stream))
+    action = StartProcessAction(type="start_process", command="npm run dev", readiness_port=5173)
+    result = ToolResult(
+        ok=True,
+        output="started",
+        metadata={
+            "process": {
+                "process_id": "proc-demo",
+                "status": "ready",
+                "pid": 1234,
+                "ready": True,
+            }
+        },
+    )
+
+    reporter.tool_result(action, result, 15.0)
+
+    event = parse_json_lines(stream.getvalue())[0]
+    assert event["event"] == "action_finished"
+    assert event["action_type"] == "start_process"
+    assert event["metadata"]["process"]["process_id"] == "proc-demo"
 
 
 def test_json_approval_callback_fails_closed_by_default() -> None:

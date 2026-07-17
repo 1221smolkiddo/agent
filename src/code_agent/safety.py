@@ -24,7 +24,7 @@ SECRET_VALUE_PATTERNS = [
     re.compile(r"(?i)\b(authorization\s*[:=]\s*bearer\s+)([A-Za-z0-9._~+/=-]{16,})"),
     re.compile(r"(?i)\b(bearer\s+)([A-Za-z0-9._~+/=-]{16,})"),
     re.compile(
-        r"(?i)\b(api[_-]?key|token|secret|password|passwd|credential)\b"
+        r"(?i)\b([A-Z0-9_]*(?:api[_-]?key|token|secret|password|passwd|credential))\b"
         r"(\s*[:=]\s*)"
         r"([^\s'\"]+)"
     ),
@@ -175,6 +175,17 @@ def classify_shell_command(command: str) -> ShellPolicy:
             "Runs project verification.",
             may_write=True,
             timeout_seconds=120,
+        )
+    if _looks_like_development_process(lowered):
+        return ShellPolicy(
+            "development",
+            "high",
+            True,
+            "Runs project code as a development server, watcher, or checked-in script.",
+            may_write=True,
+            may_network=True,
+            arbitrary_code=True,
+            timeout_seconds=0,
         )
     if _looks_like_git(lowered):
         return ShellPolicy(
@@ -406,6 +417,36 @@ def _looks_like_test_or_build(lowered: str) -> bool:
         "uv build",
     ]
     return any(token in lowered for token in tokens)
+
+
+def _looks_like_development_process(lowered: str) -> bool:
+    tokens = [
+        "npm run dev",
+        "npm run start",
+        "pnpm dev",
+        "pnpm start",
+        "yarn dev",
+        "yarn start",
+        "bun run dev",
+        "vite",
+        "next dev",
+        "uvicorn ",
+        "flask run",
+        "manage.py runserver",
+        "cargo run",
+        "go run ",
+        "dotnet run",
+        "dotnet watch",
+    ]
+    if any(token in lowered for token in tokens):
+        return True
+    return bool(
+        re.fullmatch(
+            r"(?:python(?:3|3\.\d+)?|py(?:\s+-\d+(?:\.\d+)?)?|node|ruby|perl)\s+"
+            r"[^\s]+\.(?:py|js|mjs|cjs|rb|pl)(?:\s+[^;&|<>]*)?",
+            lowered,
+        )
+    )
 
 
 def _looks_like_git(lowered: str) -> bool:

@@ -5,7 +5,7 @@ from pathlib import Path
 
 def system_prompt(cwd: Path, dry_run: bool) -> str:
     write_rule = (
-        "Dry-run mode is enabled: do not request write_file, edit_file, apply_patch, or run_shell; also do not request move_file or delete_file."
+        "Dry-run mode is enabled: do not request write_file, edit_file, apply_patch, or run_shell; also do not request move_file, delete_file, start_process, send_process_input, stop_process, or restart_process."
         if dry_run
         else "Use write_file, edit_file, apply_patch, move_file, delete_file, and run_shell only when they directly help the task."
     )
@@ -48,6 +48,11 @@ Operating protocol:
 - Use edit_file only for tiny exact replacements. Use write_file only for new files or full rewrites.
 - Use delete_file for file removal; do not delete files through run_shell.
 - Use move_file for file renames or moves; it refuses overwriting an existing destination.
+- Use start_process for development servers, watchers, and interactive or long-running tasks; do not use run_shell for commands expected to remain active.
+- Use inspect_process, read_process_logs, and process_events to monitor managed jobs without blocking an agent step.
+- Use readiness_port when known; otherwise Agent47 attempts localhost port detection from redacted output.
+- Use send_process_input only for a process explicitly started as interactive. Request PTY only when terminal semantics are required.
+- Use stop_process for graceful process-tree shutdown and restart_process for an explicit operator restart.
 - Every mutation is checkpointed and committed through a workspace transaction. Use list_transactions to inspect history.
 - Use undo_transaction or redo_transaction for a committed transaction. Use restore_snapshot only when the user explicitly requests selective or whole-workspace restoration.
 - When the user asks you to create, edit, save, or add a local file and write mode is enabled, use a file mutation tool instead of giving the user a template or suggested content.
@@ -104,6 +109,14 @@ Action schema:
 {{ "type": "restore_snapshot", "transaction_id": "transaction-id", "paths": [] }}
 {{ "type": "recover_transactions" }}
 {{ "type": "run_shell", "command": "safe shell command to run in the workspace" }}
+{{ "type": "start_process", "command": "npm run dev", "name": "web", "working_directory": null, "interactive": false, "pty": false, "timeout_seconds": 0, "readiness_port": 3000, "auto_restart": true, "max_restarts": 3, "restart_backoff_seconds": 1.0, "max_restart_backoff_seconds": 30.0, "memory_limit_mb": 1024, "cpu_time_limit_seconds": null, "log_max_bytes": 5000000, "log_backups": 3 }}
+{{ "type": "list_processes", "include_finished": true }}
+{{ "type": "inspect_process", "process_id": "proc-id" }}
+{{ "type": "read_process_logs", "process_id": "proc-id", "stream": "all", "tail_chars": 20000 }}
+{{ "type": "process_events", "process_id": "proc-id", "after": 0, "limit": 500 }}
+{{ "type": "send_process_input", "process_id": "proc-id", "data": "input followed by newline\n" }}
+{{ "type": "stop_process", "process_id": "proc-id", "grace_seconds": 5.0 }}
+{{ "type": "restart_process", "process_id": "proc-id" }}
 {{ "type": "search", "query": "ripgrep pattern", "path": "optional-relative-path" }}
 {{ "type": "web_search", "query": "external web search query" }}
 {{ "type": "summarize_code", "path": "relative/source-file" }}

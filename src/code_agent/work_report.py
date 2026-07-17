@@ -37,6 +37,7 @@ def build_work_report_payload(result: AgentRunResult) -> dict[str, Any]:
         "context_analysis": _context_items(result),
         "model_usage": _model_usage_items(result),
         "commands_executed": _command_items(result),
+        "managed_processes": _process_items(result),
         "command_diagnostics": _diagnostic_items(result),
         "validation_status": _validation_items(result),
         "reviewer_pass": _reviewer_items(result),
@@ -96,6 +97,9 @@ def _meaningful_sections(result: AgentRunResult) -> list[tuple[str, str]]:
     commands = _commands_summary(result)
     if commands:
         sections.append(("Commands Executed", commands))
+    processes = _processes_summary(result)
+    if processes:
+        sections.append(("Managed Processes", processes))
     diagnostics = _diagnostics_summary(result)
     if diagnostics:
         sections.append(("Diagnostics", diagnostics))
@@ -164,6 +168,40 @@ def _commands_summary(result: AgentRunResult) -> str:
     return "\n".join(
         f"- `{item['command']}`: {item['status']}{item['detail']}" for item in commands
     )
+
+
+def _processes_summary(result: AgentRunResult) -> str:
+    return "\n".join(
+        f"- `{item['id']}`: {item['action']} → {item['status']}{item['detail']}"
+        for item in _process_items(result)
+    )
+
+
+def _process_items(result: AgentRunResult) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    for record in result.command_records:
+        if record.get("kind") != "managed_process":
+            continue
+        process = record.get("process")
+        process = process if isinstance(process, dict) else {}
+        process_id = str(process.get("process_id") or "<pending>")
+        status = str(process.get("status") or record.get("status") or "unknown")
+        details = []
+        if process.get("pid"):
+            details.append(f"pid={process['pid']}")
+        if process.get("detected_port"):
+            details.append(f"port={process['detected_port']}")
+        if process.get("ready") is not None:
+            details.append(f"ready={str(process['ready']).lower()}")
+        items.append(
+            {
+                "id": process_id,
+                "action": str(record.get("action") or "process"),
+                "status": status,
+                "detail": f" ({', '.join(details)})" if details else "",
+            }
+        )
+    return items
 
 
 def _context_summary(result: AgentRunResult) -> str:

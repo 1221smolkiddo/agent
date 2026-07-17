@@ -15,7 +15,7 @@ from rich.table import box
 from rich.text import Text
 from rich.theme import Theme
 
-from .work_report import _single_line, _change_items_filtered, should_show_work_report
+from .work_report import _single_line, _change_items_filtered, _process_items, should_show_work_report
 
 if TYPE_CHECKING:
     from .agent import AgentRunResult
@@ -230,6 +230,23 @@ def print_work_report_panel(result: AgentRunResult) -> None:
             status_text = Text(status_word, style="green" if v.get("ok") else "red")
             verification.add_row(str(label), status_text, str(v.get("command") or ""))
         sections.extend([Text("Verification", style="bold underline"), verification])
+
+    process_items = _process_items(result)
+    if process_items:
+        processes = Table(
+            show_header=True,
+            header_style="bold cyan",
+            box=box.SIMPLE,
+            padding=(0, 2),
+            expand=True,
+        )
+        processes.add_column("Process", overflow="fold")
+        processes.add_column("Action", no_wrap=True)
+        processes.add_column("Status", no_wrap=True)
+        processes.add_column("Details", overflow="fold")
+        for item in process_items:
+            processes.add_row(item["id"], item["action"], item["status"], item["detail"].strip())
+        sections.extend([Text("Managed Processes", style="bold underline"), processes])
 
     title = f"Finished Work (Run #{result.run_id})"
     duration = getattr(result, "duration", None)

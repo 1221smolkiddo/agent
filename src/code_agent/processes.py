@@ -10,6 +10,7 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
+from pathlib import Path
 from typing import Any
 
 
@@ -72,9 +73,20 @@ class CancellationToken:
 class ProcessSupervisor:
     """Tracks local child processes so stops and timeouts can clean up trees."""
 
-    def __init__(self) -> None:
+    def __init__(self, workspace: Path | None = None) -> None:
         self._active: dict[int, subprocess.Popen[str]] = {}
         self._lock = threading.Lock()
+        self._managed: Any = None
+        if workspace is not None:
+            self.configure_workspace(workspace)
+
+    def configure_workspace(self, workspace: Path) -> None:
+        resolved = workspace.resolve()
+        if self._managed is not None and self._managed.workspace == resolved:
+            return
+        from .managed_processes import ManagedProcessStore
+
+        self._managed = ManagedProcessStore(resolved)
 
     @property
     def active_count(self) -> int:
@@ -86,7 +98,43 @@ class ProcessSupervisor:
             processes = list(self._active.values())
         for process in processes:
             terminate_process_tree(process)
-        return len(processes)
+        managed = self._managed.stop_all(reason) if self._managed is not None else 0
+        return len(processes) + managed
+
+    def start_managed(self, command: str, **options: Any) -> dict[str, Any]:
+        return self._require_managed().start(command, **options)
+
+    def list_managed(self, *, include_finished: bool = True) -> list[dict[str, Any]]:
+        return self._require_managed().list(include_finished=include_finished)
+
+    def inspect_managed(self, process_id: str) -> dict[str, Any]:
+        return self._require_managed().inspect(process_id)
+
+    def managed_logs(
+        self,
+        process_id: str,
+        *,
+        stream: str = "all",
+        tail_chars: int = 20_000,
+    ) -> dict[str, Any]:
+        return self._require_managed().logs(process_id, stream=stream, tail_chars=tail_chars)
+
+    def managed_events(self, process_id: str, *, after: int = 0, limit: int = 500) -> dict[str, Any]:
+        return self._require_managed().events(process_id, after=after, limit=limit)
+
+    def send_managed_input(self, process_id: str, data: str) -> dict[str, Any]:
+        return self._require_managed().send_input(process_id, data)
+
+    def stop_managed(self, process_id: str, *, grace_seconds: float = 5.0) -> dict[str, Any]:
+        return self._require_managed().stop(process_id, grace_seconds=grace_seconds)
+
+    def restart_managed(self, process_id: str) -> dict[str, Any]:
+        return self._require_managed().restart(process_id)
+
+    def _require_managed(self) -> Any:
+        if self._managed is None:
+            raise RuntimeError("ProcessSupervisor requires a workspace for managed processes.")
+        return self._managed
 
     def run_shell(
         self,
@@ -98,7 +146,7 @@ class ProcessSupervisor:
         cancellation_token: CancellationToken | None = None,
         poll_seconds: float = 0.2,
     ) -> ShellProcessResult:
-        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+        creationflags = windows_creation_flags()
         start_new_session = os.name != "nt"
         process_args = split_command_argv(command)
         if not process_args:
@@ -186,19 +234,40 @@ class ProcessSupervisor:
             self._active.pop(process.pid, None)
 
 
-def terminate_process_tree(process: subprocess.Popen[str]) -> None:
+def terminate_process_tree(process: subprocess.Popen[Any], *, grace_seconds: float = 5.0) -> None:
     if process.poll() is not None:
         return
     if os.name == "nt":
         try:
+            process.send_signal(signal.CTRL_BREAK_EVENT)
+            process.wait(timeout=grace_seconds)
+            return
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        try:
             subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                ["taskkill", "/T", "/PID", str(process.pid)],
                 text=True,
                 capture_output=True,
-                timeout=10,
+                timeout=max(2.0, grace_seconds),
                 check=False,
+                creationflags=windows_creation_flags(new_process_group=False),
             )
+            process.wait(timeout=min(2.0, grace_seconds))
+            return
         except (OSError, subprocess.TimeoutExpired):
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                    text=True,
+                    capture_output=True,
+                    timeout=10,
+                    check=False,
+                    creationflags=windows_creation_flags(new_process_group=False),
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                process.kill()
+        if process.poll() is None:
             process.kill()
         return
     try:
@@ -206,12 +275,57 @@ def terminate_process_tree(process: subprocess.Popen[str]) -> None:
     except OSError:
         process.terminate()
     try:
-        process.wait(timeout=5)
+        process.wait(timeout=grace_seconds)
     except subprocess.TimeoutExpired:
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except OSError:
             process.kill()
+
+
+def terminate_pid_tree(pid: int, *, grace_seconds: float = 5.0) -> None:
+    class ProcessHandle:
+        def __init__(self, process_id: int) -> None:
+            self.pid = process_id
+
+        def poll(self) -> None:
+            return None
+
+        def send_signal(self, value: int) -> None:
+            os.kill(self.pid, value)
+
+        def wait(self, timeout: float | None = None) -> None:
+            deadline = time.monotonic() + (timeout or 0)
+            while timeout is None or time.monotonic() < deadline:
+                try:
+                    os.kill(self.pid, 0)
+                except OSError:
+                    return
+                time.sleep(0.05)
+            raise subprocess.TimeoutExpired(str(self.pid), timeout)
+
+        def terminate(self) -> None:
+            os.kill(self.pid, signal.SIGTERM)
+
+        def kill(self) -> None:
+            os.kill(self.pid, signal.SIGKILL if os.name != "nt" else signal.SIGTERM)
+
+    terminate_process_tree(ProcessHandle(pid), grace_seconds=grace_seconds)  # type: ignore[arg-type]
+
+
+def windows_creation_flags(
+    *,
+    detached: bool = False,
+    new_process_group: bool = True,
+) -> int:
+    if os.name != "nt":
+        return 0
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    if new_process_group:
+        flags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    if detached:
+        flags |= getattr(subprocess, "DETACHED_PROCESS", 0)
+    return flags
 
 
 def _supports_stream_capture(process: subprocess.Popen[str]) -> bool:
@@ -405,6 +519,27 @@ def split_command_argv(command: str) -> list[str]:
     if argv and argv[0].lower() in {"python", "python3", "python.exe", "python3.exe"}:
         argv[0] = sys.executable
     return argv
+
+
+def background_python_executable() -> str:
+    """Return a Python executable that cannot allocate a console for background work."""
+    if os.name != "nt":
+        return sys.executable
+    executable = Path(sys.executable)
+    pythonw = executable.with_name("pythonw.exe")
+    return str(pythonw) if pythonw.exists() else sys.executable
+
+
+def use_background_python(argv: list[str]) -> list[str]:
+    if os.name != "nt" or not argv:
+        return argv
+    try:
+        is_current_python = Path(argv[0]).resolve() == Path(sys.executable).resolve()
+    except OSError:
+        is_current_python = False
+    if not is_current_python:
+        return argv
+    return [background_python_executable(), *argv[1:]]
 
 
 def _strip_wrapping_quotes(value: str) -> str:

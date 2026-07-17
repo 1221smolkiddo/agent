@@ -99,6 +99,23 @@ cleanly: `lsp_status` reports availability and semantic actions return an instal
 Language servers run as local subprocesses in ordinary mode. Strict `--sandbox` runs disable host LSP
 processes rather than weakening the container isolation boundary.
 
+## Managed Development Processes
+
+No additional service is required. `code-agent processes start` launches a detached worker from the active
+Agent47 environment and writes job state beneath `.code-agent/processes/jobs/`.
+
+```bash
+uv run code-agent processes start "npm run dev" --name frontend --port 5173 --auto-restart
+uv run code-agent processes list --active
+uv run code-agent processes logs <process-id>
+uv run code-agent processes events <process-id> --after 0
+uv run code-agent processes stop <process-id>
+```
+
+Use `--interactive` for commands that accept later input. On POSIX systems, add `--pty` when terminal
+semantics are required. Windows currently provides durable interactive pipe mode and fails closed for
+`--pty` until a native ConPTY backend is installed in Agent47.
+
 ## Provider Configuration
 
 Agent47 supports these direct OpenAI-compatible providers:

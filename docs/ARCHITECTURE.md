@@ -121,6 +121,42 @@ locations, and bounded highlighted snippets. NDJSON clients receive the same mac
 the additive `action_finished` event. Work reports retain command duration, normalized diagnostics, and
 recurrence history.
 
+### Managed Process Runtime
+
+`ProcessSupervisor` remains the central execution owner. Foreground commands use its bounded in-memory pipe
+capture. Long-running commands delegate to `ManagedProcessStore`, which creates a durable job under
+`.code-agent/processes/jobs/` and starts `process_worker.py` as a detached process. The worker, rather than the
+CLI session, owns the child process, stdin or PTY, stream readers, lifecycle state, and control queue. A later
+Agent47 process can reopen the same job, inspect health and resources, consume events by sequence cursor, send
+interactive input, restart it, or stop it.
+
+Job specifications retain argv, cwd, policy options, environment key names, and an environment fingerprint.
+Environment values are passed directly in the scrubbed worker environment and are never written to the spec.
+Control messages are restricted one-shot files deleted immediately after consumption, preventing interactive
+input from accumulating in an audit journal. State writes use retrying atomic replacement for Windows sharing
+semantics.
+
+Pipe mode preserves independent stdout and stderr logs. POSIX PTY mode joins terminal output and supports
+terminal-aware input. Every output item becomes an ordered, timestamped event after secret redaction. Stream
+logs and NDJSON events rotate by configured byte and backup limits; event sequence numbers remain monotonic
+across rotations.
+
+The worker detects common localhost URLs, or accepts an explicit readiness port, and continuously probes TCP
+health. State transitions distinguish starting, running, ready, restarting, stopping, stopped, exited, failed,
+and orphaned jobs. Unexpected non-zero exits use bounded exponential backoff. Explicit restarts are immediate
+and do not consume the crash-restart budget.
+
+Resource sampling aggregates the complete descendant process tree through Linux `/proc` or Windows ToolHelp
+and PSAPI. CPU-time and memory thresholds trigger graceful shutdown followed by forced tree cleanup. Normal
+stop uses SIGTERM/process-group termination on POSIX and CTRL_BREAK/task-tree termination on Windows before
+escalating. Worker disappearance is reconciled as orphaned state rather than reported as a live job.
+
+Typed process actions and the `processes` CLI expose start, list, inspect, logs, cursor-based events, input,
+restart, and stop. Agent run steps and work reports retain compact lifecycle records. Development commands pass
+through the same classification, workspace-path, network, approval, and environment-isolation boundaries as
+foreground commands. Strict container profiles fail closed until a durable container-job backend exists rather
+than launching a host process outside the sandbox.
+
 ### Language Intelligence
 
 `lsp.py` is a native Language Server Protocol client and manager. It discovers installed servers by source
@@ -269,7 +305,7 @@ a cross-platform Python matrix and a live Docker security job.
 | --- | --- |
 | Orchestration | `agent.py`, `execution_state.py`, `factory.py` |
 | Actions and prompts | `schema.py`, `prompts.py`, `protocol.py` |
-| Tools and safety | `tools.py`, `permissions.py`, `safety.py`, `processes.py`, `command_diagnostics.py` |
+| Tools and safety | `tools.py`, `permissions.py`, `safety.py`, `processes.py`, `managed_processes.py`, `process_worker.py`, `command_diagnostics.py` |
 | Sandboxes | `sandbox.py`, `sandbox_security.py` |
 | Repository context | `repo_index.py`, `parsing.py`, `memory.py` |
 | Language intelligence | `lsp.py`, `schema.py`, `tools.py` |

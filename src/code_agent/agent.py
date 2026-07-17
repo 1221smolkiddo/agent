@@ -891,6 +891,19 @@ class CodingAgent:
                 "relevant source and tests, change the implementation, then rerun the narrowest useful check. "
                 "Do not rerun the unchanged failing command without a new hypothesis or code change."
             )
+        if action.type in {
+            "start_process",
+            "inspect_process",
+            "read_process_logs",
+            "process_events",
+            "send_process_input",
+            "stop_process",
+            "restart_process",
+        }:
+            return (
+                "Inspect the persisted process state and ordered events, then choose a lifecycle action that "
+                "addresses the recorded status. Do not repeatedly start duplicate jobs or resend unchanged input."
+            )
         return (
             "The tool failed. Diagnose the failure from the output, inspect more context if needed, "
             "then try a different action. Do not finalize until the task is solved or the failure budget is exhausted."
@@ -1090,6 +1103,14 @@ class CodingAgent:
             "restore_snapshot",
             "recover_transactions",
             "run_shell",
+            "start_process",
+            "list_processes",
+            "inspect_process",
+            "read_process_logs",
+            "process_events",
+            "send_process_input",
+            "stop_process",
+            "restart_process",
             "search",
             "summarize_code",
             "detect_verification",
@@ -1412,6 +1433,44 @@ class CodingAgent:
     def _command_record_from_action(
         action: AgentAction, result: ToolResult
     ) -> dict[str, Any] | None:
+        if action.type in {
+            "start_process",
+            "list_processes",
+            "inspect_process",
+            "read_process_logs",
+            "process_events",
+            "send_process_input",
+            "stop_process",
+            "restart_process",
+        }:
+            payload = result.metadata.get("process")
+            state = payload.get("state") if isinstance(payload, dict) else None
+            process = state if isinstance(state, dict) else payload
+            summary = {}
+            if isinstance(process, dict):
+                summary = {
+                    key: process.get(key)
+                    for key in (
+                        "process_id",
+                        "name",
+                        "status",
+                        "pid",
+                        "ready",
+                        "health",
+                        "detected_port",
+                        "restart_count",
+                        "resources",
+                    )
+                    if process.get(key) is not None
+                }
+            return {
+                "kind": "managed_process",
+                "action": action.type,
+                "command": getattr(action, "command", ""),
+                "ok": result.ok,
+                "status": "ok" if result.ok else "failed",
+                "process": summary,
+            }
         if action.type != "run_shell":
             return None
         command = getattr(action, "command", "")
@@ -1482,6 +1541,10 @@ class CodingAgent:
             "dependency_graph",
             "read_memory",
             "web_search",
+            "list_processes",
+            "inspect_process",
+            "read_process_logs",
+            "process_events",
         }:
             return {}
         return {

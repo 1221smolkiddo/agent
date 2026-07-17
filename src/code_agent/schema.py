@@ -117,6 +117,66 @@ class RunShellAction(BaseModel):
     command: str
 
 
+class StartProcessAction(BaseModel):
+    type: Literal["start_process"]
+    command: str
+    name: Optional[str] = Field(default=None, max_length=80)
+    working_directory: Optional[str] = None
+    interactive: bool = False
+    pty: bool = False
+    timeout_seconds: int = Field(default=0, ge=0, le=604800)
+    readiness_port: Optional[int] = Field(default=None, ge=1, le=65535)
+    auto_restart: bool = False
+    max_restarts: int = Field(default=3, ge=0, le=20)
+    restart_backoff_seconds: float = Field(default=1.0, ge=0.1, le=300.0)
+    max_restart_backoff_seconds: float = Field(default=30.0, ge=0.1, le=3600.0)
+    memory_limit_mb: Optional[int] = Field(default=None, ge=16, le=131072)
+    cpu_time_limit_seconds: Optional[int] = Field(default=None, ge=1, le=604800)
+    log_max_bytes: int = Field(default=5_000_000, ge=65536, le=100_000_000)
+    log_backups: int = Field(default=3, ge=1, le=20)
+
+
+class ListProcessesAction(BaseModel):
+    type: Literal["list_processes"]
+    include_finished: bool = True
+
+
+class InspectProcessAction(BaseModel):
+    type: Literal["inspect_process"]
+    process_id: str
+
+
+class ReadProcessLogsAction(BaseModel):
+    type: Literal["read_process_logs"]
+    process_id: str
+    stream: Literal["all", "stdout", "stderr", "terminal"] = "all"
+    tail_chars: int = Field(default=20000, ge=100, le=200000)
+
+
+class ProcessEventsAction(BaseModel):
+    type: Literal["process_events"]
+    process_id: str
+    after: int = Field(default=0, ge=0)
+    limit: int = Field(default=500, ge=1, le=2000)
+
+
+class SendProcessInputAction(BaseModel):
+    type: Literal["send_process_input"]
+    process_id: str
+    data: str = Field(max_length=100000)
+
+
+class StopProcessAction(BaseModel):
+    type: Literal["stop_process"]
+    process_id: str
+    grace_seconds: float = Field(default=5.0, ge=0.1, le=60.0)
+
+
+class RestartProcessAction(BaseModel):
+    type: Literal["restart_process"]
+    process_id: str
+
+
 class SearchAction(BaseModel):
     type: Literal["search"]
     query: str
@@ -285,6 +345,14 @@ AgentAction = Union[
     RestoreSnapshotAction,
     RecoverTransactionsAction,
     RunShellAction,
+    StartProcessAction,
+    ListProcessesAction,
+    InspectProcessAction,
+    ReadProcessLogsAction,
+    ProcessEventsAction,
+    SendProcessInputAction,
+    StopProcessAction,
+    RestartProcessAction,
     SearchAction,
     WebSearchAction,
     SummarizeCodeAction,

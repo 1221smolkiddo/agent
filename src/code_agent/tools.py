@@ -24,6 +24,7 @@ from .memory import (
     read_project_memory,
     write_memory_plan,
 )
+from .managed_processes import ManagedProcessError
 from .lsp import LspError, LspManager, WorkspaceEditPreview
 from .processes import CancellationToken, ProcessSupervisor, terminate_process_tree
 from .schema import (
@@ -34,7 +35,9 @@ from .schema import (
     DetectVerificationAction,
     EditFileAction,
     InspectGitDiffAction,
+    InspectProcessAction,
     ListFilesAction,
+    ListProcessesAction,
     LspCodeActionsAction,
     LspCompletionAction,
     LspDefinitionAction,
@@ -52,16 +55,22 @@ from .schema import (
     RestoreSnapshotAction,
     RankContextAction,
     ReadMemoryAction,
+    ReadProcessLogsAction,
     ReadFileAction,
     RepoMapAction,
+    RestartProcessAction,
     RunShellAction,
+    SendProcessInputAction,
     SearchAction,
     SuggestVerificationAction,
     SymbolIndexAction,
     SummarizeCodeAction,
+    StartProcessAction,
+    StopProcessAction,
     ToolResult,
     UpdateMemoryAction,
     UndoTransactionAction,
+    ProcessEventsAction,
     WebSearchAction,
     WriteFileAction,
 )
@@ -154,7 +163,8 @@ class ToolRegistry:
         self.shell_network_policy = shell_network_policy.strip().lower()
         self.index_cache = index_cache
         self.cancellation_token = cancellation_token or CancellationToken()
-        self.process_supervisor = process_supervisor or ProcessSupervisor()
+        self.process_supervisor = process_supervisor or ProcessSupervisor(self.workspace)
+        self.process_supervisor.configure_workspace(self.workspace)
         self.sandbox_policy = sandbox_policy or SandboxPolicy.from_workspace(self.workspace)
         self.lsp_manager = lsp_manager or LspManager(
             self.workspace,
@@ -245,6 +255,22 @@ class ToolRegistry:
             return self._recover_transactions()
         if isinstance(action, RunShellAction):
             return self._run_shell(action.command)
+        if isinstance(action, StartProcessAction):
+            return self._start_process(action)
+        if isinstance(action, ListProcessesAction):
+            return self._list_processes(action.include_finished)
+        if isinstance(action, InspectProcessAction):
+            return self._inspect_process(action.process_id)
+        if isinstance(action, ReadProcessLogsAction):
+            return self._read_process_logs(action.process_id, action.stream, action.tail_chars)
+        if isinstance(action, ProcessEventsAction):
+            return self._process_events(action.process_id, action.after, action.limit)
+        if isinstance(action, SendProcessInputAction):
+            return self._send_process_input(action.process_id, action.data)
+        if isinstance(action, StopProcessAction):
+            return self._stop_process(action.process_id, action.grace_seconds)
+        if isinstance(action, RestartProcessAction):
+            return self._restart_process(action.process_id)
         if isinstance(action, SearchAction):
             return self._search(action.query, action.path)
         if isinstance(action, WebSearchAction):
@@ -859,6 +885,179 @@ class ToolRegistry:
             output=redact_secrets(self._truncate(output, MAX_SHELL_OUTPUT_CHARS)) or "<no output>",
             metadata=common_metadata,
         )
+
+    def _start_process(self, action: StartProcessAction) -> ToolResult:
+        if self.dry_run:
+            return ToolResult(ok=False, output="Dry-run mode skipped start_process.")
+        policy = classify_shell_command(action.command)
+        if not policy.allowed:
+            return ToolResult(
+                ok=False,
+                output=(
+                    f"Blocked {policy.category} background command ({policy.risk} risk): "
+                    f"{policy.reason}"
+                ),
+            )
+        if self.shell_network_policy == "deny" and policy.may_network:
+            return ToolResult(
+                ok=False,
+                output="Blocked background command because shell network access is denied.",
+            )
+        sandbox_rejection = self.sandbox_policy.command_rejection(action.command, policy)
+        if sandbox_rejection:
+            return ToolResult(ok=False, output=sandbox_rejection)
+        if self.sandbox_policy.backend != "local":
+            return ToolResult(
+                ok=False,
+                output=(
+                    "Persistent background processes require a managed container-job backend when "
+                    "container isolation is active; refusing to launch an unisolated host process."
+                ),
+            )
+        path_rejection = local_command_path_rejection(action.command, self.workspace)
+        if path_rejection:
+            return ToolResult(ok=False, output=path_rejection)
+        try:
+            cwd = self.resolve_inside_workspace(action.working_directory)
+        except ValueError as exc:
+            return ToolResult(ok=False, output=str(exc))
+        detail = (
+            f"Risk: {policy.risk}\nCategory: {policy.category}\nReason: {policy.reason}\n"
+            f"Command: {action.command}\nWorking directory: {cwd}\n"
+            f"Interactive: {action.interactive}\nPTY: {action.pty}\n"
+            f"Auto restart: {action.auto_restart} (max {action.max_restarts})\n"
+            f"Readiness port: {action.readiness_port or 'auto-detect'}\n"
+            f"Memory limit: {action.memory_limit_mb or 'monitor only'} MB\n"
+            f"CPU-time limit: {action.cpu_time_limit_seconds or 'monitor only'} seconds"
+        )
+        if not self._approve("start_process", detail):
+            return ToolResult(ok=False, output="Permission denied for start_process.")
+        try:
+            record = self.process_supervisor.start_managed(
+                action.command,
+                cwd=cwd,
+                env=self._safe_shell_env(),
+                name=action.name,
+                interactive=action.interactive,
+                pty=action.pty,
+                timeout_seconds=action.timeout_seconds,
+                readiness_port=action.readiness_port,
+                auto_restart=action.auto_restart,
+                max_restarts=action.max_restarts,
+                restart_backoff_seconds=action.restart_backoff_seconds,
+                max_restart_backoff_seconds=action.max_restart_backoff_seconds,
+                memory_limit_mb=action.memory_limit_mb,
+                cpu_time_limit_seconds=action.cpu_time_limit_seconds,
+                log_max_bytes=action.log_max_bytes,
+                log_backups=action.log_backups,
+            )
+        except (ManagedProcessError, OSError, ValueError) as exc:
+            return ToolResult(ok=False, output=f"Failed to start managed process: {exc}")
+        return ToolResult(
+            ok=True,
+            output=(
+                f"Started managed process {record['process_id']} "
+                f"(pid={record.get('pid') or 'starting'}, status={record.get('status')})."
+            ),
+            metadata={"process": record},
+        )
+
+    def _list_processes(self, include_finished: bool) -> ToolResult:
+        if not self._approve("list_processes", "List persisted managed process state."):
+            return ToolResult(ok=False, output="Permission denied for list_processes.")
+        records = self.process_supervisor.list_managed(include_finished=include_finished)
+        return ToolResult(
+            ok=True,
+            output=json.dumps(records, indent=2, ensure_ascii=False),
+            metadata={"processes": records},
+        )
+
+    def _inspect_process(self, process_id: str) -> ToolResult:
+        return self._managed_process_read(
+            "inspect_process",
+            process_id,
+            lambda: self.process_supervisor.inspect_managed(process_id),
+        )
+
+    def _read_process_logs(self, process_id: str, stream: str, tail_chars: int) -> ToolResult:
+        return self._managed_process_read(
+            "read_process_logs",
+            process_id,
+            lambda: self.process_supervisor.managed_logs(
+                process_id,
+                stream=stream,
+                tail_chars=tail_chars,
+            ),
+        )
+
+    def _process_events(self, process_id: str, after: int, limit: int) -> ToolResult:
+        return self._managed_process_read(
+            "process_events",
+            process_id,
+            lambda: self.process_supervisor.managed_events(
+                process_id,
+                after=after,
+                limit=limit,
+            ),
+        )
+
+    def _managed_process_read(
+        self,
+        action: str,
+        process_id: str,
+        operation: Callable[[], dict[str, Any]],
+    ) -> ToolResult:
+        if not self._approve(action, process_id):
+            return ToolResult(ok=False, output=f"Permission denied for {action}.")
+        try:
+            payload = operation()
+        except (ManagedProcessError, OSError, ValueError) as exc:
+            return ToolResult(ok=False, output=str(exc))
+        return ToolResult(
+            ok=True,
+            output=json.dumps(payload, indent=2, ensure_ascii=False),
+            metadata={"process": payload},
+        )
+
+    def _send_process_input(self, process_id: str, data: str) -> ToolResult:
+        if not self._approve(
+            "send_process_input",
+            f"Process: {process_id}\nInput bytes: {len(data.encode('utf-8'))}",
+        ):
+            return ToolResult(ok=False, output="Permission denied for send_process_input.")
+        try:
+            payload = self.process_supervisor.send_managed_input(process_id, data)
+        except (ManagedProcessError, OSError, ValueError) as exc:
+            return ToolResult(ok=False, output=str(exc))
+        return ToolResult(ok=True, output="Process input accepted.", metadata={"process": payload})
+
+    def _stop_process(self, process_id: str, grace_seconds: float) -> ToolResult:
+        if not self._approve(
+            "stop_process",
+            f"Stop {process_id} gracefully within {grace_seconds:.1f}s, then force its process tree.",
+        ):
+            return ToolResult(ok=False, output="Permission denied for stop_process.")
+        try:
+            payload = self.process_supervisor.stop_managed(
+                process_id,
+                grace_seconds=grace_seconds,
+            )
+        except (ManagedProcessError, OSError, ValueError) as exc:
+            return ToolResult(ok=False, output=str(exc))
+        return ToolResult(
+            ok=payload.get("status") in {"stopped", "exited", "failed", "orphaned"},
+            output=f"Process {process_id} status: {payload.get('status')}.",
+            metadata={"process": payload},
+        )
+
+    def _restart_process(self, process_id: str) -> ToolResult:
+        if not self._approve("restart_process", f"Restart managed process {process_id}."):
+            return ToolResult(ok=False, output="Permission denied for restart_process.")
+        try:
+            payload = self.process_supervisor.restart_managed(process_id)
+        except (ManagedProcessError, OSError, ValueError) as exc:
+            return ToolResult(ok=False, output=str(exc))
+        return ToolResult(ok=True, output="Process restart requested.", metadata={"process": payload})
 
     def _search(self, query: str, requested_path: str | None) -> ToolResult:
         if not self._approve("search", f"Search {requested_path or '.'} for {query}"):

@@ -204,6 +204,8 @@ Core controls include:
 - Refusal to read or modify credential files such as `.env`, `.npmrc`, `.pypirc`, and `.netrc`.
 - Pattern-based secret redaction before tool output or state is stored.
 - Shell-free local process execution with explicit argv and process-tree cleanup.
+- Durable managed processes with interactive control, POSIX PTYs, readiness checks, restart backoff,
+  rotating redacted logs, ordered events, and process-tree resource monitoring.
 - Blocking of destructive, compound-shell, workspace-escape, and arbitrary inline-code commands.
 - Risk labeling and explicit approval for allowed verification, git, install, network, and read-only commands.
 - Untrusted-context markers for repository content, diffs, command output, search results, and web results.
@@ -231,6 +233,7 @@ Agent47 stores local state under `.code-agent/`:
 - `sandboxes/`: copied workspaces.
 - `debug-bundles/`: explicitly exported redacted diagnostics.
 - `eval-reports/`: saved benchmark results.
+- `processes/jobs/`: managed-process specifications, state, rotating logs, events, and one-shot controls.
 
 Model-backed runs send the user task, system instructions, approved context, bounded project memory,
 tool evidence, and verification output to the configured provider. Provider retention is governed by
@@ -238,6 +241,28 @@ that provider's policy. Web search sends approved queries to external search ser
 
 Use `history delete`, `history prune`, or remove `.code-agent/` to delete local history. Redaction is
 defense in depth and cannot identify every possible secret format.
+
+## Managed Processes
+
+Use managed processes for development servers, watchers, and interactive commands that must not block an
+agent step. Each job is owned by a detached worker and can continue after the launching Agent47 CLI exits.
+
+```bash
+uv run code-agent processes start "npm run dev" --name web --port 3000 --auto-restart
+uv run code-agent processes list --active
+uv run code-agent processes inspect <process-id>
+uv run code-agent processes logs <process-id> --stream stdout
+uv run code-agent processes events <process-id> --after 0
+uv run code-agent processes input <process-id> "yes\n"
+uv run code-agent processes restart <process-id>
+uv run code-agent processes stop <process-id> --grace 5
+```
+
+The worker stores only environment key names and a fingerprint; values are inherited from the scrubbed
+launch environment and are never written to the job specification. Output is redacted before rotating log
+and event persistence. Readiness can use an explicit localhost port or a port detected from common local URLs.
+Unexpected non-zero exits can restart with bounded exponential backoff. Stop requests first signal the process
+group, wait for the grace period, and then force the remaining tree.
 
 ## Sandboxes
 

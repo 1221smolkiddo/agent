@@ -47,8 +47,19 @@ hard security sandbox. These limitations are part of the operating contract.
 - Approved verification, build, and install commands can execute arbitrary project code.
 - Workspace path checks do not constrain every operating-system API available to an approved local process.
 - Local command network-deny mode is command classification, not an OS firewall.
-- Process-tree cleanup is best effort. Local mode does not currently use Windows Job Objects, Linux namespaces,
-  seccomp/AppArmor, or macOS seatbelt profiles.
+- Managed local shutdown signals the process group/tree and escalates after a grace period, but local mode does
+  not use Windows Job Objects, Linux namespaces, seccomp/AppArmor, or macOS seatbelt profiles. A hostile process
+  can still escape best-effort local lifecycle control; use container isolation for untrusted project code.
+- Durable workers survive Agent47 CLI exit, not host reboot. After reboot, stale active records reconcile as
+  orphaned and require an explicit new start; Agent47 does not silently relaunch project code at login.
+- POSIX systems support native PTYs. Windows interactive pipe control is supported, but PTY requests fail closed
+  until a native ConPTY transport is implemented.
+- Readiness monitoring currently proves localhost TCP acceptance, not application-level HTTP correctness.
+- Linux and Windows expose process-tree CPU and memory sampling. Other POSIX platforms may report monitoring as
+  unavailable. Local resource limits are monitor-and-terminate thresholds, not kernel-enforced quotas.
+- Persistent container jobs are not implemented. Strict Docker/Podman profiles refuse `start_process` rather than
+  launching a durable process on the host outside the isolation boundary.
+- Rotating logs and events deliberately discard the oldest backup after configured limits are reached.
 - Docker and Podman isolation depend on a correctly configured daemon, host virtualization, runtime security, and
   trusted image supply chain.
 - Container networking is offline by default, but the container runtime itself remains a privileged host component.

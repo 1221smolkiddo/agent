@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
 from code_agent import processes as processes_module
-from code_agent.processes import CancellationToken, ProcessSupervisor, split_command_argv
+from code_agent.processes import (
+    CancellationToken,
+    ProcessSupervisor,
+    background_python_executable,
+    split_command_argv,
+    use_background_python,
+    windows_creation_flags,
+)
 
 
 def test_process_supervisor_cancels_registered_shell_process(tmp_path: Path, monkeypatch) -> None:
@@ -78,9 +86,34 @@ def test_process_supervisor_executes_without_shell(tmp_path: Path, monkeypatch) 
     assert result.completed.returncode == 0
     assert captured["shell"] is False
     assert captured["args"] == ["uv", "run", "pytest", "tests/test_processes.py"]
+    if os.name == "nt":
+        assert int(captured["creationflags"]) & subprocess.CREATE_NO_WINDOW
+
+
+def test_windows_creation_flags_hide_normal_and_detached_processes() -> None:
+    flags = windows_creation_flags()
+    detached = windows_creation_flags(detached=True)
+
+    if os.name != "nt":
+        assert flags == 0
+        assert detached == 0
+        return
+    assert flags & subprocess.CREATE_NO_WINDOW
+    assert flags & subprocess.CREATE_NEW_PROCESS_GROUP
+    assert detached & subprocess.CREATE_NO_WINDOW
+    assert detached & subprocess.DETACHED_PROCESS
 
 
 def test_split_command_argv_pins_python_to_current_runtime() -> None:
     argv = split_command_argv("python -m pytest")
 
     assert argv == [processes_module.sys.executable, "-m", "pytest"]
+
+
+def test_background_python_avoids_console_interpreter_on_windows() -> None:
+    executable = background_python_executable()
+    argv = use_background_python([processes_module.sys.executable, "server.py"])
+
+    assert argv == [executable, "server.py"]
+    if os.name == "nt" and Path(processes_module.sys.executable).with_name("pythonw.exe").exists():
+        assert Path(executable).name.lower() == "pythonw.exe"

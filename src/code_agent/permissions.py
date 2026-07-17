@@ -24,12 +24,20 @@ READ_ONLY_ACTIONS = frozenset({
     "detect_verification",
     "suggest_verification",
     "list_transactions",
+    "list_processes",
+    "inspect_process",
+    "read_process_logs",
+    "process_events",
 })
 
 
 HIGH_RISK_ACTIONS = frozenset({
     "apply_patch",
     "run_shell",
+    "start_process",
+    "send_process_input",
+    "stop_process",
+    "restart_process",
     "delete_file",
     "move_file",
     "undo_transaction",
@@ -96,6 +104,14 @@ class PermissionPolicy:
 def confirm_permission(action: str, detail: str) -> str:
     action_labels = {
         "run_shell": "Run shell command",
+        "start_process": "Start managed process",
+        "list_processes": "List managed processes",
+        "inspect_process": "Inspect managed process",
+        "read_process_logs": "Read managed process logs",
+        "process_events": "Read managed process events",
+        "send_process_input": "Send process input",
+        "stop_process": "Stop managed process",
+        "restart_process": "Restart managed process",
         "delete_file": "Delete file",
         "move_file": "Move file",
         "list_transactions": "List transactions",
