@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from dataclasses import asdict
 from pathlib import Path
 import socket
 import subprocess
@@ -12,8 +13,13 @@ import pytest
 from typer.testing import CliRunner
 
 from code_agent.cli import app
-from code_agent.managed_processes import ManagedProcessError, ManagedProcessStore
+from code_agent.managed_processes import (
+    ManagedProcessError,
+    ManagedProcessSpec,
+    ManagedProcessStore,
+)
 from code_agent.managed_processes import _pid_alive
+from code_agent.process_worker import ProcessWorker
 from code_agent.processes import ProcessSupervisor
 from code_agent.schema import (
     InspectProcessAction,
@@ -59,6 +65,44 @@ def test_pid_liveness_reaps_exited_direct_child() -> None:
     time.sleep(0.1)
 
     assert _pid_alive(process.pid) is False
+
+
+def test_port_state_is_persisted_before_output_becomes_visible(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job_dir = tmp_path / "job"
+    job_dir.mkdir()
+    (job_dir / "controls").mkdir()
+    spec = ManagedProcessSpec(
+        process_id="proc-test",
+        command="python server.py",
+        argv=[sys.executable, "server.py"],
+        name="server",
+        cwd=str(tmp_path),
+        environment_keys=[],
+        environment_sha256="",
+    )
+    (job_dir / "spec.json").write_text(json.dumps(asdict(spec)), encoding="utf-8")
+    (job_dir / "state.json").write_text(
+        json.dumps({**spec.public_payload(), "status": "running"}),
+        encoding="utf-8",
+    )
+    worker = ProcessWorker(job_dir)
+    observed_ports: list[int | None] = []
+    append_log = worker._append_rotating_log
+
+    def observe_then_append(stream: str, text: str) -> None:
+        state = json.loads((job_dir / "state.json").read_text(encoding="utf-8"))
+        observed_ports.append(state.get("detected_port"))
+        append_log(stream, text)
+
+    monkeypatch.setattr(worker, "_append_rotating_log", observe_then_append)
+    worker.output_queue.put(("stdout", "ready at http://127.0.0.1:54321\n"))
+
+    worker._drain_output()
+
+    assert observed_ports == [54321]
 
 
 def test_managed_process_persists_redacted_logs_events_and_state(tmp_path: Path) -> None:

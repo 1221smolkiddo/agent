@@ -240,12 +240,12 @@ class ProcessWorker:
             except queue.Empty:
                 return
             safe_text = redact_secrets(text)
-            self._append_rotating_log(stream, safe_text)
             port = detect_port(safe_text)
             if port and self.detected_port is None:
                 self.detected_port = port
-                self._emit("port_detected", port=port)
                 self._write_state(detected_port=port, health="starting")
+                self._emit("port_detected", port=port)
+            self._append_rotating_log(stream, safe_text)
             self._emit("output", stream=stream, text=safe_text)
 
     def _consume_controls(self, *, process_running: bool) -> None:
