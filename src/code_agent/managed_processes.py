@@ -600,6 +600,19 @@ def _pid_alive(pid: int) -> bool:
         except (AttributeError, OSError, ValueError):
             return False
     try:
+        waited_pid, _status = os.waitpid(pid, os.WNOHANG)
+        if waited_pid == pid:
+            return False
+    except ChildProcessError:
+        pass
+    proc_stat = Path(f"/proc/{pid}/stat")
+    if proc_stat.exists():
+        try:
+            if proc_stat.read_text(encoding="utf-8").split()[2] == "Z":
+                return False
+        except (IndexError, OSError):
+            pass
+    try:
         os.kill(pid, 0)
         return True
     except PermissionError:

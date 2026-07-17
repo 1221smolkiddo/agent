@@ -5,12 +5,15 @@ import os
 import time
 from pathlib import Path
 import socket
+import subprocess
+import sys
 
 import pytest
 from typer.testing import CliRunner
 
 from code_agent.cli import app
 from code_agent.managed_processes import ManagedProcessError, ManagedProcessStore
+from code_agent.managed_processes import _pid_alive
 from code_agent.processes import ProcessSupervisor
 from code_agent.schema import (
     InspectProcessAction,
@@ -48,6 +51,14 @@ def _wait_for(
 
 def _write_script(workspace: Path, name: str, content: str) -> None:
     (workspace / name).write_text(content, encoding="utf-8")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX zombie semantics")
+def test_pid_liveness_reaps_exited_direct_child() -> None:
+    process = subprocess.Popen([sys.executable, "-c", "pass"])
+    time.sleep(0.1)
+
+    assert _pid_alive(process.pid) is False
 
 
 def test_managed_process_persists_redacted_logs_events_and_state(tmp_path: Path) -> None:

@@ -853,11 +853,11 @@ class WorkspaceTransactionManager:
         prepared = []
         for entry in entries:
             current = self.capture_state(entry.path, store_blob=True)
-            if current.kind == "symlink":
-                raise TransactionConflict(f"Symlink changed at {entry.path}.")
             if self._state_equivalent(current, entry.before):
                 prepared.append(entry)
                 continue
+            if current.kind == "symlink":
+                raise TransactionConflict(f"Symlink changed at {entry.path}.")
             desired_state = self._after_state(entry)
             if self._state_equivalent(current, desired_state):
                 prepared.append(replace(entry, before=current))
