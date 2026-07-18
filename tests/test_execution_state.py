@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from code_agent.execution_state import ExecutionPhase, ExecutionState, compact_message_history
-from code_agent.schema import ReadFileAction, ToolResult, UpdatePlanAction
+from code_agent.schema import FinalAction, ReadFileAction, ToolResult, UpdatePlanAction
 
 
 def test_execution_state_blocks_repeated_identical_outcomes() -> None:
@@ -122,3 +125,91 @@ def test_verification_confidence_tracks_latest_purposes() -> None:
     )
 
     assert state.snapshot()["verification_confidence"] == "failed"
+
+
+def test_hierarchical_plan_validates_dependencies_and_acceptance() -> None:
+    action = UpdatePlanAction(
+        type="update_plan",
+        steps=[
+            {
+                "id": "inspect",
+                "step": "Inspect parser",
+                "status": "completed",
+                "acceptance_criteria": ["evidence: parser symbols inspected"],
+            },
+            {
+                "id": "patch",
+                "parent_id": "inspect",
+                "depends_on": ["inspect"],
+                "step": "Patch parser",
+                "status": "in_progress",
+                "target_files": ["src/parser.py"],
+                "acceptance_criteria": ["pytest tests/test_parser.py"],
+            },
+        ],
+        hypotheses=[
+            {
+                "id": "root-cause",
+                "statement": "The parser drops escaped delimiters.",
+                "status": "testing",
+                "confidence": "medium",
+            }
+        ],
+    )
+    state = ExecutionState(task="fix parser", max_steps=10)
+
+    state.update_plan(action)
+    snapshot = state.snapshot()
+
+    assert snapshot["plan_revision"] == 1
+    assert snapshot["plan_steps"][1]["depends_on"] == ["inspect"]
+    assert snapshot["hypotheses"][0]["id"] == "root-cause"
+    assert "pytest tests/test_parser.py" in snapshot["acceptance_criteria"]
+
+
+def test_hierarchical_plan_rejects_cycles_and_unmet_dependencies() -> None:
+    with pytest.raises(ValidationError, match="cycle"):
+        UpdatePlanAction(
+            type="update_plan",
+            steps=[
+                {"id": "one", "step": "One", "status": "pending", "depends_on": ["two"]},
+                {"id": "two", "step": "Two", "status": "pending", "depends_on": ["one"]},
+            ],
+        )
+    with pytest.raises(ValidationError, match="unmet dependencies"):
+        UpdatePlanAction(
+            type="update_plan",
+            steps=[
+                {"id": "inspect", "step": "Inspect", "status": "pending"},
+                {
+                    "id": "patch",
+                    "step": "Patch",
+                    "status": "in_progress",
+                    "depends_on": ["inspect"],
+                },
+            ],
+        )
+
+
+def test_failed_planned_verification_requires_replan_and_resume_preserves_it() -> None:
+    state = ExecutionState(task="fix parser", max_steps=10)
+    state.update_plan(
+        UpdatePlanAction(
+            type="update_plan",
+            steps=[{"id": "verify", "step": "Verify", "status": "in_progress"}],
+        )
+    )
+    state.record_verification(
+        [{"purpose": "test", "command": "pytest", "ok": False, "status": "failed"}]
+    )
+
+    assert "must be revised" in str(
+        state.replan_blocker(FinalAction(type="final", message="done"))
+    )
+    resumed = ExecutionState.from_snapshot(
+        state.snapshot(), task="fix parser", max_steps=8, resumed_from_run_id=42
+    )
+    assert resumed.replan_required is True
+    assert resumed.resume_count == 1
+    assert resumed.resumed_from_run_id == 42
+    assert resumed.snapshot()["confidence"]["band"] == "low"

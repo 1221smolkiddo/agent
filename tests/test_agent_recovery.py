@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from code_agent.agent import CodingAgent
-from code_agent.models import ChatMessage
+from code_agent.execution_state import ExecutionState
+from code_agent.models import ChatMessage, ModelUsageRecord
 from code_agent.schema import (
     AgentAction,
     DeleteFileAction,
@@ -11,6 +12,7 @@ from code_agent.schema import (
     ReadFileAction,
     RunShellAction,
     ToolResult,
+    UpdatePlanAction,
     WriteFileAction,
 )
 from code_agent.storage import AgentStorage
@@ -42,6 +44,29 @@ class StreamingFakeModel(FakeModel):
             if chunk:
                 on_token(chunk)
         return response
+
+
+class HandoffFakeModel(FakeModel):
+    def __init__(self, responses: list[str]) -> None:
+        super().__init__(responses)
+        self.usage: list[ModelUsageRecord] = []
+
+    def complete(self, messages: list[ChatMessage]) -> str:
+        response = super().complete(messages)
+        self.usage.append(
+            ModelUsageRecord(
+                model="fallback-model",
+                ok=True,
+                provider="test",
+                fallback_from="primary-model",
+            )
+        )
+        return response
+
+    def drain_usage_records(self) -> list[ModelUsageRecord]:
+        records = self.usage
+        self.usage = []
+        return records
 
 
 class RecordingReporter:
@@ -820,6 +845,12 @@ testpaths = ["tests"]
     assert "tests/test_app.py::test_greeting failed" in model.messages_seen[1][-1]["content"]
     assert "Inspect likely relevant files: tests/test_app.py, app.py, src/app.py." in model.messages_seen[1][-1]["content"]
     assert "After patching, rerun focused check: uv run pytest tests/test_app.py::test_greeting." in model.messages_seen[1][-1]["content"]
+    recovery_pack = result.execution_state["context_packs"][-1]
+    assert recovery_pack["diagnostics"][0]["status"] == "failed"
+    assert recovery_pack["diagnostics"][0]["diagnostics"]["failed_tests"] == [
+        "tests/test_app.py::test_greeting"
+    ]
+    assert '"recovery_context_pack"' in model.messages_seen[1][-1]["content"]
 
 
 def test_agent_appends_verification_outcomes_to_final_answer(tmp_path: Path) -> None:
@@ -1036,3 +1067,60 @@ def test_workspace_classifier_uses_transcript_context_without_phrase_rules() -> 
     )
 
     assert CodingAgent._is_workspace_task(task)
+
+
+def test_agent_records_provider_handoff_in_durable_execution_state(tmp_path: Path) -> None:
+    model = HandoffFakeModel(['{"type":"final","message":"handoff preserved"}'])
+    agent = make_agent(tmp_path, model, RecoveringTools())
+
+    result = agent.run_detailed("explain this project")
+
+    assert result.message == "handoff preserved"
+    assert result.execution_state["model_handoffs"][0]["fallback_from"] == "primary-model"
+    assert result.execution_state["model_handoffs"][0]["model"] == "fallback-model"
+    assert result.execution_state["checkpoint_count"] >= 2
+
+
+def test_agent_resumes_latest_hierarchical_plan_checkpoint_end_to_end(tmp_path: Path) -> None:
+    prior = ExecutionState(task="fix parser", max_steps=5)
+    prior.update_plan(
+        UpdatePlanAction(
+            type="update_plan",
+            steps=[{"id": "patch", "step": "Patch parser", "status": "in_progress"}],
+            hypotheses=[
+                {
+                    "id": "root-cause",
+                    "statement": "Parser mishandles delimiters.",
+                    "status": "supported",
+                    "confidence": "high",
+                }
+            ],
+        )
+    )
+    model = FakeModel(
+        [
+            '{"type":"update_plan","steps":['
+            '{"id":"patch","step":"Patch parser","status":"completed"}]}',
+            '{"type":"final","message":"resumed and completed"}',
+        ]
+    )
+    tools = RecoveringTools(tmp_path)
+    agent = CodingAgent(
+        cwd=tmp_path,
+        dry_run=False,
+        max_steps=4,
+        max_failures=3,
+        model_client=model,
+        tools=tools,  # type: ignore[arg-type]
+        storage=AgentStorage(tmp_path / "agent.db"),
+        execution_state_snapshot=prior.snapshot(),
+        resumed_from_run_id=41,
+    )
+
+    result = agent.run_detailed("continue fixing this project parser")
+
+    assert result.message == "resumed and completed"
+    assert result.execution_state["resume_count"] == 1
+    assert result.execution_state["resumed_from_run_id"] == 41
+    assert result.execution_state["plan_steps"][0]["status"] == "completed"
+    assert result.execution_state["hypotheses"][0]["id"] == "root-cause"

@@ -13,9 +13,12 @@ def test_system_prompt_names_agent47_engineering_protocol() -> None:
     assert "For current external info such as time, weather, prices" in prompt
     assert "For basic questions that can be answered from stable general knowledge" in prompt
     assert "If web_search returns weak or no results" in prompt
-    assert "create and update a short durable plan with update_plan" in prompt
-    assert "only one step as in_progress" in prompt
-    assert "include target_files, owned_files, checks, blockers, and risk_notes" in prompt
+    assert "create and update a short durable hierarchical plan with update_plan" in prompt
+    assert "mark only one ready step as in_progress" in prompt
+    assert "parent_id and depends_on" in prompt
+    assert "acceptance_criteria" in prompt
+    assert "Track uncertain root causes in hypotheses" in prompt
+    assert "include target_files, owned_files, checks, blockers, risk_notes, and rationale" in prompt
     assert "Use repo_map to understand unfamiliar repositories" in prompt
     assert "Use read_memory early for workspace coding tasks" in prompt
     assert "Use rank_context with the user's task" in prompt
@@ -24,6 +27,7 @@ def test_system_prompt_names_agent47_engineering_protocol() -> None:
     assert '{ "type": "update_plan"' in prompt
     assert '"target_files": ["src/app.py"]' in prompt
     assert '"risk_notes": ["avoid unrelated refactors"]' in prompt
+    assert '"hypotheses": [' in prompt
     assert '{ "type": "repo_map"' in prompt
     assert '{ "type": "rank_context"' in prompt
     assert '{ "type": "symbol_index"' in prompt

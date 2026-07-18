@@ -11,9 +11,22 @@ class FinalAction(BaseModel):
 
 
 class PlanStep(BaseModel):
+    id: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
     step: str
     status: Literal["pending", "in_progress", "completed", "blocked"]
     note: Optional[str] = None
+    parent_id: Optional[str] = None
+    depends_on: list[str] = Field(default_factory=list, max_length=20)
+    acceptance_criteria: list[str] = Field(default_factory=list, max_length=20)
+    target_files: list[str] = Field(default_factory=list, max_length=20)
+
+
+class HypothesisUpdate(BaseModel):
+    id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
+    statement: str = Field(min_length=1, max_length=1000)
+    status: Literal["proposed", "testing", "supported", "rejected"] = "proposed"
+    evidence: list[str] = Field(default_factory=list, max_length=20)
+    confidence: Literal["low", "medium", "high"] = "low"
 
 
 class UpdatePlanAction(BaseModel):
@@ -24,12 +37,37 @@ class UpdatePlanAction(BaseModel):
     checks: list[str] = Field(default_factory=list, max_length=20)
     blockers: list[str] = Field(default_factory=list, max_length=10)
     risk_notes: list[str] = Field(default_factory=list, max_length=10)
+    hypotheses: list[HypothesisUpdate] = Field(default_factory=list, max_length=20)
+    rationale: Optional[str] = Field(default=None, max_length=2000)
 
     @model_validator(mode="after")
     def validate_plan(self) -> "UpdatePlanAction":
         in_progress = [step for step in self.steps if step.status == "in_progress"]
         if len(in_progress) > 1:
             raise ValueError("Only one plan step can be in_progress at a time.")
+        explicit_ids = [step.id for step in self.steps if step.id]
+        if len(explicit_ids) != len(set(explicit_ids)):
+            raise ValueError("Plan step IDs must be unique.")
+        known_ids = set(explicit_ids)
+        for step in self.steps:
+            references = [*step.depends_on, *([step.parent_id] if step.parent_id else [])]
+            unknown = [reference for reference in references if reference not in known_ids]
+            if unknown:
+                raise ValueError(f"Plan step references unknown IDs: {', '.join(unknown)}")
+            if step.id and step.id in step.depends_on:
+                raise ValueError(f"Plan step {step.id} cannot depend on itself.")
+            for path in step.target_files:
+                if not _is_safe_relative_plan_path(path):
+                    raise ValueError(f"Plan step target_files contains an unsafe path: {path}")
+        _validate_plan_dependencies(self.steps)
+        statuses = {step.id: step.status for step in self.steps if step.id}
+        for step in in_progress:
+            unmet = [dependency for dependency in step.depends_on if statuses[dependency] != "completed"]
+            if unmet:
+                raise ValueError(
+                    f"In-progress plan step {step.id or step.step} has unmet dependencies: "
+                    + ", ".join(unmet)
+                )
         for field_name in ["target_files", "owned_files"]:
             for path in getattr(self, field_name):
                 if not _is_safe_relative_plan_path(path):
@@ -37,6 +75,26 @@ class UpdatePlanAction(BaseModel):
                         f"{field_name} must contain workspace-relative paths without '..': {path}"
                     )
         return self
+
+
+def _validate_plan_dependencies(steps: list[PlanStep]) -> None:
+    dependencies = {step.id: step.depends_on for step in steps if step.id}
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(step_id: str) -> None:
+        if step_id in visiting:
+            raise ValueError(f"Plan dependency cycle detected at {step_id}.")
+        if step_id in visited:
+            return
+        visiting.add(step_id)
+        for dependency in dependencies.get(step_id, []):
+            visit(dependency)
+        visiting.remove(step_id)
+        visited.add(step_id)
+
+    for step_id in dependencies:
+        visit(step_id)
 
 
 def _is_safe_relative_plan_path(path: str) -> bool:

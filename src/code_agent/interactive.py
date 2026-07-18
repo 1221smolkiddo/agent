@@ -28,7 +28,7 @@ from .model_profiles import validate_profile_name
 from .model_presets import MODEL_PRESETS, resolve_model_preset
 from .model_registry import REGISTERED_MODELS, find_registered_model, validate_model_selection
 from .permissions import ApprovalMode, PermissionPolicy, confirm_permission
-from .resume import build_resume_task, format_run_detail
+from .resume import build_resume_task, format_run_detail, latest_execution_state
 from .revert import apply_revert_plan, build_revert_plan, format_revert_preview
 from .sandbox import (
     create_sandbox_workspace,
@@ -634,9 +634,10 @@ def run_resume_command(
         print_panel("Resume", f"No run found with id {run_id}.")
         return
 
+    prior_steps = storage.run_steps_payloads(run_id)
     task = build_resume_task(
         run_row,
-        storage.run_steps_payloads(run_id),
+        prior_steps,
         instruction.strip() or None,
         storage.get_work_report(run_id),
     )
@@ -654,6 +655,8 @@ def run_resume_command(
             reporter=reporter,
             stream_model=stream_model,
             require_process_isolation=sandbox_enabled,
+            execution_state_snapshot=latest_execution_state(prior_steps),
+            resumed_from_run_id=run_id,
         )
     except SandboxIsolationError as exc:
         print_panel("Sandbox Unavailable", str(exc))

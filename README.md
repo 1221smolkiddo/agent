@@ -20,7 +20,8 @@ changes and approved commands still require human review. Read
   selective invalidation, project memory, and git-diff awareness.
 - Native JSON-RPC language-server clients with definition, references, hover, completion, workspace symbols,
   diagnostics, rename previews, formatting previews, code actions, crash restart, and deterministic cleanup.
-- Durable execution phases, enforceable plans, acceptance checks, failed-hypothesis tracking, and resume state.
+- Durable hierarchical plans with dependencies, typed acceptance gates, evidence-backed hypotheses,
+  confidence scoring, explicit blockers, checkpointed resume, and mandatory replanning after invalidated assumptions.
 - Outcome-aware loop prevention tied to workspace generations.
 - Bounded context compaction that preserves the original task and recent evidence.
 - Automatic test, lint, typecheck, and build detection with verification diagnostics and reviewer passes.
@@ -29,7 +30,8 @@ changes and approved commands still require human review. Read
 - Mutation verification that rejects false completion claims.
 - Permission modes, sensitive-file refusal, secret redaction, path guards, and command classification.
 - Dry-run mode, copied-workspace sandboxes, and Docker or Podman container backends.
-- OpenAI-compatible providers, model profiles, streaming, bounded retries, cross-provider fallback, usage, and cost records.
+- OpenAI-compatible providers, model profiles, streaming, bounded retries, state-preserving cross-provider fallback,
+  provider-handoff audit records, usage, and cost records.
 - SQLite run history, work reports, redacted debug bundles, per-repository memory, deletion, pruning, resume, and revert.
 - Deterministic offline evals, opt-in live evals, capability reports, release smoke checks, and collaboration helpers.
 
@@ -157,16 +159,17 @@ uv run code-agent collab review --run-id 12 --strict
 
 Workspace runs follow an explicit lifecycle:
 
-1. Classify the request and discover repository context.
-2. Create or update a durable plan for non-trivial work.
+1. Classify the request and build a token-bounded context pack of exact files, symbols, relationships, and tests.
+2. Create or update a durable hierarchical plan with dependencies, hypotheses, and acceptance criteria.
 3. Execute one validated action at a time.
 4. Verify mutations against disk and run selected project checks.
-5. Diagnose failures and require a materially different recovery strategy.
+5. Diagnose failures, record evidence, invalidate stale assumptions, and require a revised plan.
 6. Reject repeated identical outcomes and unsupported completion claims.
-7. Persist execution state, evidence, usage, and a final work report.
+7. Checkpoint execution before later model turns and persist evidence, provider handoffs, confidence, and reports.
 
-Plans are execution contracts. If a final response claims success, unfinished plan steps and planned
-checks without passing evidence block finalization.
+Plans are execution contracts. Dependencies gate active work; completed steps with unmet `command:`, `evidence:`,
+or `file:` criteria become blocked. Failed planned verification requires a new plan revision before mutation,
+execution, or finalization. Resumed runs hydrate the latest persisted execution checkpoint.
 
 See [Architecture](docs/ARCHITECTURE.md) for module boundaries and detailed data flow.
 

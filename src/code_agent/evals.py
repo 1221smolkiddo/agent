@@ -1004,6 +1004,69 @@ def builtin_fixture_eval_cases() -> list[FixtureEvalCase]:
             ),
         ),
         FixtureEvalCase(
+            name="long_horizon_replan_after_regression",
+            description=(
+                "Maintain a hierarchical plan, reject stale actions after a regression, replan from "
+                "verification evidence, and finish with affected tests passing."
+            ),
+            task="fix multiply with a durable plan, recover from regressions, and verify affected tests",
+            files={
+                **python_pytest_project(),
+                "mathlib.py": "def multiply(a, b):\n    return a + b\n",
+                "tests/test_mathlib.py": (
+                    "from mathlib import multiply\n\n"
+                    "def test_multiply():\n"
+                    "    assert multiply(3, 4) == 12\n"
+                ),
+            },
+            responses=[
+                (
+                    '{"type":"update_plan","steps":['
+                    '{"id":"inspect","step":"Inspect dependency graph","status":"completed"},'
+                    '{"id":"patch","step":"Patch multiply","status":"in_progress",'
+                    '"depends_on":["inspect"]}],"checks":["uv run pytest tests/test_mathlib.py"],'
+                    '"hypotheses":[{"id":"operator","statement":"multiply uses the wrong operator",'
+                    '"status":"testing","confidence":"medium"}]}'
+                ),
+                (
+                    '{"type":"edit_file","path":"mathlib.py",'
+                    '"find":"return a + b","replace":"return a - b"}'
+                ),
+                (
+                    '{"type":"edit_file","path":"mathlib.py",'
+                    '"find":"return a - b","replace":"return a * b"}'
+                ),
+                (
+                    '{"type":"update_plan","steps":['
+                    '{"id":"inspect","step":"Inspect failed verification","status":"completed"},'
+                    '{"id":"recover","step":"Apply evidence-backed fix","status":"in_progress",'
+                    '"depends_on":["inspect"]}],"checks":["uv run pytest tests/test_mathlib.py"],'
+                    '"hypotheses":[{"id":"operator","statement":"subtraction is also incorrect",'
+                    '"status":"rejected","evidence":["pytest assertion"],"confidence":"high"}]}'
+                ),
+                (
+                    '{"type":"edit_file","path":"mathlib.py",'
+                    '"find":"return a - b","replace":"return a * b"}'
+                ),
+                (
+                    '{"type":"update_plan","steps":['
+                    '{"id":"inspect","step":"Inspect failed verification","status":"completed"},'
+                    '{"id":"recover","step":"Apply evidence-backed fix","status":"completed",'
+                    '"depends_on":["inspect"]}],"checks":["uv run pytest tests/test_mathlib.py"]}'
+                ),
+                '{"type":"final","message":"Recovered from the regression and affected tests pass."}',
+            ],
+            validators=(
+                file_contains("mathlib.py", "return a * b"),
+                verification_failed("test"),
+                verification_passed("test"),
+                failure_kind_recorded("replan_required"),
+                command_ran_contains("tests/test_mathlib.py"),
+            ),
+            max_steps=12,
+            max_failures=5,
+        ),
+        FixtureEvalCase(
             name="patch_conflict_recovery",
             description="Recover when a patch cannot apply, then make a safe exact edit.",
             task="update the app mode from old to new",
@@ -1474,6 +1537,17 @@ def no_failed_action(action_type: str) -> FixtureValidator:
     def validate(_workspace: Path, _agent: CodingAgent, result: AgentRunResult) -> tuple[bool, str]:
         matched = any(item.get("action") == action_type for item in result.failed_actions)
         return not matched, f"unexpected failed {action_type} action recorded"
+
+    return validate
+
+
+def failure_kind_recorded(kind: str) -> FixtureValidator:
+    def validate(_workspace: Path, _agent: CodingAgent, result: AgentRunResult) -> tuple[bool, str]:
+        matched = any(
+            item.get("kind") == kind or item.get("type") == kind
+            for item in result.failed_actions
+        )
+        return matched, f"no failed action kind recorded: {kind}"
 
     return validate
 

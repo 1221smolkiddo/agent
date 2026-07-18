@@ -454,3 +454,27 @@ def test_index_connections_close_and_rank_output_supports_legacy_windows_console
 
     assert moved.exists()
     assert output.encode("cp1252")
+
+
+def test_context_pack_contains_symbols_relationships_and_affected_tests(tmp_path: Path) -> None:
+    from code_agent.repo_index import affected_test_paths, build_context_pack
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "parser.py").write_text(
+        "def parse_request(value):\n    return value.strip()\n", encoding="utf-8"
+    )
+    (tmp_path / "tests" / "test_parser.py").write_text(
+        "from src.parser import parse_request\n\ndef test_parse_request():\n"
+        "    assert parse_request(' x ') == 'x'\n",
+        encoding="utf-8",
+    )
+
+    pack = build_context_pack(tmp_path, "fix parse_request and its test", max_tokens=800)
+    tests = affected_test_paths(tmp_path, ["src/parser.py"])
+
+    assert any(item["path"] == "src/parser.py" for item in pack["files"])
+    assert any(item["name"].endswith("parse_request") for item in pack["symbols"])
+    assert any(item["relation"] == "test" for item in pack["relationships"])
+    assert tests == ["tests/test_parser.py"]
+    assert pack["estimated_tokens"] <= pack["max_tokens"]

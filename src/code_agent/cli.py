@@ -49,7 +49,7 @@ from .protocol import (
     json_approval_callback,
 )
 from .release_smoke import run_release_smoke
-from .resume import build_resume_task, format_run_detail
+from .resume import build_resume_task, format_run_detail, latest_execution_state
 from .revert import apply_revert_plan, build_revert_plan, format_revert_preview
 from .sandbox import (
     create_sandbox_workspace,
@@ -721,9 +721,10 @@ def resume(
         typer.echo(f"Sandbox: {workspace}")
         typer.echo(format_sandbox_limits(sandbox_workspace.policy))
 
+    prior_steps = storage.run_steps_payloads(run_id)
     task = build_resume_task(
         run_row,
-        storage.run_steps_payloads(run_id),
+        prior_steps,
         instruction or None,
         storage.get_work_report(run_id),
     )
@@ -744,6 +745,8 @@ def resume(
         shell_network_policy="deny" if deny_network_shell else None,
         sandbox_backend=sandbox_policy.backend,
         require_process_isolation=sandbox,
+        execution_state_snapshot=latest_execution_state(prior_steps),
+        resumed_from_run_id=run_id,
     )
     try:
         result = agent.run_detailed(task)

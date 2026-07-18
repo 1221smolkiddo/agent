@@ -5,6 +5,19 @@ import sqlite3
 from typing import Any
 
 
+def latest_execution_state(steps: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for step in reversed(steps):
+        payload = step.get("payload", {})
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("type") == "execution_state":
+            return payload.copy()
+        nested = payload.get("execution_state")
+        if isinstance(nested, dict) and nested.get("type") == "execution_state":
+            return nested.copy()
+    return None
+
+
 def format_run_detail(
     run: sqlite3.Row,
     steps: list[dict[str, Any]],

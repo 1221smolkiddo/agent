@@ -50,6 +50,7 @@ def test_builtin_fixture_eval_cases_cover_coding_behaviors() -> None:
         "automatic_context_preflight",
         "dirty_worktree_awareness",
         "patch_conflict_recovery",
+        "long_horizon_replan_after_regression",
     }
 
 
@@ -78,11 +79,11 @@ def test_run_builtin_evals_passes() -> None:
     result = run_builtin_evals()
 
     assert result.ok
-    assert result.passed == 26
+    assert result.passed == 27
     assert result.failed == 0
     assert result.metrics["pass_rate"] == 1.0
-    assert "Agent47 local evals: 26 passed, 0 failed" in result.format()
-    assert "Metrics: pass_rate=100.00%, total=26" in result.format()
+    assert "Agent47 local evals: 27 passed, 0 failed" in result.format()
+    assert "Metrics: pass_rate=100.00%, total=27" in result.format()
     assert "fixture/fix_test" in result.format()
 
 
@@ -114,7 +115,7 @@ def test_cli_evals_command_runs_builtin_evals() -> None:
     result = runner.invoke(app, ["evals"])
 
     assert result.exit_code == 0, result.output
-    assert "Agent47 local evals: 26 passed, 0 failed" in result.output
+    assert "Agent47 local evals: 27 passed, 0 failed" in result.output
     assert "fixture/create_file" in result.output
 
 
@@ -126,8 +127,8 @@ def test_cli_evals_command_outputs_json() -> None:
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["ok"] is True
-    assert payload["metrics"]["passed"] == 26
-    assert payload["metrics"]["categories"]["fixture"]["total"] == 19
+    assert payload["metrics"]["passed"] == 27
+    assert payload["metrics"]["categories"]["fixture"]["total"] == 20
 
 
 def test_cli_evals_command_exits_nonzero_when_any_eval_fails(monkeypatch) -> None:

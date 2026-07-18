@@ -8,7 +8,8 @@ hard security sandbox. These limitations are part of the operating contract.
 - Coding quality depends on the selected provider, model, prompt compatibility, context window, and credits.
 - Deterministic offline evals validate agent logic with scripted responses; they do not measure real-model quality.
 - Live evals are opt-in, consume tokens, and need multiple runs before making reliability claims.
-- Model fallback improves availability but can change behavior, latency, cost, and context limits between attempts.
+- Model fallback preserves messages and durable execution state and records provider handoffs, but can still change
+  behavior, latency, cost, output limits, and interpretation between attempts.
 - The reviewer is another model call and cannot prove correctness or security.
 
 ## Autonomy
@@ -20,7 +21,9 @@ hard security sandbox. These limitations are part of the operating contract.
   complete transactional snapshot.
 - Context budgeting is character-based rather than provider-tokenizer-based.
 - Deterministic compaction preserves task and recent evidence but may omit older details that later become relevant.
-- Acceptance checks use command equivalence heuristics and cannot infer every project-specific success criterion.
+- Acceptance gates support explicit command, evidence, and changed-file criteria. Command equivalence and evidence
+  substring matching remain heuristics and cannot infer every project-specific success condition.
+- Checkpoints preserve Agent47 control state, not arbitrary in-memory state inside external tools or providers.
 - Command diagnostics support broad common compiler, test, linter, build, and runtime output shapes, but
   vendor wording and custom reporters can still fall back to generic diagnostics.
 - Output ordering is timestamped at the client pipe readers; operating-system and tool buffering can delay
@@ -100,7 +103,7 @@ hard security sandbox. These limitations are part of the operating contract.
   terminal does not yet maintain a continuously rendered diagnostics panel between agent actions.
 - Dynamic imports, generated code, macros, reflection, build-time code generation, runtime dependency injection,
   and custom monorepo tooling can evade the static graph.
-- Token estimates use source character counts rather than provider-specific tokenizers. Graph-aware ranking remains
+- Context packs and token estimates use source character counts rather than provider-specific tokenizers. Graph-aware ranking remains
   heuristic and can miss behavior connected only through runtime data, external services, or unsupported build metadata.
 - Background refresh is polling plus transaction-triggered invalidation, not a native filesystem watcher. External
   edits become visible on the next interval or synchronous repository-context request.
@@ -110,7 +113,8 @@ hard security sandbox. These limitations are part of the operating contract.
 ## Verification
 
 - Detected commands depend on recognizable Python, Node, Rust, or Go project metadata.
-- Automatic verification may be broad and slow for large repositories.
+- Python pytest verification uses graph-affected test files when static relationships are available. Unsupported
+  runners, dynamic dependencies, manifest changes, or incomplete graphs can still require broad checks.
 - Passing tests do not prove absence of bugs, security issues, performance regressions, or platform-specific defects.
 - Some project commands require services, credentials, network access, hardware, or interactive input unavailable to the agent.
 - The complete local test suite can be slow on Windows; focused tests are recommended during iteration.

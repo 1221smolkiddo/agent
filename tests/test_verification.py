@@ -115,6 +115,25 @@ testpaths = ["tests"]
     assert [command.command for command in commands] == ["uv run pytest"]
 
 
+def test_select_verification_commands_focuses_graph_affected_pytest_files(tmp_path: Path) -> None:
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\ndependencies = [\"pytest\"]\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n",
+        encoding="utf-8",
+    )
+
+    commands, reason = select_verification_commands(
+        tmp_path,
+        ["src/parser.py"],
+        affected_tests=["tests/test_parser.py", "tests/test_api parser.py"],
+    )
+
+    test_command = next(command.command for command in commands if command.purpose == "test")
+    assert test_command == 'uv run pytest tests/test_parser.py "tests/test_api parser.py"'
+    assert "Graph analysis selected 2 affected test file(s)." in reason
+
+
 def test_suggest_verification_commands_skips_docs_only_change(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         """

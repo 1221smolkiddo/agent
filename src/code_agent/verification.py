@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,7 +40,10 @@ def suggest_verification_commands(workspace: Path, changed_paths: list[str]) -> 
 
 
 def select_verification_commands(
-    workspace: Path, changed_paths: list[str]
+    workspace: Path,
+    changed_paths: list[str],
+    *,
+    affected_tests: list[str] | None = None,
 ) -> tuple[list[VerificationCommand], str]:
     commands = _dedupe_commands(find_verification_commands(workspace))
     selected_purposes, reason = _select_purposes(changed_paths)
@@ -48,7 +52,29 @@ def select_verification_commands(
         [command for command in commands if command.purpose in selected_purposes],
         key=lambda command: purpose_order[command.purpose],
     )
+    if affected_tests:
+        selected = [_focus_test_command(command, affected_tests) for command in selected]
+        reason += f" Graph analysis selected {len(affected_tests)} affected test file(s)."
     return selected, reason
+
+
+def _focus_test_command(
+    command: VerificationCommand,
+    affected_tests: list[str],
+) -> VerificationCommand:
+    if command.purpose != "test":
+        return command
+    if command.command in {"uv run pytest", "python -m pytest"}:
+        paths = " ".join(_quote_shell_path(path) for path in affected_tests[:30])
+        return VerificationCommand(command.purpose, f"{command.command} {paths}", command.source)
+    return command
+
+
+def _quote_shell_path(path: str) -> str:
+    normalized = path.replace("\\", "/")
+    if re.fullmatch(r"[A-Za-z0-9_./-]+", normalized):
+        return normalized
+    return '"' + normalized.replace('"', '\\"') + '"'
 
 
 def find_verification_commands(workspace: Path) -> list[VerificationCommand]:

@@ -36,20 +36,211 @@ class ExecutionState:
     action_count: int = 0
     context_chars: int = 0
     compacted_messages: int = 0
-    plan_steps: list[dict[str, str]] = field(default_factory=list)
+    plan_steps: list[dict[str, Any]] = field(default_factory=list)
+    plan_revision: int = 0
+    plan_history: list[dict[str, Any]] = field(default_factory=list)
     acceptance_criteria: list[str] = field(default_factory=list)
     changed_paths: list[str] = field(default_factory=list)
     failed_hypotheses: list[str] = field(default_factory=list)
+    hypotheses: list[dict[str, Any]] = field(default_factory=list)
+    evidence_records: list[dict[str, Any]] = field(default_factory=list)
     verification_records: list[dict[str, Any]] = field(default_factory=list)
+    context_packs: list[dict[str, Any]] = field(default_factory=list)
+    model_handoffs: list[dict[str, Any]] = field(default_factory=list)
+    blockers: list[dict[str, Any]] = field(default_factory=list)
+    replan_required: bool = False
+    replan_reason: str = ""
+    checkpoint_count: int = 0
+    checkpoint_reason: str = ""
+    resume_count: int = 0
+    resumed_from_run_id: int | None = None
     _outcomes: dict[str, list[ActionOutcome]] = field(default_factory=dict)
+
+    @classmethod
+    def from_snapshot(
+        cls,
+        snapshot: dict[str, Any],
+        *,
+        task: str,
+        max_steps: int,
+        resumed_from_run_id: int | None = None,
+    ) -> "ExecutionState":
+        state = cls(task=task, max_steps=max_steps)
+        for name in (
+            "workspace_generation",
+            "action_count",
+            "context_chars",
+            "compacted_messages",
+            "plan_revision",
+            "checkpoint_count",
+            "resume_count",
+        ):
+            value = snapshot.get(name)
+            if isinstance(value, int) and value >= 0:
+                setattr(state, name, value)
+        for name in (
+            "plan_steps",
+            "plan_history",
+            "acceptance_criteria",
+            "changed_paths",
+            "failed_hypotheses",
+            "hypotheses",
+            "evidence_records",
+            "verification_records",
+            "context_packs",
+            "model_handoffs",
+            "blockers",
+        ):
+            value = snapshot.get(name)
+            if isinstance(value, list):
+                setattr(state, name, value.copy())
+        state.replan_required = bool(snapshot.get("replan_required", False))
+        state.replan_reason = str(snapshot.get("replan_reason", ""))
+        state.resume_count += 1
+        state.resumed_from_run_id = resumed_from_run_id
+        state.phase = ExecutionPhase.RECOVER
+        state.checkpoint("resumed")
+        return state
 
     def begin_step(self, step: int) -> None:
         self.step = step
 
     def update_plan(self, action: UpdatePlanAction) -> None:
         self.phase = ExecutionPhase.PLAN
-        self.plan_steps = [item.model_dump(exclude_none=True) for item in action.steps]
-        self.acceptance_criteria = _dedupe([*action.checks, *self.acceptance_criteria])
+        normalized: list[dict[str, Any]] = []
+        acceptance_blockers: list[dict[str, Any]] = []
+        for item in action.steps:
+            payload = item.model_dump(exclude_none=True, exclude_defaults=True)
+            criteria = payload.get("acceptance_criteria", [])
+            if payload.get("status") == "completed" and criteria:
+                unmet = [criterion for criterion in criteria if not self._criterion_met(criterion)]
+                payload["acceptance_status"] = "passed" if not unmet else "blocked"
+                if unmet:
+                    payload["status"] = "blocked"
+                    payload["note"] = "Missing acceptance evidence: " + ", ".join(unmet)
+                    acceptance_blockers.append(
+                        {
+                            "kind": "acceptance",
+                            "detail": f"{payload.get('step')}: {', '.join(unmet)}",
+                            "active": True,
+                        }
+                    )
+            normalized.append(payload)
+        statuses = {item.get("id"): item.get("status") for item in normalized if item.get("id")}
+        for payload in normalized:
+            if payload.get("status") != "in_progress":
+                continue
+            unmet_dependencies = [
+                dependency
+                for dependency in payload.get("depends_on", [])
+                if statuses.get(dependency) != "completed"
+            ]
+            if unmet_dependencies:
+                payload["status"] = "blocked"
+                payload["note"] = "Unmet gated dependencies: " + ", ".join(unmet_dependencies)
+                acceptance_blockers.append(
+                    {
+                        "kind": "dependency",
+                        "detail": f"{payload.get('step')}: {', '.join(unmet_dependencies)}",
+                        "active": True,
+                    }
+                )
+        if normalized != self.plan_steps:
+            self.plan_revision += 1
+            self.plan_history.append(
+                {
+                    "revision": self.plan_revision,
+                    "rationale": action.rationale or "",
+                    "steps": normalized,
+                }
+            )
+            self.plan_history = self.plan_history[-20:]
+        self.plan_steps = normalized
+        step_checks = [
+            criterion
+            for item in normalized
+            for criterion in item.get("acceptance_criteria", [])
+        ]
+        self.acceptance_criteria = _dedupe([*action.checks, *step_checks])
+        if action.hypotheses:
+            updates = {item.id: item.model_dump() for item in action.hypotheses}
+            existing = {str(item.get("id")): item for item in self.hypotheses}
+            existing.update(updates)
+            self.hypotheses = list(existing.values())[-20:]
+        self.blockers = acceptance_blockers + [
+            {"kind": "plan", "detail": blocker, "active": True}
+            for blocker in action.blockers
+        ]
+        self.replan_required = False
+        self.replan_reason = ""
+        self.checkpoint("plan_updated")
+
+    def replan_blocker(self, action: AgentAction) -> str | None:
+        if not self.replan_required or action.type == "update_plan":
+            return None
+        discovery_actions = {
+            "list_files", "read_file", "search", "summarize_code", "inspect_git_diff",
+            "repo_map", "rank_context", "symbol_index", "dependency_graph", "read_memory",
+            "lsp_status", "lsp_definition", "lsp_references", "lsp_hover",
+            "lsp_workspace_symbols", "lsp_diagnostics", "detect_verification",
+            "suggest_verification", "read_process_logs", "inspect_process", "process_events",
+        }
+        if action.type in discovery_actions:
+            return None
+        return (
+            "Execution assumptions changed and the durable plan must be revised before further "
+            f"mutation, execution, or finalization. Reason: {self.replan_reason}"
+        )
+
+    def require_replan(self, reason: str) -> None:
+        cleaned = " ".join(reason.split())[:500]
+        self.phase = ExecutionPhase.RECOVER
+        self.replan_required = True
+        self.replan_reason = cleaned
+        self.blockers.append({"kind": "replan", "detail": cleaned, "active": True})
+        self.blockers = self.blockers[-20:]
+        self.checkpoint("replan_required")
+
+    def record_evidence(
+        self,
+        *,
+        source: str,
+        summary: str,
+        paths: list[str] | None = None,
+        confidence: str = "medium",
+    ) -> None:
+        cleaned = " ".join(summary.split())[:1000]
+        if not cleaned:
+            return
+        self.evidence_records.append(
+            {
+                "source": source,
+                "summary": cleaned,
+                "paths": _dedupe(paths or []),
+                "confidence": confidence,
+                "workspace_generation": self.workspace_generation,
+            }
+        )
+        self.evidence_records = self.evidence_records[-40:]
+
+    def record_context_pack(self, pack: dict[str, Any]) -> None:
+        self.context_packs.append(pack)
+        self.context_packs = self.context_packs[-6:]
+        self.record_evidence(
+            source="context_pack",
+            summary=f"Ranked {len(pack.get('files', []))} files and {len(pack.get('relationships', []))} relationships.",
+            paths=[str(item.get("path")) for item in pack.get("files", []) if item.get("path")],
+            confidence="high",
+        )
+
+    def record_model_handoff(self, record: dict[str, Any]) -> None:
+        self.model_handoffs.append(record.copy())
+        self.model_handoffs = self.model_handoffs[-12:]
+        self.checkpoint("provider_handoff")
+
+    def checkpoint(self, reason: str) -> None:
+        self.checkpoint_count += 1
+        self.checkpoint_reason = reason
 
     def begin_action(self, action: AgentAction) -> None:
         self.phase = _phase_for_action(action)
@@ -85,6 +276,7 @@ class ExecutionState:
             self.phase = ExecutionPhase.RECOVER
             hypothesis = f"{action.type}: {' '.join(result.output.split())[:240]}"
             self.failed_hypotheses = _dedupe([*self.failed_hypotheses, hypothesis])[-8:]
+            self.record_evidence(source=action.type, summary=hypothesis, confidence="high")
         if changed_paths:
             self.changed_paths = _dedupe([*self.changed_paths, *changed_paths])
             self.workspace_generation += 1
@@ -106,6 +298,24 @@ class ExecutionState:
             }
             self.verification_records.append(record)
         self.verification_records = self.verification_records[-12:]
+        failures = [item for item in results if not bool(item.get("ok"))]
+        if failures:
+            first = failures[0]
+            self.record_evidence(
+                source="verification",
+                summary=f"{first.get('command', 'verification')} failed: {first.get('output', '')}",
+                confidence="high",
+            )
+            if self.plan_steps:
+                self.require_replan(f"Verification failed: {first.get('command', 'planned check')}")
+        else:
+            for item in results:
+                self.record_evidence(
+                    source="verification",
+                    summary=f"Passed {item.get('command', item.get('purpose', 'verification'))}",
+                    confidence="high",
+                )
+            self.checkpoint("verification_passed")
 
     def record_context(self, *, chars: int, compacted_messages: int) -> None:
         self.context_chars = chars
@@ -119,6 +329,7 @@ class ExecutionState:
 
     def finalize(self) -> None:
         self.phase = ExecutionPhase.FINALIZE
+        self.checkpoint("finalized")
 
     def finalization_blocker(
         self,
@@ -128,6 +339,8 @@ class ExecutionState:
     ) -> str | None:
         if not claims_success:
             return None
+        if self.replan_required:
+            return "The run cannot claim completion until the required replanning is completed: " + self.replan_reason
         unfinished = [
             str(item.get("step"))
             for item in self.plan_steps
@@ -144,14 +357,7 @@ class ExecutionState:
             for item in verification_results
             if item.get("ok") is True
         ]
-        unmet = [
-            criterion
-            for criterion in self.acceptance_criteria
-            if not any(
-                _commands_equivalent(_normalize_command(criterion), passed)
-                for passed in passed_commands
-            )
-        ]
+        unmet = [criterion for criterion in self.acceptance_criteria if not self._criterion_met(criterion, passed_commands)]
         if unmet:
             return (
                 "The final answer claims completion before these planned checks passed: "
@@ -159,6 +365,28 @@ class ExecutionState:
                 + ". Run the checks or update the plan with an honest blocker."
             )
         return None
+
+    def _criterion_met(
+        self,
+        criterion: str,
+        passed_commands: list[str] | None = None,
+    ) -> bool:
+        kind, separator, detail = criterion.partition(":")
+        if separator and kind.strip().lower() == "evidence":
+            expected = detail.strip().lower()
+            return any(expected in str(item.get("summary", "")).lower() for item in self.evidence_records)
+        if separator and kind.strip().lower() == "file":
+            return detail.strip().replace("\\", "/") in self.changed_paths
+        expected_command = detail if separator and kind.strip().lower() == "command" else criterion
+        commands = passed_commands or [
+            _normalize_command(str(item.get("command", "")))
+            for item in self.verification_records
+            if item.get("status") == "passed"
+        ]
+        return any(
+            _commands_equivalent(_normalize_command(expected_command), passed)
+            for passed in commands
+        )
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -171,11 +399,25 @@ class ExecutionState:
             "context_chars": self.context_chars,
             "compacted_messages": self.compacted_messages,
             "plan_steps": self.plan_steps,
+            "plan_revision": self.plan_revision,
+            "plan_history": self.plan_history,
             "acceptance_criteria": self.acceptance_criteria,
             "changed_paths": self.changed_paths,
             "failed_hypotheses": self.failed_hypotheses,
+            "hypotheses": self.hypotheses,
+            "evidence_records": self.evidence_records,
             "verification_records": self.verification_records,
+            "context_packs": self.context_packs,
+            "model_handoffs": self.model_handoffs,
+            "blockers": self.blockers,
+            "replan_required": self.replan_required,
+            "replan_reason": self.replan_reason,
+            "checkpoint_count": self.checkpoint_count,
+            "checkpoint_reason": self.checkpoint_reason,
+            "resume_count": self.resume_count,
+            "resumed_from_run_id": self.resumed_from_run_id,
             "verification_confidence": self._verification_confidence(),
+            "confidence": self._confidence(),
         }
 
     def _fingerprint(self, action: AgentAction) -> str:
@@ -199,6 +441,27 @@ class ExecutionState:
         if len(latest_by_purpose) >= 2:
             return "high"
         return "focused"
+
+    def _confidence(self) -> dict[str, Any]:
+        score = 0.2
+        reasons: list[str] = []
+        if self.plan_steps:
+            completed = sum(item.get("status") == "completed" for item in self.plan_steps)
+            score += 0.2 * completed / len(self.plan_steps)
+            reasons.append(f"{completed}/{len(self.plan_steps)} plan steps completed")
+        if self.evidence_records:
+            score += min(0.2, len(self.evidence_records) * 0.02)
+            reasons.append(f"{len(self.evidence_records)} evidence records")
+        passed = sum(item.get("status") == "passed" for item in self.verification_records)
+        failed = sum(item.get("status") != "passed" for item in self.verification_records)
+        score += min(0.35, passed * 0.12)
+        score -= min(0.5, failed * 0.25)
+        if self.replan_required:
+            score -= 0.25
+            reasons.append("replanning required")
+        score = max(0.0, min(1.0, score))
+        band = "high" if score >= 0.75 else "medium" if score >= 0.45 else "low"
+        return {"score": round(score, 2), "band": band, "reasons": reasons}
 
 
 def compact_message_history(

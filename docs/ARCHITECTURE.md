@@ -31,17 +31,20 @@ the corresponding tool, and returns a bounded result as untrusted context.
 
 - Phases: discover, plan, execute, verify, recover, and finalize.
 - Current step and maximum-step budget.
-- Plan steps and acceptance checks.
+- Hierarchical plan steps with stable IDs, parent links, dependencies, target files, and typed acceptance gates.
 - Changed paths and workspace generation.
-- Failed hypotheses and verification confidence.
+- Structured hypotheses, bounded evidence, explicit blockers, plan revisions, verification confidence, and confidence scoring.
+- Context packs, provider handoffs, checkpoint reasons, and resume lineage.
 - Action count and context-compaction statistics.
 
 Actions are fingerprinted from their validated payload and workspace generation. If the same action
 produces the same outcome twice without a workspace change, the third execution is blocked and the model
 must gather different evidence, change strategy, update the plan, or report a blocker.
 
-For non-trivial work, plan steps are enforceable. A success claim is rejected while plan steps remain
-unfinished or planned verification commands lack passing evidence.
+For non-trivial work, plan steps are enforceable. Cycles, unknown dependencies, and activation before dependencies
+complete are rejected during schema validation. Completed steps with unmet command, evidence, or changed-file gates
+become blocked. Failed planned verification marks current assumptions stale; only discovery or a new plan revision
+is allowed before execution continues. Success claims remain blocked until the plan and all gates are satisfied.
 
 ## Context Engine
 
@@ -50,6 +53,8 @@ Workspace tasks begin with bounded automatic context:
 - Per-repository memory.
 - Repository map and graph-ranked files under an explicit token budget.
 - Persistent symbols plus import, call, reference, test, and configuration relationships.
+- Structured context packs with bounded snippets, exact symbol locations, graph edges, affected tests,
+  deterministic decomposition suggestions, and estimated token use.
 - Git status and diff awareness when requested.
 
 `repo_index.py` maintains the project graph in SQLite. File rows retain path, kind, language, size,
@@ -64,8 +69,8 @@ immediate path-level refresh requests; agent shutdown joins it before closing la
 
 Built-in static extraction covers Python, JavaScript/TypeScript, Rust, Go, Java, Kotlin, C/C++, C#, Swift,
 Ruby, and PHP. Context ranking combines path/task matches, declared symbols, references, graph neighbors,
-repository importance, test mappings, and an estimated token budget. LSP remains the higher-fidelity semantic
-source when a suitable server is installed.
+repository importance, test mappings, and an estimated token budget. A bounded dependency traversal selects
+affected tests after mutations. LSP remains the higher-fidelity semantic source when a suitable server is installed.
 
 Conversation context uses a configurable character budget. When history exceeds the budget, Agent47
 preserves the system prompt, original task, recent evidence, and a deterministic summary of omitted
@@ -83,10 +88,11 @@ actions, failures, and changed paths. It does not ask a model to summarize its o
 6. Enforce non-workspace, plan, loop, permission, and security constraints.
 7. Execute the tool and record elapsed time.
 8. Verify mutations against current disk state.
-9. Select automatic verification commands for changed paths.
-10. Diagnose failures and provide action-specific recovery guidance.
-11. Reject premature or unsupported final claims.
-12. Optionally run a separate reviewer model before finalization.
+9. Select automatic verification commands and graph-affected tests for changed paths.
+10. Diagnose failures, record evidence, and require replanning when planned verification fails.
+11. Persist checkpoints before subsequent model turns and provider handoffs.
+12. Reject premature or unsupported final claims.
+13. Optionally run a separate reviewer model before finalization.
 
 Failure budgets are consecutive, not global: successful evidence resets the tool failure counter. Repeated
 unchanged outcomes remain tracked separately by execution state.

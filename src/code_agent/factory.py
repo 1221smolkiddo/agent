@@ -44,6 +44,8 @@ def create_agent(
     shell_network_policy: str | None = None,
     sandbox_backend: str | None = None,
     require_process_isolation: bool = False,
+    execution_state_snapshot: dict[str, object] | None = None,
+    resumed_from_run_id: int | None = None,
 ) -> CodingAgent:
     workspace = cwd.resolve()
     configured_preset = None if model or provider else settings.agent_model_preset
@@ -138,6 +140,8 @@ def create_agent(
         stream_model=settings.agent_stream if stream_model is None else stream_model,
         reviewer_client=resolved_reviewer,
         context_max_chars=settings.agent_context_max_chars,
+        execution_state_snapshot=execution_state_snapshot,
+        resumed_from_run_id=resumed_from_run_id,
     )
 
 

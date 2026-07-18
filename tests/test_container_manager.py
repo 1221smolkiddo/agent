@@ -60,6 +60,25 @@ def _mock_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def _require_live_container_image(tmp_path: Path) -> None:
+    security = container_manager_module._sandbox_security()
+    runtime = security.resolve_container_runtime("docker")
+    if runtime is None:
+        pytest.skip("docker executable is not available")
+    daemon_ok, detail = security.container_daemon_available(runtime)
+    if not daemon_ok:
+        pytest.skip(f"docker daemon is unavailable: {detail}")
+    manager = ContainerManager(tmp_path, _policy())
+    environment = manager.detect_environment()
+    image, image_detail = security.resolve_container_image_reference(
+        runtime,
+        environment.image,
+        manager.policy.images,
+    )
+    if image is None:
+        pytest.skip(f"reviewed live-test container image is unavailable: {image_detail}")
+
+
 def test_environment_detection_prefers_devcontainer(tmp_path: Path) -> None:
     devcontainer = tmp_path / ".devcontainer"
     devcontainer.mkdir()
@@ -315,13 +334,7 @@ def test_reusable_runner_terminates_in_container_command_on_cancellation(
 
 @pytest.mark.docker_security
 def test_live_container_reuse_exec_mount_and_cleanup(tmp_path: Path) -> None:
-    security = container_manager_module._sandbox_security()
-    runtime = security.resolve_container_runtime("docker")
-    if runtime is None:
-        pytest.skip("docker executable is not available")
-    daemon_ok, detail = security.container_daemon_available(runtime)
-    if not daemon_ok:
-        pytest.skip(f"docker daemon is unavailable: {detail}")
+    _require_live_container_image(tmp_path)
     tmp_path.chmod(0o777)
     manager = ContainerManager(tmp_path, _policy())
     try:
@@ -351,10 +364,7 @@ def test_live_container_reuse_exec_mount_and_cleanup(tmp_path: Path) -> None:
 
 @pytest.mark.docker_security
 def test_live_managed_process_runs_inside_reusable_container(tmp_path: Path) -> None:
-    security = container_manager_module._sandbox_security()
-    runtime = security.resolve_container_runtime("docker")
-    if runtime is None or not security.container_daemon_available(runtime)[0]:
-        pytest.skip("docker is unavailable")
+    _require_live_container_image(tmp_path)
     tmp_path.chmod(0o777)
     (tmp_path / "server.py").write_text(
         "import time\nprint('container-managed-ready', flush=True)\ntime.sleep(60)\n",
@@ -386,10 +396,7 @@ def test_live_managed_process_runs_inside_reusable_container(tmp_path: Path) -> 
 
 @pytest.mark.docker_security
 def test_live_lsp_json_rpc_is_forwarded_through_container(tmp_path: Path) -> None:
-    security = container_manager_module._sandbox_security()
-    runtime = security.resolve_container_runtime("docker")
-    if runtime is None or not security.container_daemon_available(runtime)[0]:
-        pytest.skip("docker is unavailable")
+    _require_live_container_image(tmp_path)
     tmp_path.chmod(0o777)
     (tmp_path / "demo.py").write_text("value = 1\n", encoding="utf-8")
     (tmp_path / "fake_lsp.py").write_text(

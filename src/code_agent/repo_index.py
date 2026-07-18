@@ -354,6 +354,166 @@ def rank_context(
     return "\n".join(lines)
 
 
+def build_context_pack(
+    workspace: Path,
+    task: str,
+    *,
+    max_files: int = 10,
+    max_tokens: int = 6000,
+    cache: RepoIndexCache | None = None,
+    focus_paths: list[str] | None = None,
+    diagnostics: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    graph = build_project_graph(workspace, cache=cache)
+    terms = _task_terms(task)
+    scores = {item.path: score_file(item, terms) for item in graph.files}
+    reasons: dict[str, set[str]] = {item.path: set() for item in graph.files}
+    normalized_focus = {path.replace("\\", "/") for path in focus_paths or []}
+    for item in graph.files:
+        if item.path in normalized_focus:
+            scores[item.path] += 40
+            reasons[item.path].add("changed or diagnostic focus")
+        matching_symbols = [
+            symbol for symbol in item.symbol_records
+            if any(term in symbol.name.lower() for term in terms)
+        ]
+        if matching_symbols:
+            scores[item.path] += min(24, len(matching_symbols) * 6)
+            reasons[item.path].add("matching symbols")
+        if scores[item.path] > item.importance:
+            reasons[item.path].add("task terms")
+    seeded = {path for path, score in scores.items() if score > 5}
+    for edge in graph.edges:
+        weight = GRAPH_RELATION_WEIGHTS.get(edge.relation, 1)
+        if edge.source_path in seeded and edge.target_path in scores:
+            scores[edge.target_path] += weight
+            reasons[edge.target_path].add(f"{edge.relation} from {edge.source_path}")
+        if edge.target_path in seeded and edge.source_path in scores:
+            scores[edge.source_path] += max(1, weight - 1)
+            reasons[edge.source_path].add(f"{edge.relation} to {edge.target_path}")
+
+    selected = sorted(graph.files, key=lambda item: (-scores[item.path], item.path))[:max_files]
+    selected_paths = {item.path for item in selected if scores[item.path] > 0}
+    token_budget = max_tokens
+    files: list[dict[str, Any]] = []
+    symbols: list[dict[str, Any]] = []
+    for item in selected:
+        if item.path not in selected_paths or token_budget <= 0:
+            continue
+        allocation = min(max(128, max_tokens // max(max_files, 1)), token_budget)
+        matching = [
+            symbol for symbol in item.symbol_records
+            if any(term in symbol.name.lower() for term in terms)
+        ][:8]
+        snippet = _context_snippet(workspace / item.path, matching, allocation)
+        consumed = max(1, len(snippet) // 4)
+        token_budget -= consumed
+        files.append(
+            {
+                "path": item.path,
+                "kind": item.kind,
+                "language": item.language,
+                "score": scores[item.path],
+                "reasons": sorted(reasons[item.path]) or ["repository importance"],
+                "snippet": snippet,
+                "token_estimate": consumed,
+            }
+        )
+        symbols.extend(
+            {
+                "path": symbol.path,
+                "name": symbol.qualified_name,
+                "kind": symbol.kind,
+                "line": symbol.line,
+            }
+            for symbol in matching
+        )
+    relationships = [
+        {
+            "source": edge.source_path,
+            "target": edge.target_path,
+            "relation": edge.relation,
+            "detail": edge.detail,
+            "line": edge.line,
+        }
+        for edge in graph.edges
+        if edge.source_path in selected_paths or edge.target_path in selected_paths
+    ][:100]
+    tests = affected_test_paths_from_graph(graph, list(selected_paths))
+    suggested_steps = [
+        "Validate the highest-ranked symbols and dependency relationships.",
+        "Implement the smallest coherent change across affected files.",
+    ]
+    if tests:
+        suggested_steps.append("Run affected tests: " + ", ".join(tests[:8]))
+    suggested_steps.append("Run acceptance checks and inspect the final diff.")
+    return {
+        "type": "context_pack",
+        "task": task,
+        "terms": terms,
+        "files": files,
+        "symbols": symbols,
+        "relationships": relationships,
+        "affected_tests": tests,
+        "diagnostics": (diagnostics or [])[:20],
+        "suggested_steps": suggested_steps,
+        "estimated_tokens": max_tokens - token_budget,
+        "max_tokens": max_tokens,
+    }
+
+
+def affected_test_paths(
+    workspace: Path,
+    changed_paths: list[str],
+    *,
+    cache: RepoIndexCache | None = None,
+) -> list[str]:
+    return affected_test_paths_from_graph(build_project_graph(workspace, cache=cache), changed_paths)
+
+
+def affected_test_paths_from_graph(graph: ProjectGraph, changed_paths: list[str]) -> list[str]:
+    changed = {path.replace("\\", "/") for path in changed_paths}
+    tests = {item.path for item in graph.files if item.kind == "test" and item.path in changed}
+    frontier = set(changed)
+    visited = set(changed)
+    for _ in range(3):
+        next_frontier: set[str] = set()
+        for edge in graph.edges:
+            if edge.target_path in frontier:
+                if edge.relation == "test":
+                    tests.add(edge.source_path)
+                if edge.source_path not in visited:
+                    next_frontier.add(edge.source_path)
+            if edge.source_path in frontier and edge.target_path not in visited:
+                next_frontier.add(edge.target_path)
+        visited.update(next_frontier)
+        frontier = next_frontier
+    return sorted(
+        path for path in tests
+        if any(item.path == path and item.kind == "test" for item in graph.files)
+    )
+
+
+def _context_snippet(path: Path, symbols: list[SymbolRecord], token_budget: int) -> str:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    max_chars = token_budget * 4
+    if not symbols:
+        return "\n".join(lines[: min(40, len(lines))])[:max_chars]
+    ranges: list[tuple[int, int]] = []
+    for symbol in symbols:
+        start = max(0, symbol.line - 4)
+        end = min(len(lines), max(symbol.end_line, symbol.line) + 4)
+        ranges.append((start, end))
+    rendered: list[str] = []
+    for start, end in ranges:
+        rendered.extend(f"{index + 1}: {lines[index]}" for index in range(start, end))
+        rendered.append("...")
+    return "\n".join(rendered)[:max_chars]
+
+
 def build_symbol_index(
     workspace: Path,
     *,

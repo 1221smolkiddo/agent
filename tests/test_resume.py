@@ -2,7 +2,12 @@ from pathlib import Path
 import sqlite3
 import json
 
-from code_agent.resume import build_resume_task, compact_run_context, format_run_detail
+from code_agent.resume import (
+    build_resume_task,
+    compact_run_context,
+    format_run_detail,
+    latest_execution_state,
+)
 from code_agent.storage import CURRENT_SCHEMA_VERSION, AgentStorage
 from code_agent.debug_bundle import export_debug_bundle
 
@@ -347,3 +352,14 @@ def test_storage_delete_and_prune_remove_related_run_data(tmp_path: Path) -> Non
     assert storage.prune_runs(keep_last=1) == 1
     assert storage.get_run(run_ids[1]) is None
     assert storage.get_run(run_ids[2]) is not None
+
+
+def test_latest_execution_state_finds_direct_and_nested_checkpoints() -> None:
+    direct = {"type": "execution_state", "plan_revision": 1}
+    nested = {"type": "execution_state", "plan_revision": 2}
+    steps = [
+        {"payload": direct},
+        {"payload": {"type": "tool_result", "execution_state": nested}},
+    ]
+
+    assert latest_execution_state(steps) == nested
