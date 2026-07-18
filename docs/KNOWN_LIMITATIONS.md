@@ -84,7 +84,10 @@ hard security sandbox. These limitations are part of the operating contract.
 
 ## Repository Understanding
 
-- Symbol and dependency extraction is strongest for supported syntax and may be incomplete without optional tree-sitter parsing.
+- The persistent project graph statically extracts common declarations, imports, calls, and references across
+  Python, JavaScript/TypeScript, Rust, Go, Java, Kotlin, C/C++, C#, Swift, Ruby, and PHP. Regex-backed languages
+  are less precise than Python AST parsing or an installed language server, especially for overloaded methods,
+  aliases, generated declarations, conditional compilation, and complex macro syntax.
 - LSP features require separately installed language-server executables and inherit each server's indexing,
   configuration, startup-time, and protocol limitations.
 - Container-backed LSP requires the selected image to contain the relevant language-server binary. Environment
@@ -95,8 +98,12 @@ hard security sandbox. These limitations are part of the operating contract.
   create, rename, or delete are reported but are not executed automatically.
 - Diagnostics are consumed from LSP push notifications or pull requests when the diagnostics tool runs; the
   terminal does not yet maintain a continuously rendered diagnostics panel between agent actions.
-- Dynamic imports, generated code, macros, reflection, build-time code generation, and monorepo tooling can evade static indexing.
-- Repository ranking is heuristic and may miss relevant files in very large or unconventional projects.
+- Dynamic imports, generated code, macros, reflection, build-time code generation, runtime dependency injection,
+  and custom monorepo tooling can evade the static graph.
+- Token estimates use source character counts rather than provider-specific tokenizers. Graph-aware ranking remains
+  heuristic and can miss behavior connected only through runtime data, external services, or unsupported build metadata.
+- Background refresh is polling plus transaction-triggered invalidation, not a native filesystem watcher. External
+  edits become visible on the next interval or synchronous repository-context request.
 - Git-aware workflows assume a valid local Git repository and do not replace remote branch protection or code review.
 - Revert refuses conflicts but cannot reconstruct changes that were never recorded by Agent47.
 

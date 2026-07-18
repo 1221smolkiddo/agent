@@ -48,12 +48,24 @@ unfinished or planned verification commands lack passing evidence.
 Workspace tasks begin with bounded automatic context:
 
 - Per-repository memory.
-- Repository map and ranked files.
-- Optional symbol and dependency indexes for relevant tasks.
+- Repository map and graph-ranked files under an explicit token budget.
+- Persistent symbols plus import, call, reference, test, and configuration relationships.
 - Git status and diff awareness when requested.
 
-The repository index is cached in SQLite using path, kind, size, modification time, SHA-256, module,
-symbols, and imports. Unchanged files reuse cached metadata.
+`repo_index.py` maintains the project graph in SQLite. File rows retain path, kind, language, size,
+modification time, SHA-256, module, line count, token estimate, symbols, imports, calls, and references.
+Dedicated symbol and edge tables make semantic facts queryable after restart. Import, call, reference,
+test-to-source, and configuration edges are synchronized by set difference rather than rewritten wholesale.
+
+Refresh scans file metadata, reuses unchanged facts, parses changed files in a bounded thread pool, removes
+deleted files, and rebuilds graph resolution from cached facts without rereading unchanged source. Successful
+transactions invalidate only affected paths. A daemon background worker performs periodic refresh and accepts
+immediate path-level refresh requests; agent shutdown joins it before closing language servers.
+
+Built-in static extraction covers Python, JavaScript/TypeScript, Rust, Go, Java, Kotlin, C/C++, C#, Swift,
+Ruby, and PHP. Context ranking combines path/task matches, declared symbols, references, graph neighbors,
+repository importance, test mappings, and an estimated token budget. LSP remains the higher-fidelity semantic
+source when a suitable server is installed.
 
 Conversation context uses a configurable character budget. When history exceeds the budget, Agent47
 preserves the system prompt, original task, recent evidence, and a deterministic summary of omitted

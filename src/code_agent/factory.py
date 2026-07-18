@@ -130,6 +130,7 @@ def create_agent(
             approval_callback=approval_callback,
             shell_network_policy=shell_network_policy or settings.shell_network_policy,
             index_cache=index_cache,
+            background_index=True,
             sandbox_policy=sandbox_policy,
         ),
         storage=storage,

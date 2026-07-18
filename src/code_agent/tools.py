@@ -77,11 +77,13 @@ from .schema import (
 )
 from .parsing import summarize_code_file
 from .repo_index import (
+    BackgroundIndexRefresh,
     RepoIndexCache,
     build_dependency_graph,
     build_repo_map,
     build_symbol_index,
     rank_context,
+    start_background_index_refresh,
 )
 from .safety import classify_network_url, classify_shell_command, is_sensitive_path, redact_secrets
 from .sandbox_security import (
@@ -151,6 +153,7 @@ class ToolRegistry:
         approval_callback: Callable[[str, str], bool] | None = None,
         shell_network_policy: str = "allow",
         index_cache: RepoIndexCache | None = None,
+        background_index: bool = False,
         cancellation_token: CancellationToken | None = None,
         process_supervisor: ProcessSupervisor | None = None,
         sandbox_policy: SandboxPolicy | None = None,
@@ -163,6 +166,7 @@ class ToolRegistry:
         self.approval_callback = approval_callback
         self.shell_network_policy = shell_network_policy.strip().lower()
         self.index_cache = index_cache
+        self.index_refresh: BackgroundIndexRefresh | None = None
         self.cancellation_token = cancellation_token or CancellationToken()
         self.sandbox_policy = sandbox_policy or SandboxPolicy.from_workspace(self.workspace)
         self.audit_log = SandboxAuditLog(
@@ -231,12 +235,19 @@ class ToolRegistry:
         )
         if self.shell_network_policy not in {"allow", "deny"}:
             raise ValueError("shell_network_policy must be one of: allow, deny")
+        if background_index and self.index_cache is not None:
+            self.index_refresh = start_background_index_refresh(
+                self.workspace,
+                self.index_cache,
+            )
 
     def cancel_running_processes(self, reason: str = "cancelled") -> int:
         self.cancellation_token.cancel(reason)
         return self.process_supervisor.cancel_all(reason) + self.lsp_manager.close()
 
     def close(self) -> int:
+        if self.index_refresh is not None:
+            self.index_refresh.stop()
         return self.lsp_manager.close()
 
     def attach_transaction_context(
@@ -325,7 +336,7 @@ class ToolRegistry:
         if isinstance(action, RepoMapAction):
             return self._repo_map(action.max_files)
         if isinstance(action, RankContextAction):
-            return self._rank_context(action.task, action.max_results)
+            return self._rank_context(action.task, action.max_results, action.max_tokens)
         if isinstance(action, SymbolIndexAction):
             return self._symbol_index(action.max_files, action.max_symbols)
         if isinstance(action, LspStatusAction):
@@ -475,6 +486,7 @@ class ToolRegistry:
             plan.abort("permission denied")
             return ToolResult(ok=False, output="Permission denied for write_file.")
         result = plan.commit(validator=self.transaction_validator)
+        self._refresh_index_after_mutation(result.ok, list(result.paths))
         return ToolResult(
             ok=result.ok,
             output=(
@@ -522,6 +534,7 @@ class ToolRegistry:
             plan.abort("permission denied")
             return ToolResult(ok=False, output="Permission denied for edit_file.")
         result = plan.commit(validator=self.transaction_validator)
+        self._refresh_index_after_mutation(result.ok, list(result.paths))
         return ToolResult(
             ok=result.ok,
             output=(
@@ -567,6 +580,7 @@ class ToolRegistry:
             plan.abort("permission denied")
             return ToolResult(ok=False, output="Permission denied for apply_patch.")
         result = plan.commit(validator=self.transaction_validator)
+        self._refresh_index_after_mutation(result.ok, list(result.paths))
         return ToolResult(
             ok=result.ok,
             output=self._patch_applied_output(metadata) if result.ok else result.output,
@@ -610,6 +624,7 @@ class ToolRegistry:
             plan.abort("permission denied")
             return ToolResult(ok=False, output="Permission denied for delete_file.")
         result = plan.commit(validator=self.transaction_validator)
+        self._refresh_index_after_mutation(result.ok, list(result.paths))
         return ToolResult(
             ok=result.ok,
             output=(
@@ -655,6 +670,7 @@ class ToolRegistry:
             plan.abort("permission denied")
             return ToolResult(ok=False, output="Permission denied for move_file.")
         result = plan.commit(validator=self.transaction_validator)
+        self._refresh_index_after_mutation(result.ok, list(result.paths))
         return ToolResult(
             ok=result.ok,
             output=(
@@ -720,6 +736,7 @@ class ToolRegistry:
             plan.abort("permission denied")
             return ToolResult(ok=False, output=f"Permission denied for {action}.")
         result = plan.commit(validator=self.transaction_validator)
+        self._refresh_index_after_mutation(result.ok, list(result.paths))
         return ToolResult(
             ok=result.ok,
             output=result.output,
@@ -746,11 +763,28 @@ class ToolRegistry:
             }
             for result in results
         ]
+        recovered_paths = sorted(
+            {
+                path
+                for result in results
+                if result.ok
+                for path in result.paths
+            }
+        )
+        self._refresh_index_after_mutation(bool(recovered_paths), recovered_paths)
         return ToolResult(
             ok=all(item["ok"] for item in payload),
             output=json.dumps(payload, indent=2) if payload else "No interrupted transactions.",
             metadata={"recoveries": payload},
         )
+
+    def _refresh_index_after_mutation(self, ok: bool, paths: list[str]) -> None:
+        if not ok or not paths or self.index_cache is None:
+            return
+        if self.index_refresh is not None:
+            self.index_refresh.request_refresh(paths)
+        else:
+            self.index_cache.invalidate(self.workspace, paths)
 
     def _run_shell(self, command: str) -> ToolResult:
         if self.dry_run:
@@ -1189,7 +1223,7 @@ class ToolRegistry:
             output=build_repo_map(self.workspace, max_files=max_files, cache=self.index_cache),
         )
 
-    def _rank_context(self, task: str, max_results: int) -> ToolResult:
+    def _rank_context(self, task: str, max_results: int, max_tokens: int) -> ToolResult:
         if not self._approve(
             "rank_context",
             f"Rank likely relevant files for task: {task}",
@@ -1201,6 +1235,7 @@ class ToolRegistry:
                 self.workspace,
                 task,
                 max_results=max_results,
+                max_tokens=max_tokens,
                 cache=self.index_cache,
             ),
         )

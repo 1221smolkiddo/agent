@@ -15,7 +15,9 @@ changes and approved commands still require human review. Read
 - Workspace-aware file reads, exact edits, writes, deletes, unified patches, search, and code summaries.
 - Journaled workspace transactions with automatic checkpoints, atomic multi-file commit/rollback, crash
   recovery, three-way merge, move support, undo/redo, and selective or whole-workspace snapshot restore.
-- Repository maps, ranked context, symbol indexes, dependency graphs, project memory, and git-diff awareness.
+- A persistent incremental project graph with symbols, imports, calls, references, test-to-source mappings,
+  configuration relationships, token-aware context ranking, parallel changed-file indexing, background refresh,
+  selective invalidation, project memory, and git-diff awareness.
 - Native JSON-RPC language-server clients with definition, references, hover, completion, workspace symbols,
   diagnostics, rename previews, formatting previews, code actions, crash restart, and deterministic cleanup.
 - Durable execution phases, enforceable plans, acceptance checks, failed-hypothesis tracking, and resume state.
@@ -229,7 +231,8 @@ repository content in a public report.
 
 Agent47 stores local state under `.code-agent/`:
 
-- `agent.db`: redacted run tasks, steps, execution state, reports, model usage, and repository-index metadata.
+- `agent.db`: redacted run tasks, steps, execution state, reports, model usage, file facts, persistent symbols,
+  project-graph edges, and incremental-index statistics.
 - `memory/project.md`: approval-gated, secret-scanned stable project facts.
 - `sandboxes/`: copied workspaces.
 - `debug-bundles/`: explicitly exported redacted diagnostics.

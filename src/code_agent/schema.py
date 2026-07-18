@@ -217,6 +217,7 @@ class RankContextAction(BaseModel):
     type: Literal["rank_context"]
     task: str
     max_results: int = Field(default=12, ge=3, le=50)
+    max_tokens: int = Field(default=8000, ge=500, le=50000)
 
 
 class SymbolIndexAction(BaseModel):

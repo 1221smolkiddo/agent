@@ -1,16 +1,20 @@
 from pathlib import Path
 import sqlite3
+import threading
 import time
 
 from code_agent.repo_index import (
     RepoIndexCache,
     build_dependency_graph,
+    build_project_graph,
     build_repo_map,
     build_symbol_index,
     index_repo,
     rank_context,
     start_background_index_refresh,
 )
+from code_agent.schema import WriteFileAction
+from code_agent.tools import ToolRegistry
 
 
 def test_repo_index_ignores_local_state_and_classifies_files(tmp_path: Path) -> None:
@@ -207,3 +211,246 @@ def test_background_index_refresh_populates_cache(tmp_path: Path) -> None:
         worker.stop()
 
     assert "src/app.py" in cache.load_workspace(tmp_path)
+
+
+def test_project_graph_persists_symbols_calls_references_tests_and_config(tmp_path: Path) -> None:
+    cache_path = tmp_path / ".code-agent" / "agent.db"
+    (tmp_path / "src" / "demo").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    (tmp_path / "src" / "demo" / "models.py").write_text(
+        "class User:\n    pass\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo" / "service.py").write_text(
+        "from demo.models import User\n\ndef load_user():\n    return User()\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests" / "test_service.py").write_text(
+        "from demo.service import load_user\n\ndef test_load_user():\n    assert load_user()\n",
+        encoding="utf-8",
+    )
+
+    first = build_project_graph(tmp_path, cache=RepoIndexCache(cache_path))
+    restored = build_project_graph(tmp_path, cache=RepoIndexCache(cache_path))
+
+    assert any(symbol.name == "User" and symbol.path.endswith("models.py") for symbol in restored.symbols)
+    assert any(
+        edge.relation == "call"
+        and edge.source_path.endswith("service.py")
+        and edge.target_symbol == "User"
+        for edge in restored.edges
+    )
+    assert any(
+        edge.relation == "reference"
+        and edge.source_path.endswith("service.py")
+        and edge.target_symbol == "User"
+        for edge in restored.edges
+    )
+    assert any(edge.relation == "test" and edge.source_path == "tests/test_service.py" for edge in restored.edges)
+    assert any(edge.relation == "config" and edge.source_path == "pyproject.toml" for edge in restored.edges)
+    assert restored.edges == first.edges
+    assert restored.stats is not None
+    assert restored.stats.reused_files == len(restored.files)
+    with sqlite3.connect(cache_path) as conn:
+        assert conn.execute("select count(*) from repo_index_symbols").fetchone()[0] == 3
+        assert conn.execute("select count(*) from repo_index_edges").fetchone()[0] == len(restored.edges)
+
+
+def test_incremental_index_only_reparses_changed_files_and_deletes_stale_graph(tmp_path: Path, monkeypatch) -> None:
+    cache = RepoIndexCache(tmp_path / ".code-agent" / "agent.db")
+    source = tmp_path / "src" / "service.py"
+    stable = tmp_path / "src" / "stable.py"
+    deleted = tmp_path / "src" / "deleted.py"
+    source.parent.mkdir()
+    source.write_text("def before():\n    pass\n", encoding="utf-8")
+    stable.write_text("def stable():\n    pass\n", encoding="utf-8")
+    deleted.write_text("def removed():\n    pass\n", encoding="utf-8")
+    build_project_graph(tmp_path, cache=cache)
+    original = __import__("code_agent.repo_index", fromlist=["_index_file"])._index_file
+    parsed: list[str] = []
+
+    def record_parse(path: Path, relative: str, *, size: int, mtime_ns: int):
+        parsed.append(relative)
+        return original(path, relative, size=size, mtime_ns=mtime_ns)
+
+    monkeypatch.setattr("code_agent.repo_index._index_file", record_parse)
+    source.write_text("def after():\n    return stable()\n", encoding="utf-8")
+    deleted.unlink()
+
+    graph = build_project_graph(tmp_path, cache=cache)
+
+    assert parsed == ["src/service.py"]
+    assert graph.stats is not None
+    assert graph.stats.parsed_files == 1
+    assert graph.stats.reused_files == 1
+    assert graph.stats.deleted_files == 1
+    assert all(edge.source_path != "src/deleted.py" for edge in graph.edges)
+    assert all(edge.target_path != "src/deleted.py" for edge in graph.edges)
+
+
+def test_multi_language_graph_resolves_imports_and_symbols(tmp_path: Path) -> None:
+    files = {
+        "rust/main.rs": "mod helper;\nfn main() { helper(); }\n",
+        "rust/helper.rs": "pub fn helper() {}\n",
+        "go/main.go": 'package main\nimport "example/project/util"\nfunc main() { util.Run() }\n',
+        "go/util/util.go": "package util\nfunc Run() {}\n",
+        "src/demo/App.java": "package demo;\nimport demo.Helper;\nclass App { void run() { help(); } }\n",
+        "src/demo/Helper.java": "package demo;\nclass Helper { void help() {} }\n",
+        "native/main.cpp": '#include "helper.h"\nint main() { return helper(); }\n',
+        "native/helper.h": "int helper();\n",
+    }
+    for relative, content in files.items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    graph = build_project_graph(tmp_path)
+    languages = {item.language for item in graph.files}
+
+    assert {"rust", "go", "java", "cpp", "c"} <= languages
+    assert any(symbol.name == "helper" and symbol.path == "rust/helper.rs" for symbol in graph.symbols)
+    assert any(symbol.name == "Run" and symbol.path == "go/util/util.go" for symbol in graph.symbols)
+    assert any(symbol.name == "Helper" and symbol.path == "src/demo/Helper.java" for symbol in graph.symbols)
+    assert any(
+        edge.relation == "import"
+        and edge.source_path == "rust/main.rs"
+        and edge.target_path == "rust/helper.rs"
+        for edge in graph.edges
+    )
+    assert any(
+        edge.relation == "import"
+        and edge.source_path == "go/main.go"
+        and edge.target_path == "go/util/util.go"
+        for edge in graph.edges
+    )
+    assert any(
+        edge.relation == "import"
+        and edge.source_path == "src/demo/App.java"
+        and edge.target_path == "src/demo/Helper.java"
+        for edge in graph.edges
+    )
+
+
+def test_rank_context_is_graph_aware_and_token_bounded(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "parser.py").write_text(
+        "def parse_request(value):\n    return value\n" + "padding = 'x'\n" * 30,
+        encoding="utf-8",
+    )
+    (tmp_path / "tests" / "test_parser.py").write_text(
+        "from parser import parse_request\n\ndef test_parse_request():\n    assert parse_request('x')\n",
+        encoding="utf-8",
+    )
+    for index in range(6):
+        (tmp_path / "src" / f"unrelated_{index}.py").write_text(
+            "value = '" + ("x" * 400) + "'\n",
+            encoding="utf-8",
+        )
+
+    output = rank_context(
+        tmp_path,
+        "change parse_request behavior and its tests",
+        max_results=10,
+        max_tokens=500,
+    )
+
+    assert "src/parser.py" in output
+    assert "tests/test_parser.py" in output
+    assert "test to src/parser.py" in output or "test from tests/test_parser.py" in output
+    selected_line = next(line for line in output.splitlines() if line.startswith("Selected estimated tokens:"))
+    assert int(selected_line.split(":", 1)[1].split("/", 1)[0]) <= 500
+    assert sum(line[:1].isdigit() for line in output.splitlines()) >= 2
+    assert "over-budget files" in output
+
+
+def test_changed_files_are_indexed_in_parallel(tmp_path: Path, monkeypatch) -> None:
+    for index in range(6):
+        path = tmp_path / "src" / f"module_{index}.py"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"def function_{index}(): pass\n", encoding="utf-8")
+    original = __import__("code_agent.repo_index", fromlist=["_index_file"])._index_file
+    worker_names: set[str] = set()
+    lock = threading.Lock()
+
+    def record_worker(path: Path, relative: str, *, size: int, mtime_ns: int):
+        with lock:
+            worker_names.add(threading.current_thread().name)
+        time.sleep(0.02)
+        return original(path, relative, size=size, mtime_ns=mtime_ns)
+
+    monkeypatch.setattr("code_agent.repo_index._index_file", record_worker)
+
+    index_repo(tmp_path)
+
+    assert len(worker_names) > 1
+    assert all(name.startswith("agent47-index") for name in worker_names)
+
+
+def test_transactional_mutation_invalidates_cached_semantics_immediately(tmp_path: Path) -> None:
+    cache = RepoIndexCache(tmp_path / ".code-agent" / "agent.db")
+    source = tmp_path / "src" / "service.py"
+    source.parent.mkdir()
+    source.write_text("def before(): pass\n", encoding="utf-8")
+    build_project_graph(tmp_path, cache=cache)
+    tools = ToolRegistry(
+        workspace=tmp_path,
+        dry_run=False,
+        approval_callback=lambda *_args: True,
+        index_cache=cache,
+    )
+
+    result = tools.run(
+        WriteFileAction(
+            type="write_file",
+            path="src/service.py",
+            content="def after(): pass\n",
+        )
+    )
+
+    assert result.ok is True
+    assert "src/service.py" not in cache.load_workspace(tmp_path)
+    refreshed = build_project_graph(tmp_path, cache=cache)
+    assert any(symbol.name == "after" for symbol in refreshed.symbols)
+    assert all(symbol.name != "before" for symbol in refreshed.symbols)
+
+
+def test_background_refresh_can_invalidate_and_reindex_specific_paths(tmp_path: Path) -> None:
+    cache = RepoIndexCache(tmp_path / ".code-agent" / "agent.db")
+    source = tmp_path / "src" / "service.py"
+    source.parent.mkdir()
+    source.write_text("def before(): pass\n", encoding="utf-8")
+    worker = start_background_index_refresh(tmp_path, cache, interval_seconds=60)
+    try:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and "src/service.py" not in cache.load_workspace(tmp_path):
+            time.sleep(0.02)
+        source.write_text("def after(): pass\n", encoding="utf-8")
+        worker.request_refresh(["src/service.py"])
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            files = cache.load_workspace(tmp_path)
+            item = files.get("src/service.py")
+            if item and any("after" in symbol for symbol in item.symbols):
+                break
+            time.sleep(0.02)
+    finally:
+        worker.stop()
+
+    assert any("after" in symbol for symbol in cache.load_workspace(tmp_path)["src/service.py"].symbols)
+
+
+def test_index_connections_close_and_rank_output_supports_legacy_windows_console(tmp_path: Path) -> None:
+    db_path = tmp_path / ".code-agent" / "agent.db"
+    source = tmp_path / "src" / "service.py"
+    source.parent.mkdir()
+    source.write_text("def serve_request(): pass\n", encoding="utf-8")
+    cache = RepoIndexCache(db_path)
+
+    output = rank_context(tmp_path, "serve request", cache=cache)
+    moved = db_path.with_name("moved.db")
+    db_path.rename(moved)
+
+    assert moved.exists()
+    assert output.encode("cp1252")

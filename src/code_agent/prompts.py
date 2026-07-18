@@ -124,7 +124,7 @@ Action schema:
 {{ "type": "suggest_verification", "changed_paths": ["relative/path.py"] }}
 {{ "type": "inspect_git_diff", "include_diff": false, "max_chars": 12000 }}
 {{ "type": "repo_map", "max_files": 80 }}
-{{ "type": "rank_context", "task": "user task or focused subtask", "max_results": 12 }}
+{{ "type": "rank_context", "task": "user task or focused subtask", "max_results": 12, "max_tokens": 8000 }}
 {{ "type": "symbol_index", "max_files": 40, "max_symbols": 120 }}
 {{ "type": "lsp_status", "path": "optional/source.py" }}
 {{ "type": "lsp_definition", "path": "src/app.py", "line": 10, "column": 5 }}
