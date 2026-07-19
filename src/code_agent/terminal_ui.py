@@ -15,7 +15,7 @@ from rich.table import box
 from rich.text import Text
 from rich.theme import Theme
 
-from .work_report import _single_line, _change_items_filtered, _process_items, should_show_work_report
+from .work_report import _change_items_filtered, _process_items, should_show_work_report
 
 if TYPE_CHECKING:
     from .agent import AgentRunResult
@@ -205,7 +205,7 @@ def print_work_report_panel(result: AgentRunResult) -> None:
     sections: list[object] = []
     
     if result.message:
-        sections.append(Text(_single_line(result.message, max_chars=900), style="default"))
+        sections.append(_render_markdown(result.message, max_chars=4000))
 
     if created_paths or modified_paths or deleted_paths:
         changes = Table(show_header=True, header_style="bold cyan", box=box.SIMPLE, padding=(0, 2), expand=True)
@@ -299,8 +299,18 @@ def print_response(author: str, body: str, *, author_style: str = "bold cyan") -
         return
     console.print()
     console.print(Text(author, style=author_style))
-    console.print(Text(_normalize_panel_body(str(body)), style="default"))
+    console.print(_render_markdown(str(body)))
     console.print()
+
+
+def _render_markdown(body: str, *, max_chars: int | None = None) -> Markdown:
+    normalized = _normalize_panel_body(body)
+    if max_chars is not None and len(normalized) > max_chars:
+        normalized = normalized[:max_chars].rstrip()
+        if normalized.count("```") % 2:
+            normalized += "\n```"
+        normalized += "\n\n… output truncated"
+    return Markdown(normalized, justify="left", hyperlinks=False)
 
 
 def _normalize_panel_body(body: str) -> str:

@@ -12,6 +12,7 @@ from code_agent.terminal_ui import (
     format_status_line,
     print_error_card,
     print_session_header,
+    print_response,
     print_work_report_panel,
     console,
 )
@@ -47,6 +48,48 @@ def test_format_work_report_body_produces_rich_panel() -> None:
     assert "docs/PROGRESS.md" in text
     assert "uv run pytest" in text
     assert "Passed" in text
+
+
+def test_work_report_renders_markdown_without_literal_markers() -> None:
+    result = AgentRunResult(
+        message=(
+            "## Overview\n\n**Agent47** supports:\n\n"
+            "- Repository intelligence\n"
+            "- Transactional editing\n\n"
+            "Run `agent47 --help` for usage."
+        ),
+        run_id=9,
+        changed_paths=["README.md"],
+        mutation_records=[{"action": "edit_file", "path": "README.md", "ok": True}],
+    )
+
+    with console.capture() as capture:
+        print_work_report_panel(result)
+
+    text = capture.get()
+    assert "Overview" in text
+    assert "Agent47 supports:" in text
+    assert "Repository intelligence" in text
+    assert "Transactional editing" in text
+    assert "##" not in text
+    assert "**" not in text
+
+
+def test_print_response_renders_markdown_as_readable_terminal_content() -> None:
+    body = "# Summary\n\n**Done**\n\n- First item\n- Second item\n\n`uv run pytest`"
+
+    with console.capture() as capture:
+        print_response("Agent47", body)
+
+    text = capture.get()
+    assert "Agent47" in text
+    assert "Summary" in text
+    assert "Done" in text
+    assert "First item" in text
+    assert "Second item" in text
+    assert "uv run pytest" in text
+    assert "# Summary" not in text
+    assert "**Done**" not in text
 
 
 def test_print_error_card_renders_rich_text() -> None:
