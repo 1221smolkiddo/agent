@@ -2,6 +2,7 @@ from typer.testing import CliRunner
 import json
 
 import code_agent.evals as evals_module
+from code_agent.agent import AgentRunResult
 from code_agent.cli import app
 from code_agent.evals import (
     EvalResult,
@@ -106,6 +107,19 @@ def test_eval_suite_format_reports_failures() -> None:
         "Metrics: pass_rate=50.00%, total=2\n"
         "- PASS safety/safe_case: good\n"
         "- FAIL safety/broken_case [validator_failed]: bad"
+    )
+
+
+def test_live_eval_fails_closed_when_agent_run_is_blocked() -> None:
+    result = AgentRunResult(
+        message="Stopped after a model failure: provider quota exhausted",
+        run_id=1,
+        blocked=True,
+        failed_actions=[{"type": "model_failure", "ok": False}],
+    )
+
+    assert evals_module._live_run_failure(result) == (
+        "agent run was blocked by a model/provider failure"
     )
 
 

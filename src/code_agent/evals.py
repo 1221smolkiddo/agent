@@ -1261,12 +1261,28 @@ def run_live_fixture_eval(
         }
 
     failures = [detail for ok, detail in results if not ok]
+    run_failure = _live_run_failure(result)
+    if run_failure:
+        failures.insert(0, run_failure)
     if failures:
         summary = f"{case.description} failed: {'; '.join(failures)}"
         if result.message:
             summary += f" message={result.message!r}"
         return False, summary, metadata
     return True, f"{case.description} message={result.message!r}", metadata
+
+
+def _live_run_failure(result: AgentRunResult) -> str | None:
+    if not result.blocked:
+        return None
+    failure_types = [
+        str(item.get("type") or item.get("kind") or item.get("action") or "failure")
+        for item in result.failed_actions
+    ]
+    if "model_failure" in failure_types:
+        return "agent run was blocked by a model/provider failure"
+    rendered = ", ".join(failure_types[:5]) or "unknown blocker"
+    return f"agent run ended blocked ({rendered})"
 
 
 def python_pytest_project() -> dict[str, str]:
