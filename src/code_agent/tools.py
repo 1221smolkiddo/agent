@@ -36,6 +36,7 @@ from .schema import (
     DetectVerificationAction,
     EditFileAction,
     InspectGitDiffAction,
+    InvokeToolAction,
     InspectProcessAction,
     ListFilesAction,
     ListProcessesAction,
@@ -75,6 +76,7 @@ from .schema import (
     WebSearchAction,
     WriteFileAction,
 )
+from .extensions import DynamicToolRegistry, LifecycleHooks, ToolMetadata
 from .parsing import summarize_code_file
 from .repo_index import (
     BackgroundIndexRefresh,
@@ -160,6 +162,8 @@ class ToolRegistry:
         lsp_manager: LspManager | None = None,
         transaction_manager: WorkspaceTransactionManager | None = None,
         transaction_validator: Callable[[TransactionPlan], tuple[bool, str]] | None = None,
+        extension_registry: DynamicToolRegistry | None = None,
+        lifecycle_hooks: LifecycleHooks | None = None,
     ) -> None:
         self.workspace = workspace.resolve()
         self.dry_run = dry_run
@@ -226,6 +230,29 @@ class ToolRegistry:
             self.workspace
         )
         self.transaction_validator = transaction_validator
+        self.lifecycle_hooks = lifecycle_hooks or LifecycleHooks()
+        self.extension_registry = extension_registry or DynamicToolRegistry(
+            permission_check=self._approve_dynamic_tool
+        )
+        # A shared platform registry is constructed before the ToolRegistry, so
+        # bind its approval boundary here rather than leaving extension tools
+        # capable of bypassing the normal permission policy.
+        self.extension_registry.permission_check = self._approve_dynamic_tool
+        if self.extension_registry.resolve("platform.list-tools") is None:
+            self.extension_registry.register(
+                ToolMetadata(
+                    name="list-tools",
+                    namespace="platform",
+                    description="Discover runtime tools and their health, permissions, schemas, and versions.",
+                    aliases=("list_dynamic_tools",),
+                    permissions=(),
+                    input_schema={"type": "object", "additionalProperties": False},
+                ),
+                lambda _arguments: {
+                    "output": json.dumps(self.extension_registry.discover(), indent=2),
+                    "tools": self.extension_registry.discover(),
+                },
+            )
         self.sandbox_runner = SandboxRunner(
             self.workspace,
             self.sandbox_policy,
@@ -267,6 +294,21 @@ class ToolRegistry:
         self.cancellation_token.reset()
 
     def run(self, action: AgentAction) -> ToolResult:
+        hook_payload = {"action": action.type, "payload": action.model_dump(exclude_none=True)}
+        before_hooks = self.lifecycle_hooks.emit("tool.before", hook_payload)
+        if any(item.get("ok") is False for item in before_hooks):
+            return ToolResult(ok=False, output="A before-tool lifecycle hook failed; invocation was blocked.", metadata={"hooks": before_hooks})
+        result = self._dispatch(action)
+        after_hooks = self.lifecycle_hooks.emit(
+            "tool.after", {**hook_payload, "ok": result.ok, "output": self._truncate(result.output, 2000)}
+        )
+        if after_hooks:
+            result.metadata["hooks"] = after_hooks
+        return result
+
+    def _dispatch(self, action: AgentAction) -> ToolResult:
+        if isinstance(action, InvokeToolAction):
+            return self.extension_registry.invoke(action.tool, action.arguments)
         if isinstance(action, ListFilesAction):
             return self._list_files(action.path)
         if isinstance(action, ReadFileAction):
@@ -422,6 +464,13 @@ class ToolRegistry:
         if isinstance(action, UpdateMemoryAction):
             return self._update_memory(action.entries)
         return ToolResult(ok=False, output=f"Unsupported action: {action.type}")
+
+    def _approve_dynamic_tool(self, name: str, permissions: tuple[str, ...], actor: str) -> bool:
+        detail = (
+            f"Dynamic tool: {name}\nActor: {actor}\n"
+            f"Permissions: {', '.join(permissions) if permissions else 'none'}"
+        )
+        return self._approve("invoke_tool", detail)
 
     def resolve_inside_workspace(self, requested_path: str | None = None) -> Path:
         target = (self.workspace / (requested_path or ".")).resolve()

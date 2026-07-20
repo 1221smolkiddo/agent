@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     agent_shell_network: str = "deny"
     agent_sandbox_backend: str = "auto"
     agent_sandbox_image: str = "python:3.13-slim"
+    agent_trust_workspace_extensions: bool = False
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

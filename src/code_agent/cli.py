@@ -40,6 +40,7 @@ from .model_profiles import validate_profile_name
 from .model_presets import format_model_presets, resolve_model_preset
 from .model_registry import provider_name_list, validate_provider_name
 from .permissions import confirm_permission
+from .platform_runtime import PlatformRuntime
 from .protocol import (
     JsonEventEmitter,
     JsonProtocolReporter,
@@ -91,12 +92,14 @@ collab_app = typer.Typer(help="Branch, commit, PR, changelog, and collaboration 
 transactions_app = typer.Typer(help="Inspect, recover, undo, redo, and restore transactions.")
 processes_app = typer.Typer(help="Start, monitor, control, and recover managed processes.")
 containers_app = typer.Typer(help="Create, inspect, stop, and clean reusable workspace containers.")
+platform_app = typer.Typer(help="Inspect dynamic tools, skills, agents, plugins, and MCP servers.")
 app.add_typer(history_app, name="history")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(collab_app, name="collab")
 app.add_typer(transactions_app, name="transactions")
 app.add_typer(processes_app, name="processes")
 app.add_typer(containers_app, name="containers")
+app.add_typer(platform_app, name="platform")
 
 
 def validate_profile_option(value: Optional[str]) -> Optional[str]:
@@ -134,6 +137,25 @@ PROVIDER_HELP = f"Provider override: {provider_name_list()}."
 def models_command() -> None:
     """List available model presets."""
     typer.echo(format_model_presets())
+
+
+@platform_app.command("inspect")
+def platform_inspect_command(
+    cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory."),
+    trust_workspace_extensions: bool = typer.Option(
+        False,
+        "--trust-workspace-extensions",
+        help="Load workspace plugins and start enabled MCP server commands.",
+    ),
+) -> None:
+    """Print the active platform registry as machine-readable JSON."""
+    runtime = PlatformRuntime.create(
+        cwd.resolve(), trust_workspace_extensions=trust_workspace_extensions
+    )
+    try:
+        typer.echo(json.dumps(runtime.capabilities(), indent=2, sort_keys=True))
+    finally:
+        runtime.close()
 
 
 @app.command()

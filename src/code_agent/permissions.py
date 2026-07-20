@@ -47,6 +47,7 @@ HIGH_RISK_ACTIONS = frozenset({
     "inspect_git_diff",
     "search",
     "update_memory",
+    "invoke_tool",
 })
 
 MANUAL_APPROVAL_ACTIONS = HIGH_RISK_ACTIONS
@@ -135,6 +136,7 @@ def confirm_permission(action: str, detail: str) -> str:
         "suggest_verification": "Suggest verification",
         "git_branch": "Create git branch",
         "git_commit": "Create git commit",
+        "invoke_tool": "Invoke dynamic tool",
     }
     label = action_labels.get(action, action.replace("_", " ").title())
 

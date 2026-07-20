@@ -13,6 +13,7 @@ from pydantic import TypeAdapter, ValidationError
 from .execution_state import ExecutionState, compact_message_history
 from .models import ChatMessage, ModelClient
 from .patches import git_style_unified_diff
+from .platform_runtime import PlatformRuntime
 from .repo_index import affected_test_paths, build_context_pack
 from .prompts import system_prompt
 from .reviewer import ReviewerPassResult, run_reviewer_pass
@@ -77,6 +78,7 @@ class CodingAgent:
         run_timeout_seconds: float = 300.0,
         execution_state_snapshot: dict[str, Any] | None = None,
         resumed_from_run_id: int | None = None,
+        platform_runtime: PlatformRuntime | None = None,
     ) -> None:
         self.cwd = cwd
         self.dry_run = dry_run
@@ -93,12 +95,15 @@ class CodingAgent:
         self.run_timeout_seconds = run_timeout_seconds
         self.execution_state_snapshot = execution_state_snapshot
         self.resumed_from_run_id = resumed_from_run_id
+        self.platform_runtime = platform_runtime
         self._active_execution_state: ExecutionState | None = None
 
     def run(self, task: str) -> str:
         return self.run_detailed(task).message
 
     def cancel(self, reason: str = "user stop") -> int:
+        if self.platform_runtime is not None:
+            self.platform_runtime.hooks.emit("cancellation", {"reason": reason})
         cancelled = 0
         model_cancel = getattr(self.model_client, "cancel", None)
         if model_cancel is not None:
@@ -139,8 +144,17 @@ class CodingAgent:
         mutation_records: list[dict[str, Any]] = []
         failed_actions: list[dict[str, Any]] = []
         denied_actions: list[dict[str, Any]] = []
+        platform_context = (
+            self.platform_runtime.task_context(clean_task)
+            if self.platform_runtime is not None
+            else ""
+        )
+        if self.platform_runtime is not None:
+            self.platform_runtime.hooks.emit(
+                "session.start", {"run_id": run_id, "task": clean_task}
+            )
         messages: list[ChatMessage] = [
-            {"role": "system", "content": system_prompt(self.cwd, self.dry_run)},
+            {"role": "system", "content": system_prompt(self.cwd, self.dry_run, platform_context)},
             {"role": "user", "content": task},
         ]
 
@@ -812,6 +826,12 @@ class CodingAgent:
         close_tools = getattr(self.tools, "close", None)
         if callable(close_tools):
             close_tools()
+        if self.platform_runtime is not None:
+            self.platform_runtime.hooks.emit(
+                "session.end",
+                {"run_id": result.run_id, "blocked": result.blocked},
+            )
+            self.platform_runtime.close()
         self._report_done()
         if should_show_work_report(result):
             payload = build_work_report_payload(result)
@@ -1331,6 +1351,7 @@ class CodingAgent:
             "dependency_graph",
             "read_memory",
             "update_memory",
+            "invoke_tool",
         }
 
     @staticmethod

@@ -388,6 +388,12 @@ class UpdateMemoryAction(BaseModel):
     entries: list[MemoryEntry] = Field(min_length=1, max_length=20)
 
 
+class InvokeToolAction(BaseModel):
+    type: Literal["invoke_tool"]
+    tool: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
 AgentAction = Union[
     FinalAction,
     UpdatePlanAction,
@@ -434,6 +440,7 @@ AgentAction = Union[
     DependencyGraphAction,
     ReadMemoryAction,
     UpdateMemoryAction,
+    InvokeToolAction,
 ]
 
 

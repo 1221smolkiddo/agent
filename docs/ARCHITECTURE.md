@@ -350,3 +350,8 @@ a cross-platform Python matrix and a live Docker security job.
 - Prefer deterministic state summaries and evidence over model-authored bookkeeping.
 - Fail closed on malformed actions, approvals, unsafe paths, and unsupported success claims.
 - Keep the CLI first-class even if additional clients are added later.
+# Platform extensions
+
+The dynamic extension and multi-agent architecture is documented in [PLATFORM.md](PLATFORM.md).
+Runtime tools, skills, instructions, plugins, MCP clients, agent profiles, and orchestration are
+composed by `PlatformRuntime` and injected into `CodingAgent` by the factory.

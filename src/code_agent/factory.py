@@ -22,6 +22,7 @@ from .models import (
     create_openai_compatible_client,
 )
 from .repo_index import RepoIndexCache
+from .platform_runtime import PlatformRuntime
 from .storage import AgentStorage
 from .status import StatusReporter
 from .tools import ToolRegistry
@@ -109,6 +110,10 @@ def create_agent(
         container_image=settings.agent_sandbox_image,
         require_process_isolation=require_process_isolation,
     )
+    platform_runtime = PlatformRuntime.create(
+        workspace,
+        trust_workspace_extensions=settings.agent_trust_workspace_extensions,
+    )
 
     # Build reviewer client when the reviewer pass is enabled and no explicit
     # client was supplied (e.g. by tests). The reviewer uses its own profile
@@ -142,6 +147,8 @@ def create_agent(
             index_cache=index_cache,
             background_index=True,
             sandbox_policy=sandbox_policy,
+            extension_registry=platform_runtime.tools,
+            lifecycle_hooks=platform_runtime.hooks,
         ),
         storage=storage,
         reporter=reporter,
@@ -152,6 +159,7 @@ def create_agent(
         run_timeout_seconds=settings.agent_run_timeout_seconds,
         execution_state_snapshot=execution_state_snapshot,
         resumed_from_run_id=resumed_from_run_id,
+        platform_runtime=platform_runtime,
     )
 
 
