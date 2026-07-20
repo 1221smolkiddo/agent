@@ -225,6 +225,9 @@ Strict sandbox runs transport language-server JSON-RPC and managed workloads thr
 
 ### Security Reports
 
+See [Security Control Review](docs/SECURITY_REVIEW.md) for the implemented/partial/absent control
+matrix, local-versus-enterprise scope, compliance position, and prioritized residual risks.
+
 Report vulnerabilities through the repository's private security channel when available. Include the
 commit SHA, OS, Python version, command, operating mode, and a redacted
 `code-agent history export <run-id>` bundle. Never include credentials, exploit secrets, or private
@@ -310,7 +313,7 @@ boundary before a run.
 ```bash
 uv run code-agent evals
 uv run code-agent evals --json
-uv run code-agent evals --live --limit 3 --save-report
+uv run code-agent evals --live --limit 3 --trials 3 --save-report
 uv run code-agent eval-reports --dashboard --json
 uv run code-agent eval-reports --analytics
 ```

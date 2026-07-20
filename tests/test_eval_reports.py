@@ -221,6 +221,8 @@ def test_capability_dashboard_builds_gate_metrics_and_hotspots(tmp_path: Path) -
     assert dashboard["reports"]["latest_delta"]["pass_rate_delta"] == 0.5
     assert dashboard["capability"]["cases"] == 4
     assert dashboard["capability"]["verification_rate"] == 0.75
+    assert dashboard["capability"]["trial_cases"] == 4
+    assert dashboard["capability"]["unstable_trial_cases"] == 0
     assert dashboard["capability"]["categories"]["node"]["pass_rate"] == 0.5
     assert dashboard["failure_hotspots"][0]["failure_category"] == "verification_failed"
     formatted = format_capability_dashboard(dashboard)

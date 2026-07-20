@@ -185,9 +185,32 @@ def test_cli_evals_live_command_uses_live_runner(monkeypatch) -> None:
             "preset": None,
             "profile": "coder",
             "limit": 1,
+            "trials": 1,
         }
     ]
     assert "live/python_bugfix_with_tests" in result.output
+
+
+def test_run_live_evals_repeats_trials_and_versions_benchmark(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fake_case(case, **_kwargs):
+        calls.append(case.name)
+        return EvalResult(name=case.name, ok=True, detail="ok", category="live")
+
+    monkeypatch.setattr(evals_module, "_run_live_fixture_case", fake_case)
+
+    result = evals_module.run_live_evals(limit=1, trials=3)
+
+    assert calls == ["python_bugfix_with_tests"] * 3
+    assert [item.name for item in result.results] == [
+        "python_bugfix_with_tests::trial-1",
+        "python_bugfix_with_tests::trial-2",
+        "python_bugfix_with_tests::trial-3",
+    ]
+    assert [item.metadata["trial"] for item in result.results if item.metadata] == [1, 2, 3]
+    assert result.metadata["benchmark_version"] == "2026.07-v1"
+    assert result.metadata["run_count"] == 3
 
 
 def test_cli_evals_save_report_writes_report(tmp_path) -> None:

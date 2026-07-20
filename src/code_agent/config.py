@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     agent_db_path: Path = Path(".code-agent/agent.db")
     agent_stream: bool = True
     agent_reviewer_pass: bool = True
-    agent_shell_network: str = "allow"
+    agent_shell_network: str = "deny"
     agent_sandbox_backend: str = "auto"
     agent_sandbox_image: str = "python:3.13-slim"
 

@@ -147,7 +147,7 @@ AGENT_CONTEXT_MAX_CHARS=60000
 AGENT_DB_PATH=.code-agent/agent.db
 AGENT_STREAM=true
 AGENT_REVIEWER_PASS=true
-AGENT_SHELL_NETWORK=allow
+AGENT_SHELL_NETWORK=deny
 AGENT_SANDBOX_BACKEND=auto
 AGENT_SANDBOX_IMAGE=python:3.13-slim
 AGENT_CONTAINER_WORKSPACE=/workspace
@@ -273,7 +273,7 @@ uv build
 Live evals consume provider credits and are intentionally opt-in:
 
 ```bash
-uv run code-agent evals --live --limit 3 --save-report
+uv run code-agent evals --live --limit 3 --trials 3 --save-report
 ```
 
 ## Troubleshooting

@@ -50,14 +50,22 @@ def test_classify_shell_command_blocks_workspace_escape() -> None:
 
 
 def test_classify_network_url_blocks_localhost_and_private_addresses() -> None:
-    localhost = classify_network_url("http://localhost:8000")
-    private_ip = classify_network_url("http://192.168.1.10/admin")
+    localhost = classify_network_url("https://localhost:8000")
+    private_ip = classify_network_url("https://192.168.1.10/admin")
 
     assert localhost.category == "local-network"
     assert localhost.risk == "critical"
     assert not localhost.allowed
     assert private_ip.category == "local-network"
     assert not private_ip.allowed
+
+
+def test_classify_network_url_requires_https() -> None:
+    policy = classify_network_url("http://example.com/docs")
+
+    assert policy.category == "insecure-transport"
+    assert policy.risk == "high"
+    assert not policy.allowed
 
 
 def test_classify_network_url_allows_public_https() -> None:
@@ -131,6 +139,16 @@ def test_write_file_refuses_sensitive_files(tmp_path: Path) -> None:
     assert not result.ok
     assert result.output == "Refusing to write sensitive file: .env."
     assert not (tmp_path / ".env").exists()
+
+
+def test_sensitive_path_variants_and_private_keys_are_refused(tmp_path: Path) -> None:
+    tools = ToolRegistry(workspace=tmp_path, dry_run=False, approval_callback=lambda _a, _d: True)
+
+    for path in [".env.test", "config/service-account.json", "certs/server.key", "id_ed25519"]:
+        result = tools.run(WriteFileAction(type="write_file", path=path, content="secret"))
+        assert not result.ok, path
+        assert "sensitive file" in result.output, path
+        assert not (tmp_path / path).exists(), path
 
 
 def test_run_shell_blocks_destructive_command_without_prompt(tmp_path: Path) -> None:
@@ -488,7 +506,7 @@ def test_web_search_reports_provider_policy_blocks(tmp_path: Path) -> None:
 def test_fetch_url_blocks_local_network_targets(tmp_path: Path) -> None:
     tools = ToolRegistry(workspace=tmp_path, dry_run=True, approval_callback=lambda _a, _d: True)
     try:
-        tools._fetch_url("http://127.0.0.1:8000")
+        tools._fetch_url("https://127.0.0.1:8000")
     except ValueError as exc:
         assert "Blocked local-network web target" in str(exc)
     else:

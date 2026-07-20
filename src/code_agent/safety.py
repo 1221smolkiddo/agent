@@ -18,6 +18,21 @@ SENSITIVE_FILE_NAMES = {
     ".npmrc",
     ".pypirc",
     ".netrc",
+    "credentials",
+    "credentials.json",
+    "service-account.json",
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+}
+
+SENSITIVE_FILE_SUFFIXES = {
+    ".key",
+    ".p12",
+    ".pfx",
+    ".jks",
+    ".keystore",
 }
 
 SECRET_VALUE_PATTERNS = [
@@ -96,7 +111,15 @@ def is_sensitive_path(path: Path, workspace: Path) -> bool:
         relative = path.resolve().relative_to(workspace.resolve())
     except ValueError:
         return True
-    return any(part.lower() in SENSITIVE_FILE_NAMES for part in relative.parts)
+    for part in relative.parts:
+        lowered = part.lower()
+        if lowered in SENSITIVE_FILE_NAMES:
+            return True
+        if lowered == ".env" or lowered.startswith(".env."):
+            return True
+        if Path(lowered).suffix in SENSITIVE_FILE_SUFFIXES:
+            return True
+    return False
 
 
 def redact_secrets(value: str) -> str:
@@ -233,6 +256,14 @@ def classify_network_url(
             risk="high",
             allowed=False,
             reason="Only http and https URLs are allowed for web access.",
+        )
+    if parsed.scheme != "https":
+        return NetworkPolicy(
+            host=host or "<none>",
+            category="insecure-transport",
+            risk="high",
+            allowed=False,
+            reason="Plain HTTP is blocked; external web access must use HTTPS.",
         )
     if not host:
         return NetworkPolicy(

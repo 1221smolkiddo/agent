@@ -17,6 +17,7 @@ from .schema import RunShellAction, ToolResult
 from .storage import AgentStorage
 from .tools import ToolRegistry
 
+BENCHMARK_VERSION = "2026.07-v1"
 
 class ScriptedModel:
     model = "eval-scripted-model"
@@ -164,7 +165,14 @@ def run_builtin_evals() -> EvalSuiteResult:
         *[_run_case(case) for case in builtin_eval_cases()],
         *[_run_fixture_case(case) for case in builtin_fixture_eval_cases()],
     ]
-    return EvalSuiteResult(results=results, metadata={"mode": "offline", "case_count": len(results)})
+    return EvalSuiteResult(
+        results=results,
+        metadata={
+            "mode": "offline",
+            "benchmark_version": BENCHMARK_VERSION,
+            "case_count": len(results),
+        },
+    )
 
 
 def live_eval_cases() -> list[LiveEvalCase]:
@@ -495,30 +503,68 @@ def run_live_evals(
     preset: str | None = None,
     profile: str | None = "coder",
     limit: int | None = None,
+    trials: int = 1,
 ) -> EvalSuiteResult:
+    if trials < 1:
+        raise ValueError("Live eval trials must be at least 1.")
     cases = live_eval_cases()
     if limit is not None:
         cases = cases[:limit]
     return EvalSuiteResult(
         results=[
-            _run_live_fixture_case(
+            _live_trial_result(
                 case,
+                trial=trial,
+                trials=trials,
                 model=model,
                 provider=provider,
                 preset=preset,
                 profile=profile,
             )
             for case in cases
+            for trial in range(1, trials + 1)
         ],
         metadata={
             "mode": "live",
+            "benchmark_version": BENCHMARK_VERSION,
             "model": model or "",
             "provider": provider or "",
             "preset": preset or "",
             "profile": profile or "",
             "limit": limit,
             "case_count": len(cases),
+            "trials": trials,
+            "run_count": len(cases) * trials,
         },
+    )
+
+
+def _live_trial_result(
+    case: LiveEvalCase,
+    *,
+    trial: int,
+    trials: int,
+    model: str | None,
+    provider: str | None,
+    preset: str | None,
+    profile: str | None,
+) -> EvalResult:
+    result = _run_live_fixture_case(
+        case,
+        model=model,
+        provider=provider,
+        preset=preset,
+        profile=profile,
+    )
+    metadata = dict(result.metadata or {})
+    metadata.update({"base_case": case.name, "trial": trial, "trials": trials})
+    return EvalResult(
+        name=case.name if trials == 1 else f"{case.name}::trial-{trial}",
+        ok=result.ok,
+        detail=result.detail,
+        category=result.category,
+        failure_category=result.failure_category,
+        metadata=metadata,
     )
 
 

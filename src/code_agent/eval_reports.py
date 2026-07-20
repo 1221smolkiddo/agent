@@ -423,9 +423,12 @@ def _report_capability_metrics(path: str, payload: dict[str, Any]) -> dict[str, 
     verification_cases = 0
     changed_cases = 0
     blocked_cases = 0
+    denied_action_count = 0
+    failed_action_count = 0
     model_usage_cost = 0.0
     model_usage_tokens = 0
     categories: dict[str, dict[str, int]] = {}
+    trial_groups: dict[str, dict[str, int]] = {}
 
     for result in results:
         category = str(result.get("category") or "uncategorized")
@@ -437,6 +440,11 @@ def _report_capability_metrics(path: str, payload: dict[str, Any]) -> dict[str, 
             item["failed"] += 1
 
         result_metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+        base_case = str(result_metadata.get("base_case") or result.get("name") or "<unnamed>")
+        trial_group = trial_groups.setdefault(base_case, {"total": 0, "passed": 0})
+        trial_group["total"] += 1
+        if result.get("ok") is True:
+            trial_group["passed"] += 1
         commands = _as_list(result_metadata.get("commands"))
         verification = _as_list(result_metadata.get("verification"))
         if commands or verification:
@@ -445,6 +453,8 @@ def _report_capability_metrics(path: str, payload: dict[str, Any]) -> dict[str, 
             changed_cases += 1
         if result_metadata.get("blocked") is True:
             blocked_cases += 1
+        denied_action_count += len(_as_list(result_metadata.get("denied_actions")))
+        failed_action_count += len(_as_list(result_metadata.get("failed_actions")))
         for usage in _as_list(result_metadata.get("model_usage")):
             if not isinstance(usage, dict):
                 continue
@@ -471,8 +481,21 @@ def _report_capability_metrics(path: str, payload: dict[str, Any]) -> dict[str, 
         "verification_cases": verification_cases,
         "changed_cases": changed_cases,
         "blocked_cases": blocked_cases,
+        "denied_action_count": denied_action_count,
+        "failed_action_count": failed_action_count,
         "model_usage_tokens": model_usage_tokens,
         "estimated_cost_usd": round(model_usage_cost, 6),
+        "trial_cases": len(trial_groups),
+        "unstable_trial_cases": sum(
+            1 for item in trial_groups.values() if 0 < item["passed"] < item["total"]
+        ),
+        "trial_reliability": {
+            name: {
+                **item,
+                "pass_rate": round(item["passed"] / item["total"], 4) if item["total"] else 0.0,
+            }
+            for name, item in sorted(trial_groups.items())
+        },
         "categories": category_rates,
     }
 
@@ -708,8 +731,12 @@ def _aggregate_capability_metrics(report_metrics: list[dict[str, Any]]) -> dict[
     verification_cases = sum(int(item["verification_cases"]) for item in report_metrics)
     changed_cases = sum(int(item["changed_cases"]) for item in report_metrics)
     blocked_cases = sum(int(item["blocked_cases"]) for item in report_metrics)
+    denied_action_count = sum(int(item.get("denied_action_count", 0)) for item in report_metrics)
+    failed_action_count = sum(int(item.get("failed_action_count", 0)) for item in report_metrics)
     model_usage_tokens = sum(int(item["model_usage_tokens"]) for item in report_metrics)
     estimated_cost_usd = sum(float(item["estimated_cost_usd"]) for item in report_metrics)
+    trial_cases = sum(int(item.get("trial_cases", 0)) for item in report_metrics)
+    unstable_trial_cases = sum(int(item.get("unstable_trial_cases", 0)) for item in report_metrics)
     categories: dict[str, dict[str, int]] = {}
     for report in report_metrics:
         for name, item in dict(report.get("categories", {})).items():
@@ -735,8 +762,18 @@ def _aggregate_capability_metrics(report_metrics: list[dict[str, Any]]) -> dict[
         "change_rate": round(changed_cases / cases, 4) if cases else 0.0,
         "blocked_cases": blocked_cases,
         "blocked_rate": round(blocked_cases / cases, 4) if cases else 0.0,
+        "denied_action_count": denied_action_count,
+        "failed_action_count": failed_action_count,
+        "intervention_signal_rate": (
+            round((denied_action_count + failed_action_count) / cases, 4) if cases else 0.0
+        ),
         "model_usage_tokens": model_usage_tokens,
         "estimated_cost_usd": round(estimated_cost_usd, 6),
+        "trial_cases": trial_cases,
+        "unstable_trial_cases": unstable_trial_cases,
+        "trial_stability_rate": (
+            round((trial_cases - unstable_trial_cases) / trial_cases, 4) if trial_cases else 0.0
+        ),
         "categories": category_rates,
     }
 

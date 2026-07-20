@@ -240,6 +240,13 @@ def evals_command(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable eval results."),
     live: bool = typer.Option(False, "--live", help="Run opt-in live-model benchmark evals."),
     limit: Optional[int] = typer.Option(None, "--limit", min=1, help="Limit live eval cases."),
+    trials: int = typer.Option(
+        1,
+        "--trials",
+        min=1,
+        max=20,
+        help="Repeat every live eval case to measure model variance.",
+    ),
     provider: Optional[str] = typer.Option(
         None,
         "--provider",
@@ -272,6 +279,7 @@ def evals_command(
             preset=preset,
             profile=profile,
             limit=limit,
+            trials=trials,
         )
         if live
         else evals_module.run_builtin_evals()
