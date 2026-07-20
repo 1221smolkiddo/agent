@@ -32,10 +32,12 @@ class MockCompletions:
         self.is_stream = is_stream
         self.call_count = 0
         self.requested_tokens = []
+        self.requested_timeouts = []
 
     def create(self, **kwargs):
         self.call_count += 1
         self.requested_tokens.append(kwargs.get("max_tokens"))
+        self.requested_timeouts.append(kwargs.get("timeout"))
         response = self.responses.pop(0)
         if isinstance(response, Exception):
             raise response
@@ -179,6 +181,32 @@ def test_complete_retries_transient_server_errors(monkeypatch):
     records = client.drain_usage_records()
     assert records[0].ok is False
     assert "server provider failure" in str(records[0].error)
+
+
+def test_client_disables_sdk_retries_and_owns_retry_policy():
+    client = OpenAICompatibleChatClient(
+        api_key="test",
+        base_url="https://example.com",
+        model="test",
+    )
+
+    assert client._client.max_retries == 0
+
+
+def test_logical_turn_deadline_is_forwarded_to_each_request(monkeypatch):
+    client = OpenAICompatibleChatClient(
+        api_key="test",
+        base_url="test",
+        model="test",
+        retry_base_delay_seconds=0,
+    )
+    mock_completions = MockCompletions([make_500_error(), MockResponse("Recovered")])
+    monkeypatch.setattr(client, "_client", MockClient(mock_completions))
+
+    assert client.complete_with_timeout([], 12.5) == "Recovered"
+    assert len(mock_completions.requested_timeouts) == 2
+    assert all(0 < timeout <= 12.5 for timeout in mock_completions.requested_timeouts)
+    assert mock_completions.requested_timeouts[1] <= mock_completions.requested_timeouts[0]
 
 
 def test_complete_stops_after_transient_retry_budget(monkeypatch):

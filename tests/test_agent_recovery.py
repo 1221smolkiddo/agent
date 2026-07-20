@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 
 from code_agent.agent import CodingAgent
 from code_agent.execution_state import ExecutionState
@@ -201,6 +202,87 @@ def test_agent_blocks_repeated_tool_loop_and_requires_new_strategy(tmp_path: Pat
     assert any(item.get("type") == "action_loop" for item in result.failed_actions)
     assert "Blocked repeated action loop" in model.messages_seen[3][-1]["content"]
     assert result.execution_state["phase"] == "finalize"
+
+
+def test_run_87_pattern_stops_after_one_redundant_context_recovery(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("value = 1\n", encoding="utf-8")
+    model = FakeModel(
+        [
+            '{"type":"read_memory","max_chars":8000}',
+            '{"type":"repo_map","max_files":60}',
+            # This must never be consumed; the second redundant discovery action finalizes.
+            '{"type":"read_memory","max_chars":8000}',
+        ]
+    )
+    agent = make_real_tool_agent(tmp_path, model)
+
+    result = agent.run_detailed("inspect this project and identify its industry readiness gaps")
+
+    assert result.blocked is True
+    assert "already supplied" in result.message
+    assert len(model.messages_seen) == 2
+    assert [item["type"] for item in result.failed_actions] == [
+        "redundant_context",
+        "redundant_context",
+    ]
+    assert "Do not request it again" in model.messages_seen[1][-1]["content"]
+
+
+def test_second_distinct_action_loop_finalizes_without_more_model_calls(tmp_path: Path) -> None:
+    model = FakeModel(
+        [
+            '{"type":"read_file","path":"missing.py"}',
+            '{"type":"read_file","path":"missing.py"}',
+            '{"type":"read_file","path":"missing.py"}',
+            '{"type":"list_files","path":"."}',
+            '{"type":"list_files","path":"."}',
+            '{"type":"list_files","path":"."}',
+            '{"type":"final","message":"must not be reached"}',
+        ]
+    )
+    agent = CodingAgent(
+        cwd=tmp_path,
+        dry_run=False,
+        max_steps=8,
+        max_failures=8,
+        model_client=model,
+        tools=RecoveringTools(tmp_path),  # type: ignore[arg-type]
+        storage=AgentStorage(tmp_path / "agent.db"),
+    )
+
+    result = agent.run_detailed("inspect this project")
+
+    assert result.blocked is True
+    assert len(model.messages_seen) == 6
+    assert sum(item.get("type") == "action_loop" for item in result.failed_actions) == 2
+
+
+def test_action_returned_after_run_deadline_is_not_executed(tmp_path: Path) -> None:
+    class SlowModel(FakeModel):
+        def complete(self, messages: list[ChatMessage]) -> str:
+            time.sleep(0.3)
+            return super().complete(messages)
+
+    model = SlowModel(['{"type":"write_file","path":"late.txt","content":"too late"}'])
+    tools = RecoveringTools(tmp_path)
+    agent = CodingAgent(
+        cwd=tmp_path,
+        dry_run=False,
+        max_steps=2,
+        max_failures=2,
+        model_client=model,
+        tools=tools,  # type: ignore[arg-type]
+        storage=AgentStorage(tmp_path / "agent.db"),
+        run_timeout_seconds=0.2,
+    )
+
+    result = agent.run_detailed("write late.txt in this project")
+
+    assert result.blocked is True
+    assert "proposed action was not executed" in result.message
+    assert not (tmp_path / "late.txt").exists()
+    assert tools.calls == 0
 
 
 def test_agent_compacts_large_history_without_losing_task(tmp_path: Path) -> None:

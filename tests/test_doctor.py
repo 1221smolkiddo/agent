@@ -27,6 +27,8 @@ def test_run_doctor_reports_core_install_checks(tmp_path: Path, monkeypatch) -> 
     assert "api-key" in names
     assert "env-file" in names
     assert "project-memory" in names
+    assert "model-deadlines" in names
+    assert "model-fallback" in names
     assert not any("test-key" in check.detail for check in report.checks)
 
 
@@ -122,3 +124,30 @@ def test_doctor_cli_outputs_json(monkeypatch, tmp_path: Path) -> None:
     payload = json.loads(result.output)
     assert payload["ok"] is True
     assert payload["checks"][0]["name"] == "python-version"
+
+
+def test_doctor_reports_optional_missing_fallback_without_blocking_strict_mode(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(openrouter_api_key="test-key", agent_db_path=tmp_path / ".agent.db")
+
+    report = run_doctor(cwd=tmp_path, settings=settings)
+    fallback = next(check for check in report.checks if check.name == "model-fallback")
+
+    assert fallback.status == "pass"
+    assert "no fallback models" in fallback.detail
+
+
+def test_doctor_reports_usable_cross_provider_fallback(tmp_path: Path) -> None:
+    settings = Settings(
+        openrouter_api_key="test-key",
+        nvidia_api_key="nvidia-key",
+        agent_fallback_models="z-ai/glm-5.2",
+        agent_db_path=tmp_path / ".agent.db",
+    )
+
+    report = run_doctor(cwd=tmp_path, settings=settings)
+    fallback = next(check for check in report.checks if check.name == "model-fallback")
+
+    assert fallback.status == "pass"
+    assert "1 configured" in fallback.detail

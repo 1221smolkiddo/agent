@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from collections.abc import Callable
+import warnings
 
 from .agent import CodingAgent
 from .config import Settings
@@ -47,6 +48,13 @@ def create_agent(
     execution_state_snapshot: dict[str, object] | None = None,
     resumed_from_run_id: int | None = None,
 ) -> CodingAgent:
+    if not settings.fallback_model_list:
+        warnings.warn(
+            "Agent47 has no fallback model configured. A transient provider failure will stop "
+            "the run. Set AGENT_FALLBACK_MODELS to enable provider handoff.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     workspace = cwd.resolve()
     configured_preset = None if model or provider else settings.agent_model_preset
     selected_preset = resolve_model_preset(preset if preset is not None else configured_preset)
@@ -140,6 +148,8 @@ def create_agent(
         stream_model=settings.agent_stream if stream_model is None else stream_model,
         reviewer_client=resolved_reviewer,
         context_max_chars=settings.agent_context_max_chars,
+        model_timeout_seconds=settings.agent_model_timeout_seconds,
+        run_timeout_seconds=settings.agent_run_timeout_seconds,
         execution_state_snapshot=execution_state_snapshot,
         resumed_from_run_id=resumed_from_run_id,
     )

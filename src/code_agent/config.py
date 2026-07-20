@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     agent_output_cost_per_million: float | None = None
     agent_max_tokens: int = 4096
     agent_model_timeout_seconds: float = 60.0
+    agent_run_timeout_seconds: float = Field(default=300.0, ge=1, le=86_400)
     agent_model_retry_count: int = Field(default=2, ge=0, le=10)
     agent_model_retry_base_seconds: float = Field(default=0.5, ge=0, le=60)
     agent_model_retry_max_seconds: float = Field(default=4.0, ge=0, le=300)

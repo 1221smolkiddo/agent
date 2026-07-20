@@ -150,15 +150,22 @@ class OpenAICompatibleChatClient:
             base_url=self.base_url,
             default_headers=self.default_headers,
             timeout=self.timeout_seconds,
+            # Agent47 owns retry policy. SDK retries would multiply the configured
+            # attempts and make a 60 second logical timeout last several minutes.
+            max_retries=0,
         )
 
     def complete(self, messages: list[ChatMessage]) -> str:
-        def _make_request(current_max_tokens: int) -> str:
+        return self.complete_with_timeout(messages, self.timeout_seconds)
+
+    def complete_with_timeout(self, messages: list[ChatMessage], timeout_seconds: float) -> str:
+        def _make_request(current_max_tokens: int, remaining_seconds: float) -> str:
             request: dict[str, Any] = {
                 "model": self.model,
                 "messages": messages,
                 "temperature": self.temperature,
                 "max_tokens": current_max_tokens,
+                "timeout": remaining_seconds,
             }
             if self.extra_body:
                 request["extra_body"] = self.extra_body
@@ -170,14 +177,22 @@ class OpenAICompatibleChatClient:
             self._record_success(_usage_from_response(response))
             return content
 
-        return self._call_with_retry(_make_request)
+        return self._call_with_retry(_make_request, timeout_seconds=timeout_seconds)
 
     def stream_complete(
         self,
         messages: list[ChatMessage],
         on_token: Callable[[str], None],
     ) -> str:
-        def _make_request(current_max_tokens: int) -> str:
+        return self.stream_complete_with_timeout(messages, on_token, self.timeout_seconds)
+
+    def stream_complete_with_timeout(
+        self,
+        messages: list[ChatMessage],
+        on_token: Callable[[str], None],
+        timeout_seconds: float,
+    ) -> str:
+        def _make_request(current_max_tokens: int, remaining_seconds: float) -> str:
             chunks: list[str] = []
             request: dict[str, Any] = {
                 "model": self.model,
@@ -185,6 +200,7 @@ class OpenAICompatibleChatClient:
                 "temperature": self.temperature,
                 "max_tokens": current_max_tokens,
                 "stream": True,
+                "timeout": remaining_seconds,
             }
             if self.include_stream_usage:
                 request["stream_options"] = {"include_usage": True}
@@ -211,7 +227,7 @@ class OpenAICompatibleChatClient:
                 self._record_success({})
             return content
 
-        return self._call_with_retry(_make_request)
+        return self._call_with_retry(_make_request, timeout_seconds=timeout_seconds)
 
     def drain_usage_records(self) -> list[ModelUsageRecord]:
         records = self._usage_records
@@ -228,13 +244,26 @@ class OpenAICompatibleChatClient:
             return 0
         return 1
 
-    def _call_with_retry(self, make_request: Callable[[int], T]) -> T:
+    def _call_with_retry(
+        self,
+        make_request: Callable[[int, float], T],
+        *,
+        timeout_seconds: float,
+    ) -> T:
+        if timeout_seconds <= 0:
+            raise TimeoutError("Model turn deadline expired before the request started.")
+        deadline = time.monotonic() + timeout_seconds
         current_tokens = self.max_tokens
         credit_retries = 0
         transient_retries = 0
         while True:
             try:
-                return make_request(current_tokens)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"Model turn exceeded its {timeout_seconds:g}s absolute deadline."
+                    )
+                return make_request(current_tokens, remaining)
             except Exception as exc:
                 classified = classify_model_error(exc)
                 if classified.kind == "credits" and classified.retryable:
@@ -260,6 +289,11 @@ class OpenAICompatibleChatClient:
                     self.retry_max_delay_seconds,
                     self.retry_base_delay_seconds * (2 ** (transient_retries - 1)),
                 )
+                remaining = deadline - time.monotonic()
+                if remaining <= delay:
+                    raise TimeoutError(
+                        f"Model turn exceeded its {timeout_seconds:g}s absolute deadline."
+                    ) from exc
                 self._record_failure(
                     f"{classified.kind} provider failure "
                     f"(retry {transient_retries}/{self.transient_retry_count} in {delay:g}s): {exc}"
@@ -318,12 +352,50 @@ class FallbackModelClient:
     def complete(self, messages: list[ChatMessage]) -> str:
         return self._try_clients(lambda client: client.complete(messages))
 
+    def complete_with_timeout(self, messages: list[ChatMessage], timeout_seconds: float) -> str:
+        return self._try_clients_with_deadline(messages, timeout_seconds, stream_callback=None)
+
     def stream_complete(
         self,
         messages: list[ChatMessage],
         on_token: Callable[[str], None],
     ) -> str:
         return self._try_clients(lambda client: client.stream_complete(messages, on_token))
+
+    def stream_complete_with_timeout(
+        self,
+        messages: list[ChatMessage],
+        on_token: Callable[[str], None],
+        timeout_seconds: float,
+    ) -> str:
+        return self._try_clients_with_deadline(messages, timeout_seconds, stream_callback=on_token)
+
+    def _try_clients_with_deadline(
+        self,
+        messages: list[ChatMessage],
+        timeout_seconds: float,
+        *,
+        stream_callback: Callable[[str], None] | None,
+    ) -> str:
+        deadline = time.monotonic() + timeout_seconds
+
+        def call(client: UsageTrackingModelClient) -> str:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"Model turn exceeded its {timeout_seconds:g}s absolute deadline."
+                )
+            if stream_callback is not None:
+                method = getattr(client, "stream_complete_with_timeout", None)
+                if method is not None:
+                    return method(messages, stream_callback, remaining)
+                return client.stream_complete(messages, stream_callback)
+            method = getattr(client, "complete_with_timeout", None)
+            if method is not None:
+                return method(messages, remaining)
+            return client.complete(messages)
+
+        return self._try_clients(call)
 
     def drain_usage_records(self) -> list[ModelUsageRecord]:
         records = self._usage_records

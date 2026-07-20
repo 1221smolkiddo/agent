@@ -130,6 +130,20 @@ def test_create_fallback_client_returns_single_client_without_fallbacks() -> Non
     assert client._estimate_cost(1_000_000, 500_000) == 4.0
 
 
+def test_factory_warns_when_no_fallback_model_is_configured(tmp_path: Path) -> None:
+    settings = Settings(
+        agent_model_preset=None,
+        openrouter_api_key="test-key",
+        agent_model="primary",
+        agent_fallback_models="",
+        agent_reviewer_pass=False,
+        agent_db_path=tmp_path / "agent.db",
+    )
+
+    with pytest.warns(RuntimeWarning, match="no fallback model configured"):
+        create_agent(settings, tmp_path, None, True, 1)
+
+
 def test_create_fallback_client_passes_timeout_to_model_client() -> None:
     profile = resolve_model_profile("default", default_model="primary", max_tokens=1000)
     provider = ModelProviderConfig(

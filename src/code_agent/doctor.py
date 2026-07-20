@@ -13,7 +13,7 @@ from typing import Literal
 from .config import Settings
 from .memory import MAX_MEMORY_FILE_CHARS, memory_file_path
 from .model_presets import resolve_model_preset
-from .model_registry import provider_name_list
+from .model_registry import find_registered_model, provider_name_list
 from .storage import AgentStorage
 
 
@@ -94,6 +94,8 @@ def run_doctor(cwd: Path | None = None, settings: Settings | None = None) -> Doc
             hint="Install ripgrep for faster project search; Agent47 has a slower Python fallback.",
         ),
         _check_api_key(config),
+        _check_model_deadlines(config),
+        _check_fallback_models(config),
         _check_env_file(workspace),
         _check_project_memory(workspace),
     ]
@@ -114,6 +116,58 @@ def _check_python_version() -> DoctorCheck:
         "fail",
         f"{version.major}.{version.minor}.{version.micro}",
         "Install Python 3.11 or newer.",
+    )
+
+
+def _check_model_deadlines(settings: Settings) -> DoctorCheck:
+    if settings.agent_run_timeout_seconds < settings.agent_model_timeout_seconds:
+        return DoctorCheck(
+            "model-deadlines",
+            "warn",
+            (
+                f"turn={settings.agent_model_timeout_seconds:g}s, "
+                f"run={settings.agent_run_timeout_seconds:g}s"
+            ),
+            "Keep the run deadline at least as large as the model-turn deadline.",
+        )
+    return DoctorCheck(
+        "model-deadlines",
+        "pass",
+        (
+            f"turn={settings.agent_model_timeout_seconds:g}s, "
+            f"run={settings.agent_run_timeout_seconds:g}s; Agent47-owned retries"
+        ),
+    )
+
+
+def _check_fallback_models(settings: Settings) -> DoctorCheck:
+    models = settings.fallback_model_list
+    if not models:
+        return DoctorCheck(
+            "model-fallback",
+            "pass",
+            "no fallback models configured (optional; startup warning enabled)",
+            "Set AGENT_FALLBACK_MODELS to one or more models with configured provider credentials.",
+        )
+    missing: list[str] = []
+    for model in models:
+        registered = find_registered_model(model)
+        provider = registered.provider if registered else settings.provider_name
+        try:
+            settings.model_api_key_for(provider)
+        except RuntimeError:
+            missing.append(f"{model} ({provider})")
+    if missing:
+        return DoctorCheck(
+            "model-fallback",
+            "warn",
+            f"{len(models)} configured; missing credentials for: {', '.join(missing)}",
+            "Configure the required provider keys or remove unusable fallback models.",
+        )
+    return DoctorCheck(
+        "model-fallback",
+        "pass",
+        f"{len(models)} configured with available provider credentials",
     )
 
 

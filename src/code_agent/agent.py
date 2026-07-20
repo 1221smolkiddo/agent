@@ -73,6 +73,8 @@ class CodingAgent:
         stream_model: bool = True,
         reviewer_client: ModelClient | None = None,
         context_max_chars: int = 60_000,
+        model_timeout_seconds: float = 60.0,
+        run_timeout_seconds: float = 300.0,
         execution_state_snapshot: dict[str, Any] | None = None,
         resumed_from_run_id: int | None = None,
     ) -> None:
@@ -87,6 +89,8 @@ class CodingAgent:
         self.stream_model = stream_model
         self.reviewer_client = reviewer_client
         self.context_max_chars = context_max_chars
+        self.model_timeout_seconds = model_timeout_seconds
+        self.run_timeout_seconds = run_timeout_seconds
         self.execution_state_snapshot = execution_state_snapshot
         self.resumed_from_run_id = resumed_from_run_id
         self._active_execution_state: ExecutionState | None = None
@@ -104,6 +108,8 @@ class CodingAgent:
         return cancelled
 
     def run_detailed(self, task: str) -> AgentRunResult:
+        run_started = perf_counter()
+        run_deadline = run_started + self.run_timeout_seconds
         clean_task = self._extract_user_task(task)
         run_id = self.storage.create_run(task=clean_task, model=self.model_client.model, cwd=self.cwd)
         execution_state = (
@@ -119,6 +125,8 @@ class CodingAgent:
         self._active_execution_state = execution_state
         workspace_task = self._is_workspace_task(task)
         consecutive_failures = 0
+        loop_recoveries = 0
+        redundant_context_recoveries = 0
         previous_tool_failed = False
         previous_failure_allows_final = False
         blocked_mutation_failure = False
@@ -151,6 +159,23 @@ class CodingAgent:
             )
 
         for step in range(1, self.max_steps + 1):
+            remaining_run_seconds = run_deadline - perf_counter()
+            if remaining_run_seconds <= 0:
+                return self._finalize_run(
+                    AgentRunResult(
+                        message=(
+                            f"Stopped after reaching the {self.run_timeout_seconds:g}s "
+                            "absolute run deadline. No further model or tool actions were started."
+                        ),
+                        run_id=run_id,
+                        task=task,
+                        clean_task=clean_task,
+                        context_records=context_records,
+                        model_usage_records=model_usage_records,
+                        failed_actions=failed_actions,
+                        blocked=True,
+                    )
+                )
             execution_state.begin_step(step)
             messages, compacted_count = compact_message_history(
                 messages,
@@ -166,7 +191,13 @@ class CodingAgent:
             self._report_thinking(step)
             usage_start = len(model_usage_records)
             try:
-                response = self._complete_model(run_id, messages, step, model_usage_records)
+                response = self._complete_model(
+                    run_id,
+                    messages,
+                    step,
+                    model_usage_records,
+                    timeout_seconds=min(self.model_timeout_seconds, remaining_run_seconds),
+                )
             except Exception as exc:
                 payload = self._failure_payload(
                     step=step,
@@ -191,6 +222,30 @@ class CodingAgent:
                         review_records=review_records,
                         failed_actions=failed_actions,
                         denied_actions=denied_actions,
+                        blocked=True,
+                    )
+                )
+            if perf_counter() >= run_deadline:
+                payload = self._failure_payload(
+                    step=step,
+                    kind="run_deadline",
+                    output=(
+                        f"The model returned after the {self.run_timeout_seconds:g}s absolute "
+                        "run deadline; its proposed action was not executed."
+                    ),
+                    consecutive_failures=consecutive_failures + 1,
+                )
+                self.storage.add_step(run_id, "tool", payload)
+                failed_actions.append(payload)
+                return self._finalize_run(
+                    AgentRunResult(
+                        message=payload["output"],
+                        run_id=run_id,
+                        task=task,
+                        clean_task=clean_task,
+                        context_records=context_records,
+                        model_usage_records=model_usage_records,
+                        failed_actions=failed_actions,
                         blocked=True,
                     )
                 )
@@ -243,6 +298,53 @@ class CodingAgent:
                 continue
 
             self.storage.add_step(run_id, "assistant", action.model_dump())
+
+            if (
+                action.type in {"read_memory", "repo_map", "rank_context", "symbol_index", "dependency_graph"}
+                and any(
+                    record.get("automatic") is True and record.get("action") == action.type
+                    for record in context_records
+                )
+                and execution_state.workspace_generation == 0
+            ):
+                redundant_context_recoveries += 1
+                consecutive_failures += 1
+                detail = (
+                    f"Automatic context already supplied `{action.type}` for the current workspace generation. "
+                    "Do not request it again. Use the supplied evidence, inspect a specific file or symbol, "
+                    "update the plan, or finalize honestly."
+                )
+                payload = self._failure_payload(
+                    step=step,
+                    kind="redundant_context",
+                    output=detail,
+                    consecutive_failures=consecutive_failures,
+                )
+                self.storage.add_step(run_id, "tool", payload)
+                failed_actions.append(payload)
+                self._report_recovery("redundant automatic context action blocked")
+                if redundant_context_recoveries >= 2:
+                    return self._finalize_run(
+                        AgentRunResult(
+                            message=(
+                                "Stopped after the model repeatedly requested context that Agent47 had "
+                                "already supplied. The run was finalized to prevent a slow discovery loop."
+                            ),
+                            run_id=run_id,
+                            task=task,
+                            clean_task=clean_task,
+                            context_records=context_records,
+                            model_usage_records=model_usage_records,
+                            failed_actions=failed_actions,
+                            blocked=True,
+                        )
+                    )
+                messages.append({"role": "assistant", "content": action.model_dump_json()})
+                messages.append({"role": "user", "content": json.dumps(payload)})
+                previous_tool_failed = True
+                previous_failure_allows_final = True
+                blocked_mutation_failure = False
+                continue
 
             if not workspace_task and self._is_workspace_action(action):
                 consecutive_failures += 1
@@ -445,6 +547,7 @@ class CodingAgent:
 
             loop_detail = execution_state.repeated_action_detail(action)
             if loop_detail is not None:
+                loop_recoveries += 1
                 consecutive_failures += 1
                 execution_state.require_replan(loop_detail)
                 payload = self._failure_payload(
@@ -457,7 +560,7 @@ class CodingAgent:
                 self.storage.add_step(run_id, "tool", payload)
                 failed_actions.append(payload)
                 self._report_recovery("repeated action loop blocked; requiring a different strategy")
-                if consecutive_failures >= self.max_failures:
+                if loop_recoveries >= 2 or consecutive_failures >= self.max_failures:
                     return self._finalize_run(
                         AgentRunResult(
                             message=self._failure_summary(consecutive_failures, loop_detail),
@@ -480,7 +583,7 @@ class CodingAgent:
                 messages.append({"role": "assistant", "content": action.model_dump_json()})
                 messages.append({"role": "user", "content": json.dumps(payload)})
                 previous_tool_failed = True
-                previous_failure_allows_final = False
+                previous_failure_allows_final = True
                 continue
 
             execution_state.begin_action(action)
@@ -793,17 +896,29 @@ class CodingAgent:
         messages: list[ChatMessage],
         step: int,
         model_usage_records: list[dict[str, Any]],
+        *,
+        timeout_seconds: float,
     ) -> str:
         stream_complete = getattr(self.model_client, "stream_complete", None)
         stream_started = False
         started = perf_counter()
         try:
             if not self.stream_model or stream_complete is None:
+                complete_with_timeout = getattr(self.model_client, "complete_with_timeout", None)
+                if complete_with_timeout is not None:
+                    return complete_with_timeout(messages, timeout_seconds)
                 return self.model_client.complete(messages)
 
             if self.reporter:
                 self.reporter.model_stream_start(step)
                 stream_started = True
+            stream_with_timeout = getattr(self.model_client, "stream_complete_with_timeout", None)
+            if stream_with_timeout is not None:
+                return stream_with_timeout(
+                    messages,
+                    self._report_model_stream_chunk,
+                    timeout_seconds,
+                )
             return stream_complete(messages, self._report_model_stream_chunk)
         finally:
             latency_ms = round((perf_counter() - started) * 1000, 2)
