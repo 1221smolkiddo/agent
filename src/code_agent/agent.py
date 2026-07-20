@@ -11,6 +11,7 @@ from typing import Any
 from pydantic import TypeAdapter, ValidationError
 
 from .execution_state import ExecutionState, compact_message_history
+from .durable_execution import AgentExecutionAdapter, DurableExecutionRuntime
 from .models import ChatMessage, ModelClient
 from .patches import git_style_unified_diff
 from .platform_runtime import PlatformRuntime
@@ -58,6 +59,7 @@ class AgentRunResult:
     denied_actions: list[dict[str, Any]] = field(default_factory=list)
     execution_state: dict[str, Any] = field(default_factory=dict)
     blocked: bool = False
+    durable_execution_id: str = ""
 
 
 class CodingAgent:
@@ -79,6 +81,8 @@ class CodingAgent:
         execution_state_snapshot: dict[str, Any] | None = None,
         resumed_from_run_id: int | None = None,
         platform_runtime: PlatformRuntime | None = None,
+        durable_runtime: DurableExecutionRuntime | None = None,
+        durable_execution_id: str | None = None,
     ) -> None:
         self.cwd = cwd
         self.dry_run = dry_run
@@ -96,12 +100,17 @@ class CodingAgent:
         self.execution_state_snapshot = execution_state_snapshot
         self.resumed_from_run_id = resumed_from_run_id
         self.platform_runtime = platform_runtime
+        self.durable_runtime = durable_runtime
+        self.durable_execution_id = durable_execution_id
+        self._durable_adapter: AgentExecutionAdapter | None = None
         self._active_execution_state: ExecutionState | None = None
 
     def run(self, task: str) -> str:
         return self.run_detailed(task).message
 
     def cancel(self, reason: str = "user stop") -> int:
+        if self._durable_adapter is not None:
+            self._durable_adapter.cancel(reason)
         if self.platform_runtime is not None:
             self.platform_runtime.hooks.emit("cancellation", {"reason": reason})
         cancelled = 0
@@ -116,6 +125,14 @@ class CodingAgent:
         run_started = perf_counter()
         run_deadline = run_started + self.run_timeout_seconds
         clean_task = self._extract_user_task(task)
+        if self.durable_runtime is not None:
+            self._durable_adapter = AgentExecutionAdapter(
+                self.durable_runtime,
+                clean_task,
+                execution_id=self.durable_execution_id,
+                budgets={"tokens": float(self.max_steps * 10_000), "tool_calls": float(self.max_steps)},
+            )
+            self.durable_execution_id = self._durable_adapter.execution_id
         run_id = self.storage.create_run(task=clean_task, model=self.model_client.model, cwd=self.cwd)
         execution_state = (
             ExecutionState.from_snapshot(
@@ -632,9 +649,37 @@ class CodingAgent:
                 ]
                 self.reporter.mutation_preview(creates, modifies, deletes)
             self._report_action(action)
-            tool_started = perf_counter()
-            result = self._run_tool(action)
-            tool_elapsed_ms = round((perf_counter() - tool_started) * 1000, 2)
+            durable_action = (
+                self._durable_adapter.action_started(
+                    step, action.model_dump(exclude_none=True)
+                )
+                if self._durable_adapter is not None
+                else None
+            )
+            durable_effect_id = durable_action[0] if durable_action is not None else None
+            durable_replay = durable_action[1] if durable_action is not None else None
+            if durable_replay is not None:
+                result = ToolResult(
+                    ok=bool(durable_replay["ok"]),
+                    output=str(durable_replay["output"]),
+                    metadata={"durable_replay": True},
+                )
+                tool_elapsed_ms = float(durable_replay["elapsed_ms"])
+            else:
+                tool_started = perf_counter()
+                result = self._run_tool(action)
+                tool_elapsed_ms = round((perf_counter() - tool_started) * 1000, 2)
+            if (
+                durable_effect_id is not None
+                and durable_replay is None
+                and self._durable_adapter is not None
+            ):
+                self._durable_adapter.action_completed(
+                    durable_effect_id,
+                    ok=result.ok,
+                    output=result.output,
+                    elapsed_ms=tool_elapsed_ms,
+                )
             transaction = result.metadata.get("transaction")
             if isinstance(transaction, dict) and transaction.get("id"):
                 attach_transaction = getattr(self.tools, "attach_transaction_context", None)
@@ -819,6 +864,9 @@ class CodingAgent:
         )
 
     def _finalize_run(self, result: AgentRunResult) -> AgentRunResult:
+        if self._durable_adapter is not None:
+            self._durable_adapter.finish(blocked=result.blocked, summary=result.message)
+            result.durable_execution_id = self._durable_adapter.execution_id
         if self._active_execution_state is not None:
             self._active_execution_state.finalize()
             result.execution_state = self._active_execution_state.snapshot()
@@ -963,6 +1011,8 @@ class CodingAgent:
                 payload["latency_ms"] = latency_ms
             model_usage_records.append(payload)
             self.storage.add_model_usage(run_id, payload)
+            if self._durable_adapter is not None:
+                self._durable_adapter.model_usage(payload)
 
     @staticmethod
     def _review_rejection_output(review: ReviewerPassResult) -> str:

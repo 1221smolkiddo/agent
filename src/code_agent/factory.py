@@ -5,6 +5,7 @@ from collections.abc import Callable
 import warnings
 
 from .agent import CodingAgent
+from .durable_execution import DurableExecutionRuntime
 from .config import Settings
 from .model_profiles import ModelProfile, resolve_model_profile
 from .model_presets import resolve_model_preset
@@ -114,6 +115,10 @@ def create_agent(
         workspace,
         trust_workspace_extensions=settings.agent_trust_workspace_extensions,
     )
+    execution_db_path = settings.agent_execution_db_path
+    if not execution_db_path.is_absolute():
+        execution_db_path = workspace / execution_db_path
+    durable_runtime = DurableExecutionRuntime(execution_db_path)
 
     # Build reviewer client when the reviewer pass is enabled and no explicit
     # client was supplied (e.g. by tests). The reviewer uses its own profile
@@ -160,6 +165,7 @@ def create_agent(
         execution_state_snapshot=execution_state_snapshot,
         resumed_from_run_id=resumed_from_run_id,
         platform_runtime=platform_runtime,
+        durable_runtime=durable_runtime,
     )
 
 

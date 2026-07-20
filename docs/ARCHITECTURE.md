@@ -355,3 +355,7 @@ a cross-platform Python matrix and a live Docker security job.
 The dynamic extension and multi-agent architecture is documented in [PLATFORM.md](PLATFORM.md).
 Runtime tools, skills, instructions, plugins, MCP clients, agent profiles, and orchestration are
 composed by `PlatformRuntime` and injected into `CodingAgent` by the factory.
+
+The autonomous runtime is an event-sourced workflow kernel documented in
+[EXECUTION_ENGINE.md](EXECUTION_ENGINE.md). Its event stream, rather than model conversation or mutable
+planner state, is the canonical execution record.

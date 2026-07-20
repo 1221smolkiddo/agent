@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     agent_max_failures: int = 3
     agent_context_max_chars: int = Field(default=60_000, ge=8_000, le=1_000_000)
     agent_db_path: Path = Path(".code-agent/agent.db")
+    agent_execution_db_path: Path = Path(".code-agent/executions.db")
     agent_stream: bool = True
     agent_reviewer_pass: bool = True
     agent_shell_network: str = "deny"

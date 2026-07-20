@@ -23,6 +23,7 @@ from .config import Settings
 from .container_manager import ContainerError, ContainerManager
 from .debug_bundle import export_debug_bundle
 from .doctor import run_doctor
+from .durable_execution import Command, DurableExecutionRuntime
 from .eval_reports import (
     DEFAULT_REPORT_DIR,
     build_capability_dashboard,
@@ -93,6 +94,7 @@ transactions_app = typer.Typer(help="Inspect, recover, undo, redo, and restore t
 processes_app = typer.Typer(help="Start, monitor, control, and recover managed processes.")
 containers_app = typer.Typer(help="Create, inspect, stop, and clean reusable workspace containers.")
 platform_app = typer.Typer(help="Inspect dynamic tools, skills, agents, plugins, and MCP servers.")
+execution_app = typer.Typer(help="Create, inspect, control, checkpoint, and replay durable executions.")
 app.add_typer(history_app, name="history")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(collab_app, name="collab")
@@ -100,6 +102,7 @@ app.add_typer(transactions_app, name="transactions")
 app.add_typer(processes_app, name="processes")
 app.add_typer(containers_app, name="containers")
 app.add_typer(platform_app, name="platform")
+app.add_typer(execution_app, name="execution")
 
 
 def validate_profile_option(value: Optional[str]) -> Optional[str]:
@@ -156,6 +159,120 @@ def platform_inspect_command(
         typer.echo(json.dumps(runtime.capabilities(), indent=2, sort_keys=True))
     finally:
         runtime.close()
+
+
+def _execution_runtime(db: Path | None) -> DurableExecutionRuntime:
+    settings = Settings()
+    return DurableExecutionRuntime((db or settings.agent_execution_db_path).resolve())
+
+
+@execution_app.command("create")
+def execution_create_command(
+    goal: str = typer.Argument(..., help="Durable execution goal."),
+    db: Optional[Path] = typer.Option(None, "--db", help="Execution event database."),
+    token_budget: int = typer.Option(100_000, "--token-budget", min=1),
+    dollar_budget: float = typer.Option(25.0, "--dollar-budget", min=0),
+) -> None:
+    """Create an event-sourced execution with an initial root task."""
+    runtime = _execution_runtime(db)
+    execution_id = runtime.create_planned(
+        goal, budgets={"tokens": token_budget, "dollars": dollar_budget}
+    )
+    typer.echo(execution_id)
+
+
+@execution_app.command("list")
+def execution_list_command(
+    db: Optional[Path] = typer.Option(None, "--db"),
+    limit: int = typer.Option(20, "--limit", min=1, max=1000),
+) -> None:
+    runtime = _execution_runtime(db)
+    typer.echo(json.dumps(runtime.store.executions(limit), indent=2))
+
+
+@execution_app.command("show")
+def execution_show_command(
+    execution_id: str,
+    db: Optional[Path] = typer.Option(None, "--db"),
+) -> None:
+    runtime = _execution_runtime(db)
+    typer.echo(json.dumps(runtime.engine.state(execution_id).canonical(), indent=2, sort_keys=True))
+
+
+@execution_app.command("trace")
+def execution_trace_command(
+    execution_id: str,
+    db: Optional[Path] = typer.Option(None, "--db"),
+) -> None:
+    runtime = _execution_runtime(db)
+    typer.echo(json.dumps(runtime.trace.export(execution_id), indent=2, sort_keys=True))
+
+
+@execution_app.command("replay")
+def execution_replay_command(
+    execution_id: str,
+    db: Optional[Path] = typer.Option(None, "--db"),
+) -> None:
+    runtime = _execution_runtime(db)
+    state = runtime.engine.replay(execution_id)
+    typer.echo(json.dumps(state.canonical(), indent=2, sort_keys=True))
+
+
+@execution_app.command("recover")
+def execution_recover_command(
+    execution_id: str,
+    db: Optional[Path] = typer.Option(None, "--db"),
+) -> None:
+    """Restore from snapshot and events, quarantining ambiguous running effects."""
+    runtime = _execution_runtime(db)
+    state = runtime.recover(execution_id)
+    typer.echo(json.dumps(state.canonical(), indent=2, sort_keys=True))
+
+
+def _dispatch_execution_control(execution_id: str, db: Path | None, command: str) -> None:
+    runtime = _execution_runtime(db)
+    runtime.engine.dispatch(Command(command, execution_id))
+    typer.echo(json.dumps({"execution_id": execution_id, "status": runtime.engine.state(execution_id).status.value}))
+
+
+@execution_app.command("pause")
+def execution_pause_command(execution_id: str, db: Optional[Path] = typer.Option(None, "--db")) -> None:
+    _dispatch_execution_control(execution_id, db, "PauseExecution")
+
+
+@execution_app.command("resume")
+def execution_resume_command(execution_id: str, db: Optional[Path] = typer.Option(None, "--db")) -> None:
+    _dispatch_execution_control(execution_id, db, "ResumeExecution")
+
+
+@execution_app.command("cancel")
+def execution_cancel_command(execution_id: str, db: Optional[Path] = typer.Option(None, "--db")) -> None:
+    _dispatch_execution_control(execution_id, db, "CancelExecution")
+
+
+@execution_app.command("checkpoint")
+def execution_checkpoint_command(
+    execution_id: str,
+    reason: str = typer.Option("operator", "--reason"),
+    db: Optional[Path] = typer.Option(None, "--db"),
+) -> None:
+    runtime = _execution_runtime(db)
+    checksum = runtime.engine.checkpoint(execution_id, reason)
+    typer.echo(json.dumps({"execution_id": execution_id, "checksum": checksum}))
+
+
+@execution_app.command("approve")
+def execution_approve_command(
+    execution_id: str,
+    approval_id: str,
+    granted_by: str = typer.Option("operator", "--granted-by"),
+    db: Optional[Path] = typer.Option(None, "--db"),
+) -> None:
+    runtime = _execution_runtime(db)
+    runtime.engine.dispatch(Command("GrantApproval", execution_id, {
+        "approval_id": approval_id, "granted_by": granted_by,
+    }))
+    typer.echo(json.dumps({"execution_id": execution_id, "approval_id": approval_id, "granted": True}))
 
 
 @app.command()
