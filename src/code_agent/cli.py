@@ -24,6 +24,7 @@ from .container_manager import ContainerError, ContainerManager
 from .debug_bundle import export_debug_bundle
 from .doctor import run_doctor
 from .durable_execution import Command, DurableExecutionRuntime
+from .execution_observability import ExecutionInspector
 from .eval_reports import (
     DEFAULT_REPORT_DIR,
     build_capability_dashboard,
@@ -51,6 +52,12 @@ from .protocol import (
     json_approval_callback,
 )
 from .release_smoke import run_release_smoke
+from .runtime_migration import (
+    MigrationStateStore,
+    PromotionPolicy,
+    PromotionStage,
+    ShadowDivergenceStore,
+)
 from .resume import build_resume_task, format_run_detail, latest_execution_state
 from .revert import apply_revert_plan, build_revert_plan, format_revert_preview
 from .sandbox import (
@@ -227,6 +234,70 @@ def execution_recover_command(
     runtime = _execution_runtime(db)
     state = runtime.recover(execution_id)
     typer.echo(json.dumps(state.canonical(), indent=2, sort_keys=True))
+
+
+@execution_app.command("explain")
+def execution_explain_command(
+    execution_id: str,
+    db: Optional[Path] = typer.Option(None, "--db"),
+) -> None:
+    """Explain blockers, criteria, replans, models, budgets, and critical path."""
+    runtime = _execution_runtime(db)
+    inspector = ExecutionInspector(runtime.store)
+    typer.echo(json.dumps(
+        inspector.explain(runtime.engine.state(execution_id)), indent=2, sort_keys=True
+    ))
+
+
+@execution_app.command("shadow-report")
+def execution_shadow_report_command(
+    execution_id: Optional[str] = typer.Argument(None),
+    db: Optional[Path] = typer.Option(None, "--db"),
+) -> None:
+    """Report structured legacy-versus-engine shadow divergences."""
+    runtime = _execution_runtime(db)
+    store = ShadowDivergenceStore(runtime.store.path)
+    typer.echo(json.dumps({
+        "metrics": store.metrics(execution_id),
+        "divergences": store.list(execution_id),
+    }, indent=2, sort_keys=True))
+
+
+@execution_app.command("promotion-status")
+def execution_promotion_status_command(
+    db: Optional[Path] = typer.Option(None, "--db"),
+) -> None:
+    runtime = _execution_runtime(db)
+    typer.echo(json.dumps(MigrationStateStore(runtime.store.path).get(), indent=2, sort_keys=True))
+
+
+@execution_app.command("promote")
+def execution_promote_command(
+    target: str = typer.Argument(..., help="Next promotion stage name."),
+    db: Optional[Path] = typer.Option(None, "--db"),
+    minimum_samples: int = typer.Option(100, "--minimum-samples", min=1),
+    maximum_divergence_rate: float = typer.Option(
+        0.01, "--maximum-divergence-rate", min=0, max=1
+    ),
+) -> None:
+    runtime = _execution_runtime(db)
+    try:
+        stage = PromotionStage[target.strip().upper()]
+    except KeyError as exc:
+        raise typer.BadParameter(
+            "Unknown stage. Use trace_projection, planning, scheduling_budgets, "
+            "verification_replanning, side_effects, recovery_completion, or engine_only."
+        ) from exc
+    migration = MigrationStateStore(runtime.store.path)
+    state = migration.promote(
+        stage,
+        ShadowDivergenceStore(runtime.store.path),
+        PromotionPolicy(
+            minimum_samples=minimum_samples,
+            maximum_divergence_rate=maximum_divergence_rate,
+        ),
+    )
+    typer.echo(json.dumps(state, indent=2, sort_keys=True))
 
 
 def _dispatch_execution_control(execution_id: str, db: Path | None, command: str) -> None:

@@ -23,6 +23,11 @@ from .models import (
     create_openai_compatible_client,
 )
 from .repo_index import RepoIndexCache
+from .runtime_migration import (
+    ShadowDivergenceStore,
+    ShadowRuntime,
+    default_shadow_decision,
+)
 from .platform_runtime import PlatformRuntime
 from .storage import AgentStorage
 from .status import StatusReporter
@@ -118,7 +123,26 @@ def create_agent(
     execution_db_path = settings.agent_execution_db_path
     if not execution_db_path.is_absolute():
         execution_db_path = workspace / execution_db_path
-    durable_runtime = DurableExecutionRuntime(execution_db_path)
+    execution_mode = settings.execution_mode
+    if execution_mode in {"primary", "engine_only"}:
+        raise RuntimeError(
+            "AGENT_EXECUTION_MODE=primary/engine_only requires the ExecutionPlane host; "
+            "the legacy create_agent entry point cannot claim engine authority."
+        )
+    durable_runtime = (
+        DurableExecutionRuntime(execution_db_path)
+        if execution_mode == "shadow"
+        else None
+    )
+    shadow_runtime = (
+        ShadowRuntime(
+            durable_runtime,
+            ShadowDivergenceStore(execution_db_path),
+            default_shadow_decision,
+        )
+        if durable_runtime is not None
+        else None
+    )
 
     # Build reviewer client when the reviewer pass is enabled and no explicit
     # client was supplied (e.g. by tests). The reviewer uses its own profile
@@ -166,6 +190,7 @@ def create_agent(
         resumed_from_run_id=resumed_from_run_id,
         platform_runtime=platform_runtime,
         durable_runtime=durable_runtime,
+        shadow_runtime=shadow_runtime,
     )
 
 

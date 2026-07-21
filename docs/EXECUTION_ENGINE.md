@@ -4,6 +4,9 @@ Agent47's autonomous runtime is an event-sourced execution engine. The append-on
 canonical; task tables, graphs, evidence ledgers, budgets, and snapshots are projections that can be
 discarded and rebuilt.
 
+Kernel compatibility, adapter contracts, migration stages, and the architecture freeze are specified
+in [EXECUTION_COMPATIBILITY.md](EXECUTION_COMPATIBILITY.md).
+
 ```text
 Command -> validation -> lease fencing -> append events -> project state -> schedule work
 ```
@@ -47,6 +50,10 @@ code-agent execution resume EXECUTION_ID
 code-agent execution approve EXECUTION_ID APPROVAL_ID
 code-agent execution replay EXECUTION_ID
 code-agent execution recover EXECUTION_ID
+code-agent execution explain EXECUTION_ID
+code-agent execution shadow-report [EXECUTION_ID]
+code-agent execution promotion-status
+code-agent execution promote PLANNING
 ```
 
 ## Versioned graphs and replanning

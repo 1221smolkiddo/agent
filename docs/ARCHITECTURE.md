@@ -359,3 +359,6 @@ composed by `PlatformRuntime` and injected into `CodingAgent` by the factory.
 The autonomous runtime is an event-sourced workflow kernel documented in
 [EXECUTION_ENGINE.md](EXECUTION_ENGINE.md). Its event stream, rather than model conversation or mutable
 planner state, is the canonical execution record.
+
+The frozen compatibility boundary and staged legacy-to-engine migration are documented in
+[EXECUTION_COMPATIBILITY.md](EXECUTION_COMPATIBILITY.md).

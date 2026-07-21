@@ -40,3 +40,20 @@ def test_execution_cli_pause_resume_and_list(tmp_path):
     assert json.loads(resumed.output)["status"] == "active"
     listed = runner.invoke(app, ["execution", "list", "--db", str(db)])
     assert json.loads(listed.output)[0]["execution_id"] == execution_id
+
+
+def test_execution_cli_explain_and_shadow_report(tmp_path):
+    db = tmp_path / "executions.db"
+    created = runner.invoke(app, ["execution", "create", "goal", "--db", str(db)])
+    execution_id = created.output.strip()
+    explained = runner.invoke(app, ["execution", "explain", execution_id, "--db", str(db)])
+    assert explained.exit_code == 0
+    assert json.loads(explained.output)["execution"]["compatibility_version"] == "1"
+    shadow = runner.invoke(app, [
+        "execution", "shadow-report", execution_id, "--db", str(db),
+    ])
+    assert shadow.exit_code == 0
+    assert json.loads(shadow.output)["metrics"]["samples"] == 0
+    promotion = runner.invoke(app, ["execution", "promotion-status", "--db", str(db)])
+    assert promotion.exit_code == 0
+    assert json.loads(promotion.output)["stage"] == "trace_projection"

@@ -16,6 +16,12 @@ from pathlib import Path
 from typing import Any
 
 
+ENGINE_VERSION = "1.0.0"
+CURRENT_COMPATIBILITY_VERSION = "1"
+CURRENT_EVENT_SCHEMA_VERSION = 1
+SUPPORTED_COMPATIBILITY_VERSIONS = frozenset({"1"})
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -96,7 +102,49 @@ class ExecutionEvent:
     causation_id: str | None
     correlation_id: str
     created_at: str
-    schema_version: int = 1
+    schema_version: int = CURRENT_EVENT_SCHEMA_VERSION
+
+
+EventUpcaster = Callable[[dict[str, Any]], dict[str, Any]]
+
+
+class EventUpcasterRegistry:
+    """Versioned schema conversion without changing compatibility semantics."""
+
+    def __init__(self, current_schema_version: int = CURRENT_EVENT_SCHEMA_VERSION) -> None:
+        self.current_schema_version = current_schema_version
+        self._upcasters: dict[tuple[str, int], EventUpcaster] = {}
+
+    def register(
+        self, event_type: str, from_version: int, upcaster: EventUpcaster
+    ) -> None:
+        key = (event_type, from_version)
+        if key in self._upcasters:
+            raise ValueError(f"Event upcaster already registered: {event_type} v{from_version}")
+        self._upcasters[key] = upcaster
+
+    def upcast(self, event: ExecutionEvent) -> ExecutionEvent:
+        payload = dict(event.payload)
+        version = event.schema_version
+        while version < self.current_schema_version:
+            upcaster = self._upcasters.get((event.type, version))
+            if upcaster is None:
+                raise InvariantError(
+                    f"Missing event upcaster for {event.type} schema v{version}."
+                )
+            payload = upcaster(payload)
+            version += 1
+        if version > self.current_schema_version:
+            raise InvariantError(
+                f"Event {event.type} uses unsupported future schema v{version}."
+            )
+        if version == event.schema_version:
+            return event
+        return ExecutionEvent(
+            event.execution_id, event.sequence, event.type, payload,
+            event.event_id, event.command_id, event.causation_id,
+            event.correlation_id, event.created_at, version,
+        )
 
 
 @dataclass(frozen=True)
@@ -194,6 +242,9 @@ class BudgetProjection:
 @dataclass
 class ExecutionProjection:
     id: str
+    engine_version: str = ENGINE_VERSION
+    compatibility_version: str = CURRENT_COMPATIBILITY_VERSION
+    schema_version: int = CURRENT_EVENT_SCHEMA_VERSION
     goal: str = ""
     status: ExecutionStatus = ExecutionStatus.ACTIVE
     sequence: int = 0
@@ -456,12 +507,16 @@ class SQLiteEventStore:
 
 
 class ProjectionBuilder:
+    def __init__(self, upcasters: EventUpcasterRegistry | None = None) -> None:
+        self.upcasters = upcasters or EventUpcasterRegistry()
+
     def replay(
         self, execution_id: str, events: Iterable[ExecutionEvent],
         base: ExecutionProjection | None = None,
     ) -> ExecutionProjection:
         state = base or ExecutionProjection(execution_id)
-        for event in events:
+        for raw_event in events:
+            event = self.upcasters.upcast(raw_event)
             if event.sequence != state.sequence + 1:
                 raise InvariantError("Event stream contains a sequence gap.")
             self.apply(state, event)
@@ -475,6 +530,15 @@ class ProjectionBuilder:
         kind = event.type
         if kind == "ExecutionCreated":
             state.goal = p["goal"]
+            state.engine_version = str(p.get("engine_version", ENGINE_VERSION))
+            state.compatibility_version = str(
+                p.get("compatibility_version", CURRENT_COMPATIBILITY_VERSION)
+            )
+            state.schema_version = int(p.get("schema_version", CURRENT_EVENT_SCHEMA_VERSION))
+            if state.compatibility_version not in SUPPORTED_COMPATIBILITY_VERSIONS:
+                raise InvariantError(
+                    f"Unsupported execution compatibility version: {state.compatibility_version}"
+                )
             state.created_at = event.created_at
             state.budgets["execution"] = BudgetProjection("execution", dict(p.get("budgets", {})))
         elif kind == "GraphVersionCreated":
@@ -640,9 +704,13 @@ class ExecutionEngine:
     def create(
         self, goal: str, *, execution_id: str | None = None,
         budgets: dict[str, float] | None = None,
+        compatibility_version: str = CURRENT_COMPATIBILITY_VERSION,
     ) -> str:
         execution_id = execution_id or _id("exec")
-        self.dispatch(Command("CreateExecution", execution_id, {"goal": goal, "budgets": budgets or {}}))
+        self.dispatch(Command("CreateExecution", execution_id, {
+            "goal": goal, "budgets": budgets or {},
+            "compatibility_version": compatibility_version,
+        }))
         return execution_id
 
     def checkpoint(self, execution_id: str, reason: str = "periodic") -> str:
@@ -660,7 +728,19 @@ class ExecutionEngine:
         if t == "CreateExecution":
             if state.sequence:
                 raise InvariantError("Execution already exists.")
-            return [("ExecutionCreated", {"goal": p["goal"], "budgets": p.get("budgets", {})})]
+            compatibility_version = str(
+                p.get("compatibility_version", CURRENT_COMPATIBILITY_VERSION)
+            )
+            if compatibility_version not in SUPPORTED_COMPATIBILITY_VERSIONS:
+                raise InvariantError(
+                    f"Unsupported execution compatibility version: {compatibility_version}"
+                )
+            return [("ExecutionCreated", {
+                "goal": p["goal"], "budgets": p.get("budgets", {}),
+                "engine_version": ENGINE_VERSION,
+                "compatibility_version": compatibility_version,
+                "schema_version": CURRENT_EVENT_SCHEMA_VERSION,
+            })]
         if not state.sequence:
             raise InvariantError("Execution does not exist.")
         if state.status in {ExecutionStatus.COMPLETE, ExecutionStatus.FAILED, ExecutionStatus.CANCELLED}:
@@ -1373,10 +1453,16 @@ class DurableExecutionRuntime:
     def create_planned(
         self, goal: str, *, tasks: list[dict[str, Any]] | None = None,
         budgets: dict[str, float] | None = None,
+        compatibility_version: str = CURRENT_COMPATIBILITY_VERSION,
     ) -> str:
-        execution_id = self.engine.create(goal, budgets=budgets)
+        execution_id = self.engine.create(
+            goal, budgets=budgets, compatibility_version=compatibility_version
+        )
         plan = self.planner.decompose(goal, tasks)
-        self.engine.dispatch(Command("AddTasks", execution_id, {"tasks": plan, "rationale": "goal decomposition"}))
+        self.engine.dispatch(Command("MutateGraph", execution_id, {
+            "base_version": 0, "operation": "insert", "tasks": plan,
+            "rationale": "goal decomposition", "affected_subtree": None,
+        }))
         return execution_id
 
     def recover(
@@ -1533,7 +1619,12 @@ class AgentExecutionAdapter:
 
 def projection_from_dict(raw: dict[str, Any]) -> ExecutionProjection:
     state = ExecutionProjection(
-        id=raw["id"], goal=raw.get("goal", ""), status=ExecutionStatus(raw.get("status", "active")),
+        id=raw["id"], engine_version=raw.get("engine_version", ENGINE_VERSION),
+        compatibility_version=raw.get(
+            "compatibility_version", CURRENT_COMPATIBILITY_VERSION
+        ),
+        schema_version=int(raw.get("schema_version", CURRENT_EVENT_SCHEMA_VERSION)),
+        goal=raw.get("goal", ""), status=ExecutionStatus(raw.get("status", "active")),
         sequence=int(raw.get("sequence", 0)), graph_version=int(raw.get("graph_version", 0)),
         graph_parent_versions={int(k): v for k, v in raw.get("graph_parent_versions", {}).items()},
         created_at=raw.get("created_at", ""), updated_at=raw.get("updated_at", ""),

@@ -83,6 +83,7 @@ class CodingAgent:
         platform_runtime: PlatformRuntime | None = None,
         durable_runtime: DurableExecutionRuntime | None = None,
         durable_execution_id: str | None = None,
+        shadow_runtime: Any | None = None,
     ) -> None:
         self.cwd = cwd
         self.dry_run = dry_run
@@ -103,6 +104,7 @@ class CodingAgent:
         self.durable_runtime = durable_runtime
         self.durable_execution_id = durable_execution_id
         self._durable_adapter: AgentExecutionAdapter | None = None
+        self.shadow_runtime = shadow_runtime
         self._active_execution_state: ExecutionState | None = None
 
     def run(self, task: str) -> str:
@@ -656,6 +658,13 @@ class CodingAgent:
                 if self._durable_adapter is not None
                 else None
             )
+            if self.shadow_runtime is not None and self._durable_adapter is not None:
+                self.shadow_runtime.observe(
+                    self._durable_adapter.execution_id,
+                    "tool_selection",
+                    {"action": action.type, "allowed": True},
+                    task_id=self._durable_adapter.task_id,
+                )
             durable_effect_id = durable_action[0] if durable_action is not None else None
             durable_replay = durable_action[1] if durable_action is not None else None
             if durable_replay is not None:
@@ -679,6 +688,19 @@ class CodingAgent:
                     ok=result.ok,
                     output=result.output,
                     elapsed_ms=tool_elapsed_ms,
+                )
+            if self.shadow_runtime is not None and self._durable_adapter is not None:
+                effect = self.durable_runtime.engine.state(
+                    self._durable_adapter.execution_id
+                ).effects.get(durable_effect_id or "")
+                self.shadow_runtime.observe(
+                    self._durable_adapter.execution_id,
+                    "tool_result",
+                    {
+                        "ok": result.ok,
+                        "effect_state": effect.state.value if effect else "missing",
+                    },
+                    task_id=self._durable_adapter.task_id,
                 )
             transaction = result.metadata.get("transaction")
             if isinstance(transaction, dict) and transaction.get("id"):
@@ -867,6 +889,16 @@ class CodingAgent:
         if self._durable_adapter is not None:
             self._durable_adapter.finish(blocked=result.blocked, summary=result.message)
             result.durable_execution_id = self._durable_adapter.execution_id
+            if self.shadow_runtime is not None:
+                self.shadow_runtime.observe(
+                    self._durable_adapter.execution_id,
+                    "completion",
+                    {
+                        "blocked": result.blocked,
+                        "status": "failed" if result.blocked else "complete",
+                    },
+                    task_id=self._durable_adapter.task_id,
+                )
         if self._active_execution_state is not None:
             self._active_execution_state.finalize()
             result.execution_state = self._active_execution_state.snapshot()

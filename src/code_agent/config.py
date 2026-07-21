@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     agent_context_max_chars: int = Field(default=60_000, ge=8_000, le=1_000_000)
     agent_db_path: Path = Path(".code-agent/agent.db")
     agent_execution_db_path: Path = Path(".code-agent/executions.db")
+    agent_execution_mode: str = "shadow"
     agent_stream: bool = True
     agent_reviewer_pass: bool = True
     agent_shell_network: str = "deny"
@@ -161,4 +162,13 @@ class Settings(BaseSettings):
             return value
         raise RuntimeError(
             "AGENT_SANDBOX_BACKEND must be one of: auto, local, docker, podman, container."
+        )
+
+    @property
+    def execution_mode(self) -> str:
+        value = self.agent_execution_mode.strip().lower()
+        if value in {"legacy", "shadow", "primary", "engine_only"}:
+            return value
+        raise RuntimeError(
+            "AGENT_EXECUTION_MODE must be one of: legacy, shadow, primary, engine_only."
         )
