@@ -35,6 +35,12 @@ from code_agent.execution_contracts import (
     GuaranteeLevel,
     IsolationLevel,
 )
+from code_agent.execution_host import (
+    CallablePlanProvider,
+    ExecutionRuntimeHost,
+    ModelPlanProvider,
+)
+from code_agent.models import ModelUsageRecord
 from code_agent.execution_observability import ExecutionInspector
 from code_agent.execution_planning import MutationOnlyPlanner, PlanningService
 from code_agent.execution_qualification import (
@@ -49,6 +55,7 @@ from code_agent.runtime_migration import (
     ExecutionControlPlane,
     ExecutionPlane,
     MigrationController,
+    MigrationMode,
     MigrationStateStore,
     PromotionPolicy,
     PromotionStage,
@@ -56,7 +63,7 @@ from code_agent.runtime_migration import (
     ShadowRuntime,
     default_shadow_decision,
 )
-from code_agent.schema import ToolResult
+from code_agent.schema import ToolResult, UpdatePlanAction
 from code_agent.storage import AgentStorage
 
 
@@ -89,8 +96,11 @@ def test_execution_freezes_compatibility_contract_and_replays_legacy_payload(tmp
 def test_execution_mode_defaults_to_shadow_and_validates_values():
     assert Settings(agent_execution_mode="shadow").execution_mode == "shadow"
     assert Settings(agent_execution_mode="legacy").execution_mode == "legacy"
+    assert Settings(agent_shadow_planner="model").shadow_planner == "model"
     with pytest.raises(RuntimeError, match="AGENT_EXECUTION_MODE"):
         Settings(agent_execution_mode="invalid").execution_mode
+    with pytest.raises(RuntimeError, match="AGENT_SHADOW_PLANNER"):
+        Settings(agent_shadow_planner="invalid").shadow_planner
 
 
 def test_snapshot_retains_execution_compatibility_versions(tmp_path):
@@ -294,6 +304,318 @@ def test_legacy_agent_runs_authoritatively_while_shadow_records_comparisons(tmp_
         "samples": 3, "unexpected": 0, "critical": 0, "divergence_rate": 0.0,
     }
     assert runtime.engine.state(result.durable_execution_id).status == ExecutionStatus.COMPLETE
+
+
+def test_runtime_host_builds_independent_graph_and_transactions_legacy_actions(tmp_path):
+    class Tools:
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, action):
+            self.calls += 1
+            return ToolResult(ok=True, output=f"read:{action.path}")
+
+    tasks = [
+        {"id": "inspect", "title": "Inspect", "criteria": ["Context captured"]},
+        {
+            "id": "report", "title": "Report", "dependencies": ["inspect"],
+            "criteria": ["Report complete"],
+        },
+    ]
+    tools = Tools()
+    host = ExecutionRuntimeHost(
+        tmp_path / "host.db",
+        MigrationMode.SHADOW,
+        tools=tools,
+        plan_provider=CallablePlanProvider(lambda _goal: tasks),
+        recover_on_start=False,
+    )
+    adapter = host.begin_legacy_run("inspect README")
+    state = host.runtime.engine.state(adapter.execution_id)
+    assert list(state.tasks) == ["inspect", "report"]
+    assert state.tasks["inspect"].state == TaskState.RUNNING
+
+    first = host.execute_action(
+        adapter.execution_id,
+        adapter.task_id,
+        1,
+        {"type": "read_file", "path": "README.md"},
+        criterion_ids=(adapter.criterion_id,),
+    )
+    replay = host.execute_action(
+        adapter.execution_id,
+        adapter.task_id,
+        1,
+        {"type": "read_file", "path": "README.md"},
+        criterion_ids=(adapter.criterion_id,),
+    )
+    assert first.result.ok and replay.replayed
+    assert replay.effect_id == first.effect_id
+    assert replay.evidence_ids == first.evidence_ids
+    assert tools.calls == 1
+    mutation = host.execute_action(
+        adapter.execution_id,
+        adapter.task_id,
+        2,
+        {"type": "write_file", "path": "report.md", "content": "done"},
+        criterion_ids=(adapter.criterion_id,),
+    )
+    assert mutation.result.metadata["execution_task_id"] == "report"
+    assert tools.calls == 2
+
+    adapter.finish(blocked=False, summary="README inspected")
+    completed = host.runtime.engine.replay(adapter.execution_id)
+    assert completed.status == ExecutionStatus.COMPLETE
+    assert all(task.state == TaskState.COMPLETE for task in completed.tasks.values())
+    assert all(criterion.satisfied for criterion in completed.criteria.values())
+    assert all(criterion.evidence_ids for criterion in completed.criteria.values())
+
+
+def test_coding_agent_runs_through_host_and_records_an_independent_plan_sample(tmp_path):
+    class Model:
+        model = "fake"
+
+        def __init__(self):
+            self.responses = [
+                '{"type":"read_file","path":"README.md"}',
+                '{"type":"final","message":"inspected"}',
+            ]
+
+        def complete(self, _messages):
+            return self.responses.pop(0)
+
+    class Tools:
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, _action):
+            self.calls += 1
+            return ToolResult(ok=True, output="README")
+
+        def close(self):
+            return 0
+
+    tools = Tools()
+    host = ExecutionRuntimeHost(
+        tmp_path / "host.db", "shadow", tools=tools, recover_on_start=False
+    )
+    agent = CodingAgent(
+        cwd=tmp_path,
+        dry_run=False,
+        max_steps=3,
+        max_failures=2,
+        model_client=Model(),  # type: ignore[arg-type]
+        tools=tools,  # type: ignore[arg-type]
+        storage=AgentStorage(tmp_path / "agent.db"),
+        runtime_host=host,
+    )
+    result = agent.run_detailed("inspect README.md")
+    state = host.runtime.engine.replay(result.durable_execution_id)
+    assert result.message == "inspected" and tools.calls == 1
+    assert state.status == ExecutionStatus.COMPLETE
+    run_steps = agent.storage.run_steps_payloads(result.run_id)
+    assert run_steps[0]["payload"] == {
+        "type": "durable_execution_link",
+        "execution_id": result.durable_execution_id,
+        "goal": "inspect README.md",
+        "resumed": False,
+    }
+    assert host.divergences.has_comparison(result.durable_execution_id, "planning")
+    assert {item["decision_type"] for item in host.divergences.list(
+        result.durable_execution_id
+    )} >= {"planning"}
+
+
+def test_runtime_host_compares_independent_plan_semantics(tmp_path):
+    class Tools:
+        def run(self, _action):
+            return ToolResult(ok=True, output="ok")
+
+    tasks = [
+        {"id": "a", "title": "Inspect", "criteria": ["Context captured"]},
+        {
+            "id": "b", "title": "Report", "dependencies": ["a"],
+            "criteria": ["Report complete"],
+        },
+    ]
+    host = ExecutionRuntimeHost(
+        tmp_path / "host.db",
+        "shadow",
+        tools=Tools(),
+        plan_provider=CallablePlanProvider(lambda _goal: tasks),
+        recover_on_start=False,
+    )
+    adapter = host.begin_legacy_run("goal")
+    host.observe_plan(
+        adapter.execution_id,
+        UpdatePlanAction.model_validate({
+            "type": "update_plan",
+            "steps": [
+                {
+                    "id": "legacy-a", "step": "Inspect", "status": "in_progress",
+                    "acceptance_criteria": ["Context captured"],
+                },
+                {
+                    "id": "legacy-b", "step": "Report", "status": "pending",
+                    "depends_on": ["legacy-a"],
+                    "acceptance_criteria": ["Report complete"],
+                },
+            ],
+        }),
+        task_id=adapter.task_id,
+    )
+    assert host.divergences.metrics(
+        adapter.execution_id, decision_types=("planning",)
+    ) == {
+        "samples": 1, "unexpected": 0, "critical": 0, "divergence_rate": 0.0,
+    }
+
+
+def test_model_plan_provider_is_independent_accounted_and_fail_safe(tmp_path):
+    class Model:
+        model = "planner-model"
+
+        def __init__(self, response):
+            self.response = response
+
+        def complete(self, _messages):
+            if isinstance(self.response, Exception):
+                raise self.response
+            return self.response
+
+        def drain_usage_records(self):
+            return [ModelUsageRecord(
+                model=self.model,
+                provider="test",
+                ok=not isinstance(self.response, Exception),
+                total_tokens=42,
+                estimated_cost_usd=0.01,
+            )]
+
+    class Tools:
+        def run(self, _action):
+            return ToolResult(ok=True, output="ok")
+
+    response = """```json
+    {"tasks":[
+      {"id":"inspect","title":"Inspect","dependencies":[],"criteria":["Known"]},
+      {"id":"verify","title":"Verify","dependencies":["inspect"],"criteria":["Checked"]}
+    ]}
+    ```"""
+    host = ExecutionRuntimeHost(
+        tmp_path / "model.db",
+        "shadow",
+        tools=Tools(),
+        plan_provider=ModelPlanProvider(Model(response)),  # type: ignore[arg-type]
+        recover_on_start=False,
+    )
+    adapter = host.begin_legacy_run(
+        "goal", budgets={"tokens": 1000, "dollars": 1}
+    )
+    state = host.runtime.engine.state(adapter.execution_id)
+    assert list(state.tasks) == ["inspect", "verify"]
+    assert state.budgets["execution"].consumed == {"tokens": 42.0, "dollars": 0.01}
+    assert state.model_decisions[-1]["model"] == "planner-model"
+
+    fallback = ExecutionRuntimeHost(
+        tmp_path / "fallback.db",
+        "shadow",
+        tools=Tools(),
+        plan_provider=ModelPlanProvider(  # type: ignore[arg-type]
+            Model(TimeoutError("planner timed out"))
+        ),
+        recover_on_start=False,
+    )
+    fallback_adapter = fallback.begin_legacy_run("goal")
+    fallback_state = fallback.runtime.engine.state(fallback_adapter.execution_id)
+    assert list(fallback_state.tasks) == [
+        "engine-discover", "engine-execute", "engine-verify",
+    ]
+    assert fallback.planning_diagnostics[0]["error"].startswith("TimeoutError")
+    assert any(
+        item["kind"] == "failed_approach" for item in fallback_state.memory_records
+    )
+
+
+def test_runtime_host_recovery_never_repeats_ambiguous_external_action(tmp_path):
+    class CrashingTools:
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, _action):
+            self.calls += 1
+            raise RuntimeError("process lost after external action")
+
+    path = tmp_path / "host.db"
+    tools = CrashingTools()
+    first_host = ExecutionRuntimeHost(
+        path, "shadow", tools=tools, recover_on_start=False
+    )
+    adapter = first_host.begin_legacy_run("read file")
+    first = first_host.execute_action(
+        adapter.execution_id,
+        adapter.task_id,
+        1,
+        {"type": "read_file", "path": "README.md"},
+        criterion_ids=(adapter.criterion_id,),
+    )
+    assert first.result.metadata["effect_status"] == "unknown"
+
+    recovered_host = ExecutionRuntimeHost(path, "shadow", tools=tools)
+    resumed = recovered_host.begin_legacy_run(
+        "read file", execution_id=adapter.execution_id
+    )
+    recovery_context = recovered_host.recovery_context(adapter.execution_id)
+    assert adapter.execution_id in recovery_context
+    assert "ambiguous_effects" in recovery_context
+    reconciled = recovered_host.execute_action(
+        resumed.execution_id,
+        resumed.task_id,
+        1,
+        {"type": "read_file", "path": "README.md"},
+        criterion_ids=(resumed.criterion_id,),
+    )
+    assert reconciled.result.metadata["effect_status"] == "unknown"
+    assert tools.calls == 1
+
+
+def test_primary_host_requires_planning_promotion_and_owns_only_the_graph(tmp_path):
+    class Tools:
+        def run(self, _action):
+            return ToolResult(ok=True, output="ok")
+
+    path = tmp_path / "host.db"
+    with pytest.raises(RuntimeError, match="promotion to the planning stage"):
+        ExecutionRuntimeHost(path, "primary", tools=Tools(), recover_on_start=False)
+
+    divergences = ShadowDivergenceStore(path)
+    for _index in range(10):
+        divergences.record_comparison("run", "planning", matched=True)
+    MigrationStateStore(path).promote(
+        PromotionStage.PLANNING,
+        divergences,
+        PromotionPolicy(minimum_samples=10, maximum_divergence_rate=0),
+    )
+    primary = ExecutionRuntimeHost(
+        path, "primary", tools=Tools(), recover_on_start=False
+    )
+    adapter = primary.begin_legacy_run("goal")
+    assert primary.engine_owns("planning")
+    assert not primary.engine_owns("side_effects")
+    assert "authoritative" in primary.planning_context(adapter.execution_id)
+
+
+def test_planning_promotion_ignores_unrelated_shadow_samples(tmp_path):
+    path = tmp_path / "host.db"
+    divergences = ShadowDivergenceStore(path)
+    for _index in range(100):
+        divergences.record_comparison("run", "tool_selection", matched=True)
+    with pytest.raises(RuntimeError, match="Insufficient"):
+        MigrationStateStore(path).promote(
+            PromotionStage.PLANNING,
+            divergences,
+            PromotionPolicy(minimum_samples=10, maximum_divergence_rate=0),
+        )
 
 
 def test_promotion_is_sequential_and_metric_gated():

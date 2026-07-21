@@ -6,6 +6,7 @@ from code_agent.resume import (
     build_resume_task,
     compact_run_context,
     format_run_detail,
+    latest_durable_execution_id,
     latest_execution_state,
 )
 from code_agent.storage import CURRENT_SCHEMA_VERSION, AgentStorage
@@ -363,3 +364,14 @@ def test_latest_execution_state_finds_direct_and_nested_checkpoints() -> None:
     ]
 
     assert latest_execution_state(steps) == nested
+
+
+def test_latest_durable_execution_id_finds_the_newest_run_link() -> None:
+    steps = [
+        {"payload": {"type": "durable_execution_link", "execution_id": "execution-old"}},
+        {"payload": {"type": "tool_result", "ok": True}},
+        {"payload": {"type": "durable_execution_link", "execution_id": "execution-new"}},
+    ]
+
+    assert latest_durable_execution_id(steps) == "execution-new"
+    assert latest_durable_execution_id([{"payload": {"type": "tool_result"}}]) is None

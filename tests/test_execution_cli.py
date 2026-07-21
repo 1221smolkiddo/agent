@@ -3,6 +3,7 @@ import json
 from typer.testing import CliRunner
 
 from code_agent.cli import app
+from code_agent.durable_execution import Command, DurableExecutionRuntime
 
 
 runner = CliRunner()
@@ -57,3 +58,51 @@ def test_execution_cli_explain_and_shadow_report(tmp_path):
     promotion = runner.invoke(app, ["execution", "promotion-status", "--db", str(db)])
     assert promotion.exit_code == 0
     assert json.loads(promotion.output)["stage"] == "trace_projection"
+
+
+def test_execution_cli_runtime_status_is_stage_specific(tmp_path):
+    db = tmp_path / "executions.db"
+    status = runner.invoke(app, [
+        "execution", "runtime-status", "--db", str(db), "--minimum-samples", "2",
+    ])
+    assert status.exit_code == 0, status.output
+    payload = json.loads(status.output)
+    assert payload["stage"] == "trace_projection"
+    assert payload["next_stage"] == "planning"
+    assert payload["required_decision_types"] == ["planning"]
+    assert payload["qualification"]["samples"] == 0
+    assert not payload["qualification"]["eligible"]
+
+
+def test_execution_cli_recovers_all_active_effects_without_reexecuting(tmp_path):
+    db = tmp_path / "executions.db"
+    runtime = DurableExecutionRuntime(db)
+    execution_id = runtime.create_planned("goal")
+    task_id = next(iter(runtime.engine.state(execution_id).tasks))
+    runtime.engine.dispatch(Command("TransitionTask", execution_id, {
+        "task_id": task_id, "to": "ready",
+    }))
+    runtime.engine.dispatch(Command("TransitionTask", execution_id, {
+        "task_id": task_id, "to": "running",
+    }))
+    event = runtime.engine.dispatch(Command("RequestEffect", execution_id, {
+        "task_id": task_id,
+        "kind": "filesystem",
+        "idempotency_key": "effect-1",
+        "request": {"action": {"type": "write_file"}},
+    }))[0]
+    effect_id = event.payload["effect_id"]
+    runtime.engine.dispatch(Command("ChangeEffectState", execution_id, {
+        "effect_id": effect_id, "state": "running",
+    }))
+
+    recovered = runner.invoke(app, [
+        "execution", "recover-active", "--db", str(db),
+    ])
+    assert recovered.exit_code == 0, recovered.output
+    payload = json.loads(recovered.output)
+    assert payload["recovered"] == [{
+        "execution_id": execution_id,
+        "status": "active",
+        "unknown_effects": [effect_id],
+    }]

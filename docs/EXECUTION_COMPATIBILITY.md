@@ -77,8 +77,18 @@ Each stage requires enough shadow samples, no critical unexpected divergence, an
 below the configured threshold. A structured divergence records execution/task, decision type, both
 decisions, relevant state and evidence, severity, expected status, and probable cause.
 
+Promotion samples are scoped to the authority being transferred. Planning promotion counts only
+`planning` comparisons; unrelated tool or completion samples cannot satisfy that gate. Later gates use
+their corresponding scheduling/budget, verification/diagnosis/replanning, side-effect/approval, and
+recovery/completion decision families.
+
 Promotion state and the metrics used to authorize it are durable. Promotion can advance only one stage
 at a time through `code-agent execution promote STAGE`; it cannot skip an authority boundary.
+
+Normal CLI runs are composed by `ExecutionRuntimeHost`. Shadow planning is independent of the legacy
+plan. Authoritative legacy tool selections are wrapped once by transactional adapters so the event log
+can enforce idempotency and ambiguity handling without executing the action twice. Planning-primary
+mode is enabled only after its stage gate passes; unsupported authority transfers fail closed.
 
 ## Control and execution planes
 

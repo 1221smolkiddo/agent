@@ -287,6 +287,12 @@ class TransactionalEffectRunner:
         )
         effect = self.engine.state(execution_id).effects[effect_id]
         if effect.state in {EffectState.COMMITTED, EffectState.FAILED}:
+            state = self.engine.state(execution_id)
+            evidence_ids = tuple(
+                evidence.id
+                for evidence in state.evidence.values()
+                if evidence.payload.get("effect_id") == effect_id
+            )
             return AdapterExecutionResult(
                 effect_id,
                 EffectOutcome(
@@ -296,7 +302,7 @@ class TransactionalEffectRunner:
                     dict(effect.result.get("metadata", {})),
                     effect.result.get("external_id"),
                 ),
-                (),
+                evidence_ids,
                 replayed=True,
             )
         if effect.state == EffectState.UNKNOWN:
@@ -316,7 +322,10 @@ class TransactionalEffectRunner:
             else "failed"
         )
         current = self.engine.state(execution_id).effects[effect_id]
-        if current.state in {EffectState.RUNNING, EffectState.UNKNOWN}:
+        if (
+            current.state in {EffectState.RUNNING, EffectState.UNKNOWN}
+            and current.state.value != target
+        ):
             self.engine.dispatch(command("ChangeEffectState", {
                 "effect_id": effect_id, "state": target,
                 "result": {
@@ -328,7 +337,12 @@ class TransactionalEffectRunner:
         for evidence in adapter.verify(prepared, outcome):
             event = self.engine.dispatch(command("RecordEvidence", {
                 "task_id": task_id, "kind": evidence.kind, "summary": evidence.summary,
-                "payload": evidence.payload, "criterion_ids": list(criterion_ids),
+                "payload": {
+                    **evidence.payload,
+                    "effect_id": effect_id,
+                    "adapter": adapter.capabilities.name,
+                },
+                "criterion_ids": list(criterion_ids),
             }))[0]
             evidence_ids.append(event.payload["evidence_id"])
         return AdapterExecutionResult(effect_id, outcome, tuple(evidence_ids))

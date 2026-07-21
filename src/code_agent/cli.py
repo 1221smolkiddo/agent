@@ -54,11 +54,17 @@ from .protocol import (
 from .release_smoke import run_release_smoke
 from .runtime_migration import (
     MigrationStateStore,
+    PROMOTION_DECISION_TYPES,
     PromotionPolicy,
     PromotionStage,
     ShadowDivergenceStore,
 )
-from .resume import build_resume_task, format_run_detail, latest_execution_state
+from .resume import (
+    build_resume_task,
+    format_run_detail,
+    latest_durable_execution_id,
+    latest_execution_state,
+)
 from .revert import apply_revert_plan, build_revert_plan, format_revert_preview
 from .sandbox import (
     create_sandbox_workspace,
@@ -271,6 +277,69 @@ def execution_promotion_status_command(
     typer.echo(json.dumps(MigrationStateStore(runtime.store.path).get(), indent=2, sort_keys=True))
 
 
+@execution_app.command("runtime-status")
+def execution_runtime_status_command(
+    db: Optional[Path] = typer.Option(None, "--db"),
+    minimum_samples: int = typer.Option(100, "--minimum-samples", min=1),
+    maximum_divergence_rate: float = typer.Option(
+        0.01, "--maximum-divergence-rate", min=0, max=1
+    ),
+) -> None:
+    """Show the current authority stage and the evidence required for its next promotion."""
+    runtime = _execution_runtime(db)
+    migration = MigrationStateStore(runtime.store.path).get()
+    current = PromotionStage(migration["stage_value"])
+    next_stage = (
+        PromotionStage(current.value + 1)
+        if current != PromotionStage.ENGINE_ONLY
+        else None
+    )
+    decision_types = PROMOTION_DECISION_TYPES.get(next_stage, ()) if next_stage else ()
+    metrics = ShadowDivergenceStore(runtime.store.path).metrics(
+        decision_types=decision_types or None
+    )
+    policy = PromotionPolicy(
+        minimum_samples=minimum_samples,
+        maximum_divergence_rate=maximum_divergence_rate,
+    )
+    eligible, reason = (
+        policy.evaluate(metrics)
+        if next_stage is not None
+        else (False, "The runtime is already engine-only.")
+    )
+    typer.echo(json.dumps({
+        **migration,
+        "next_stage": next_stage.name.lower() if next_stage else None,
+        "required_decision_types": list(decision_types),
+        "qualification": {"eligible": eligible, "reason": reason, **metrics},
+    }, indent=2, sort_keys=True))
+
+
+@execution_app.command("recover-active")
+def execution_recover_active_command(
+    db: Optional[Path] = typer.Option(None, "--db"),
+) -> None:
+    """Replay every active execution and quarantine ambiguous running effects."""
+    runtime = _execution_runtime(db)
+    recovered: list[dict[str, object]] = []
+    for item in runtime.store.executions(limit=10_000):
+        execution_id = str(item["execution_id"])
+        state = runtime.engine.state(execution_id)
+        if state.status.value != "active":
+            continue
+        state = runtime.recover(execution_id)
+        recovered.append({
+            "execution_id": execution_id,
+            "status": state.status.value,
+            "unknown_effects": sorted(
+                effect.id
+                for effect in state.effects.values()
+                if effect.state.value == "unknown"
+            ),
+        })
+    typer.echo(json.dumps({"recovered": recovered}, indent=2, sort_keys=True))
+
+
 @execution_app.command("promote")
 def execution_promote_command(
     target: str = typer.Argument(..., help="Next promotion stage name."),
@@ -393,6 +462,11 @@ def run(
         min=1,
         help="Consecutive failures before the agent stops retrying.",
     ),
+    execution_id: Optional[str] = typer.Option(
+        None,
+        "--execution-id",
+        help="Resume an active durable execution with the same task goal.",
+    ),
 ) -> None:
     """Run the coding agent on a task."""
     settings = Settings()
@@ -433,6 +507,7 @@ def run(
         shell_network_policy="deny" if deny_network_shell else None,
         sandbox_backend=sandbox_policy.backend,
         require_process_isolation=sandbox,
+        durable_execution_id=execution_id,
     )
     try:
         result = agent.run_detailed(task)
@@ -965,6 +1040,8 @@ def resume(
         require_process_isolation=sandbox,
         execution_state_snapshot=latest_execution_state(prior_steps),
         resumed_from_run_id=run_id,
+        durable_execution_id=latest_durable_execution_id(prior_steps),
+        durable_goal=str(run_row["task"]),
     )
     try:
         result = agent.run_detailed(task)

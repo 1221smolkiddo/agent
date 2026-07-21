@@ -1494,15 +1494,32 @@ class AgentExecutionAdapter:
         *,
         execution_id: str | None = None,
         budgets: dict[str, float] | None = None,
+        mirror_all_tasks: bool = False,
     ) -> None:
         self.runtime = runtime
         self.execution_id = execution_id or runtime.create_planned(goal, budgets=budgets)
-        self.task_id = next(iter(runtime.engine.state(self.execution_id).tasks))
-        self.criterion_id = runtime.engine.state(self.execution_id).tasks[self.task_id].criteria[0]
+        self.mirror_all_tasks = mirror_all_tasks
+        state = runtime.engine.state(self.execution_id)
+        candidates = [
+            task for task in state.tasks.values()
+            if task.state == TaskState.RUNNING
+        ] or [
+            task for task in state.tasks.values()
+            if task.state in {TaskState.READY, TaskState.QUEUED}
+            and all(state.tasks[item].state == TaskState.COMPLETE for item in task.dependencies)
+        ] or [
+            task for task in state.tasks.values() if task.state not in TERMINAL_TASK_STATES
+        ]
+        if not candidates:
+            raise InvariantError("Execution has no resumable task for the legacy worker.")
+        self.task_id = candidates[0].id
+        self.criterion_id = state.tasks[self.task_id].criteria[0]
         self._finished = False
-        task = runtime.engine.state(self.execution_id).tasks[self.task_id]
+        task = state.tasks[self.task_id]
         if task.state == TaskState.QUEUED:
             runtime.engine.dispatch(Command("TransitionTask", self.execution_id, {"task_id": self.task_id, "to": "ready"}))
+            task = runtime.engine.state(self.execution_id).tasks[self.task_id]
+        if task.state == TaskState.READY:
             runtime.engine.dispatch(Command("TransitionTask", self.execution_id, {"task_id": self.task_id, "to": "running"}))
 
     def action_started(
@@ -1587,33 +1604,106 @@ class AgentExecutionAdapter:
                 }))
             engine.dispatch(Command("FailExecution", self.execution_id, {"reason": summary[:1000]}))
             return
-        if task.state == TaskState.RUNNING:
-            engine.dispatch(Command("TransitionTask", self.execution_id, {"task_id": self.task_id, "to": "verifying"}))
-        evidence_event = engine.dispatch(Command("RecordEvidence", self.execution_id, {
-            "task_id": self.task_id, "kind": "agent_outcome", "summary": summary[:1000],
-            "payload": {"ok": True}, "criterion_ids": [self.criterion_id],
-        }))[0]
-        engine.dispatch(Command("VerifyCriterion", self.execution_id, {
-            "criterion_id": self.criterion_id,
-            "evidence_ids": [evidence_event.payload["evidence_id"]],
-            "passed": True, "verifier": "agent-run-finalizer",
-            "reason": "Agent completed without unresolved blockers.",
-        }))
-        engine.dispatch(Command("TransitionTask", self.execution_id, {"task_id": self.task_id, "to": "verified"}))
-        engine.dispatch(Command("TransitionTask", self.execution_id, {"task_id": self.task_id, "to": "complete"}))
+        task_ids = (
+            list(engine.state(self.execution_id).tasks)
+            if self.mirror_all_tasks
+            else [self.task_id]
+        )
+        remaining = set(task_ids)
+        while remaining:
+            state = engine.state(self.execution_id)
+            progressed = False
+            for task_id in task_ids:
+                if task_id not in remaining:
+                    continue
+                current = state.tasks[task_id]
+                if current.state == TaskState.COMPLETE:
+                    remaining.remove(task_id)
+                    progressed = True
+                    continue
+                if any(
+                    state.tasks[item].state != TaskState.COMPLETE
+                    for item in current.dependencies
+                ):
+                    continue
+                self._complete_task_from_authoritative_outcome(task_id, summary)
+                remaining.remove(task_id)
+                progressed = True
+                state = engine.state(self.execution_id)
+            if not progressed:
+                raise InvariantError(
+                    "Authoritative legacy outcome could not be projected across the execution DAG."
+                )
         engine.checkpoint(self.execution_id, "agent_run_finalized")
         engine.dispatch(Command("CompleteExecution", self.execution_id))
+
+    def _complete_task_from_authoritative_outcome(
+        self, task_id: str, summary: str
+    ) -> None:
+        engine = self.runtime.engine
+        task = engine.state(self.execution_id).tasks[task_id]
+        if task.state == TaskState.QUEUED:
+            engine.dispatch(Command("TransitionTask", self.execution_id, {
+                "task_id": task_id, "to": "ready",
+                "reason": "Projected from the authoritative legacy run.",
+            }))
+            task = engine.state(self.execution_id).tasks[task_id]
+        if task.state == TaskState.READY:
+            engine.dispatch(Command("TransitionTask", self.execution_id, {
+                "task_id": task_id, "to": "running",
+                "reason": "Projected from the authoritative legacy run.",
+            }))
+            task = engine.state(self.execution_id).tasks[task_id]
+        if task.state == TaskState.RUNNING:
+            engine.dispatch(Command("TransitionTask", self.execution_id, {
+                "task_id": task_id, "to": "verifying",
+            }))
+            task = engine.state(self.execution_id).tasks[task_id]
+        if task.state == TaskState.VERIFYING:
+            evidence_event = engine.dispatch(Command("RecordEvidence", self.execution_id, {
+                "task_id": task_id,
+                "kind": "legacy_authoritative_outcome",
+                "summary": summary[:1000],
+                "payload": {
+                    "ok": True,
+                    "authority": "legacy",
+                    "projection": "shadow" if self.mirror_all_tasks else "adapter",
+                },
+                "criterion_ids": list(task.criteria),
+            }))[0]
+            evidence_id = evidence_event.payload["evidence_id"]
+            for criterion_id in task.criteria:
+                engine.dispatch(Command("VerifyCriterion", self.execution_id, {
+                    "criterion_id": criterion_id,
+                    "evidence_ids": [evidence_id],
+                    "passed": True,
+                    "verifier": "legacy-authoritative-projector",
+                    "reason": "The authoritative legacy run reported successful completion.",
+                }))
+            engine.dispatch(Command("TransitionTask", self.execution_id, {
+                "task_id": task_id, "to": "verified",
+            }))
+            task = engine.state(self.execution_id).tasks[task_id]
+        if task.state == TaskState.VERIFIED:
+            engine.dispatch(Command("TransitionTask", self.execution_id, {
+                "task_id": task_id, "to": "complete",
+            }))
+            return
+        if task.state != TaskState.COMPLETE:
+            raise InvariantError(
+                f"Task {task_id} cannot mirror completion from {task.state.value}."
+            )
 
     def cancel(self, reason: str) -> None:
         if self._finished:
             return
         self._finished = True
         engine = self.runtime.engine
-        task = engine.state(self.execution_id).tasks[self.task_id]
-        if TaskState.CANCELLED in TASK_TRANSITIONS[task.state]:
-            engine.dispatch(Command("TransitionTask", self.execution_id, {
-                "task_id": self.task_id, "to": "cancelled", "reason": reason[:500],
-            }))
+        for task in list(engine.state(self.execution_id).tasks.values()):
+            if TaskState.CANCELLED in TASK_TRANSITIONS[task.state]:
+                engine.dispatch(Command("TransitionTask", self.execution_id, {
+                    "task_id": task.id, "to": "cancelled", "reason": reason[:500],
+                }))
         engine.dispatch(Command("CancelExecution", self.execution_id, {"reason": reason[:1000]}))
 
 

@@ -362,3 +362,8 @@ planner state, is the canonical execution record.
 
 The frozen compatibility boundary and staged legacy-to-engine migration are documented in
 [EXECUTION_COMPATIBILITY.md](EXECUTION_COMPATIBILITY.md).
+
+`ExecutionRuntimeHost` is the runtime-adoption composition root for normal agent runs. It owns durable
+runtime construction, independent plan generation, adapter capability negotiation, structured shadow
+comparison, startup recovery, and authority-stage enforcement. The legacy `CodingAgent` loop is a
+hosted worker during migration; it no longer bypasses the effect journal when the host is enabled.

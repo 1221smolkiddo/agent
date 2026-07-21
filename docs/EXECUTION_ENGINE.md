@@ -53,8 +53,35 @@ code-agent execution recover EXECUTION_ID
 code-agent execution explain EXECUTION_ID
 code-agent execution shadow-report [EXECUTION_ID]
 code-agent execution promotion-status
+code-agent execution runtime-status
 code-agent execution promote PLANNING
+code-agent execution recover-active
+code-agent run "goal" --execution-id EXECUTION_ID
 ```
+
+## Runtime adoption host
+
+`ExecutionRuntimeHost` is the composition root used by normal coding-agent runs. In `shadow` mode it
+creates an independent versioned DAG before the legacy loop starts, journals the single authoritative
+tool invocation through negotiated transactional adapters, projects immutable evidence, and compares
+legacy planning with the engine plan. It never performs a second mutating action.
+
+The independent planner is selected with `AGENT_SHADOW_PLANNER=deterministic|model`. The deterministic
+provider gives offline, reproducible qualification. The model provider uses a separate planner client,
+accepts only a structured DAG, accounts its tokens and cost in the execution budget, and falls back to
+the deterministic provider on malformed output, provider failure, or timeout. The failure and fallback
+remain in the execution trace.
+
+After planning qualification, `AGENT_EXECUTION_MODE=primary` makes the engine graph authoritative while
+the legacy loop remains the worker and side-effect selector. Primary mode fails closed before planning
+promotion and for later authority stages that this host has not adopted. `engine_only` remains disabled
+until all authority stages are qualified.
+
+On startup the host replays active executions and changes orphaned `running` effects to `unknown`.
+Resuming with `--execution-id` requires the same goal and never repeats an ambiguous effect; its adapter
+must reconcile it or an operator must resolve it. Every legacy run stores a durable execution link in
+the run history, so `code-agent resume RUN_ID` restores the same execution automatically and injects a
+compressed graph, budget, diagnosis, model-route, and ambiguity summary into the recovered worker.
 
 ## Versioned graphs and replanning
 
@@ -94,6 +121,9 @@ retried until reconciliation or explicit human authorization resolves the ambigu
 
 The existing workspace transaction manager remains the compensation/checkpoint adapter for file
 mutations. Shell, MCP, HTTP, Git, and database adapters are journaled through the same effect model.
+During runtime adoption, legacy-selected filesystem, shell/process, Git, MCP/network, and general tool
+actions already use this journal, but the legacy policy remains authoritative until the side-effects
+promotion stage.
 
 ## Approvals, leases, and budgets
 

@@ -128,6 +128,17 @@ hard security sandbox. These limitations are part of the operating contract.
 - Built-in web search relies on public HTML search endpoints and can break when providers change markup or block automation.
 - DNS and private-address checks reduce SSRF risk but cannot eliminate every time-of-check/time-of-use condition.
 
+## Durable Runtime Migration
+
+- The event-sourced runtime is the default shadow host, but the legacy model loop still selects work and
+  side effects. Only planning authority can currently be promoted to primary operation.
+- Scheduling, verification/replanning, side effects/approvals, recovery/completion, and engine-only
+  authority remain gated until their runtime-adoption passes are implemented and qualified.
+- Deterministic shadow planning is reproducible but intentionally generic. Model shadow planning adds a
+  separate provider call and can increase latency and cost; failures fall back and remain visible in the trace.
+- An ambiguous external effect is intentionally not retried automatically when its adapter cannot reconcile
+  it. Operator review may be required before the execution can continue.
+
 ## Product And Release
 
 - Agent47 remains CLI-first; there is no maintained VS Code extension or remote multi-user service.

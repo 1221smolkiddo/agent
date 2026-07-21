@@ -5,7 +5,7 @@ from collections.abc import Callable
 import warnings
 
 from .agent import CodingAgent
-from .durable_execution import DurableExecutionRuntime
+from .execution_host import ExecutionRuntimeHost, ModelPlanProvider
 from .config import Settings
 from .model_profiles import ModelProfile, resolve_model_profile
 from .model_presets import resolve_model_preset
@@ -23,11 +23,6 @@ from .models import (
     create_openai_compatible_client,
 )
 from .repo_index import RepoIndexCache
-from .runtime_migration import (
-    ShadowDivergenceStore,
-    ShadowRuntime,
-    default_shadow_decision,
-)
 from .platform_runtime import PlatformRuntime
 from .storage import AgentStorage
 from .status import StatusReporter
@@ -54,6 +49,8 @@ def create_agent(
     require_process_isolation: bool = False,
     execution_state_snapshot: dict[str, object] | None = None,
     resumed_from_run_id: int | None = None,
+    durable_execution_id: str | None = None,
+    durable_goal: str | None = None,
 ) -> CodingAgent:
     if not settings.fallback_model_list:
         warnings.warn(
@@ -120,29 +117,62 @@ def create_agent(
         workspace,
         trust_workspace_extensions=settings.agent_trust_workspace_extensions,
     )
+    tools = ToolRegistry(
+        workspace=workspace,
+        dry_run=dry_run,
+        approval_callback=approval_callback,
+        shell_network_policy=shell_network_policy or settings.shell_network_policy,
+        index_cache=index_cache,
+        background_index=True,
+        sandbox_policy=sandbox_policy,
+        extension_registry=platform_runtime.tools,
+        lifecycle_hooks=platform_runtime.hooks,
+    )
     execution_db_path = settings.agent_execution_db_path
     if not execution_db_path.is_absolute():
         execution_db_path = workspace / execution_db_path
     execution_mode = settings.execution_mode
-    if execution_mode in {"primary", "engine_only"}:
-        raise RuntimeError(
-            "AGENT_EXECUTION_MODE=primary/engine_only requires the ExecutionPlane host; "
-            "the legacy create_agent entry point cannot claim engine authority."
+    plan_provider = None
+    if execution_mode != "legacy" and settings.shadow_planner == "model":
+        planner_profile = apply_runtime_defaults(
+            resolve_model_profile(
+                "planner",
+                default_model=default_model,
+                max_tokens=settings.agent_max_tokens,
+                planner_model=(
+                    None if model or selected_preset else settings.agent_planner_model
+                ),
+                coder_model=None,
+                reviewer_model=None,
+                fast_model=None,
+            ),
+            registered_default_model.runtime if registered_default_model else None,
         )
-    durable_runtime = (
-        DurableExecutionRuntime(execution_db_path)
-        if execution_mode == "shadow"
+        planner_client = create_fallback_client(
+            provider,
+            planner_profile,
+            fallback_model_specs(
+                settings,
+                settings.fallback_model_list,
+                stream=False,
+            ),
+        )
+        plan_provider = ModelPlanProvider(
+            planner_client,
+            timeout_seconds=settings.agent_model_timeout_seconds,
+        )
+    runtime_host = (
+        ExecutionRuntimeHost(
+            execution_db_path,
+            execution_mode,
+            tools=tools,
+            plan_provider=plan_provider,
+        )
+        if execution_mode != "legacy"
         else None
     )
-    shadow_runtime = (
-        ShadowRuntime(
-            durable_runtime,
-            ShadowDivergenceStore(execution_db_path),
-            default_shadow_decision,
-        )
-        if durable_runtime is not None
-        else None
-    )
+    durable_runtime = runtime_host.runtime if runtime_host is not None else None
+    shadow_runtime = runtime_host.shadow if runtime_host is not None else None
 
     # Build reviewer client when the reviewer pass is enabled and no explicit
     # client was supplied (e.g. by tests). The reviewer uses its own profile
@@ -168,17 +198,7 @@ def create_agent(
         max_steps=max_steps,
         max_failures=max_failures or settings.agent_max_failures,
         model_client=client,
-        tools=ToolRegistry(
-            workspace=workspace,
-            dry_run=dry_run,
-            approval_callback=approval_callback,
-            shell_network_policy=shell_network_policy or settings.shell_network_policy,
-            index_cache=index_cache,
-            background_index=True,
-            sandbox_policy=sandbox_policy,
-            extension_registry=platform_runtime.tools,
-            lifecycle_hooks=platform_runtime.hooks,
-        ),
+        tools=tools,
         storage=storage,
         reporter=reporter,
         stream_model=settings.agent_stream if stream_model is None else stream_model,
@@ -190,7 +210,10 @@ def create_agent(
         resumed_from_run_id=resumed_from_run_id,
         platform_runtime=platform_runtime,
         durable_runtime=durable_runtime,
+        durable_execution_id=durable_execution_id,
         shadow_runtime=shadow_runtime,
+        runtime_host=runtime_host,
+        durable_goal=durable_goal,
     )
 
 

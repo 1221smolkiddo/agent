@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     agent_db_path: Path = Path(".code-agent/agent.db")
     agent_execution_db_path: Path = Path(".code-agent/executions.db")
     agent_execution_mode: str = "shadow"
+    agent_shadow_planner: str = "deterministic"
     agent_stream: bool = True
     agent_reviewer_pass: bool = True
     agent_shell_network: str = "deny"
@@ -171,4 +172,13 @@ class Settings(BaseSettings):
             return value
         raise RuntimeError(
             "AGENT_EXECUTION_MODE must be one of: legacy, shadow, primary, engine_only."
+        )
+
+    @property
+    def shadow_planner(self) -> str:
+        value = self.agent_shadow_planner.strip().lower()
+        if value in {"deterministic", "model"}:
+            return value
+        raise RuntimeError(
+            "AGENT_SHADOW_PLANNER must be one of: deterministic, model."
         )

@@ -12,6 +12,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from .execution_state import ExecutionState, compact_message_history
 from .durable_execution import AgentExecutionAdapter, DurableExecutionRuntime
+from .execution_host import ExecutionRuntimeHost
 from .models import ChatMessage, ModelClient
 from .patches import git_style_unified_diff
 from .platform_runtime import PlatformRuntime
@@ -84,6 +85,8 @@ class CodingAgent:
         durable_runtime: DurableExecutionRuntime | None = None,
         durable_execution_id: str | None = None,
         shadow_runtime: Any | None = None,
+        runtime_host: ExecutionRuntimeHost | None = None,
+        durable_goal: str | None = None,
     ) -> None:
         self.cwd = cwd
         self.dry_run = dry_run
@@ -101,10 +104,16 @@ class CodingAgent:
         self.execution_state_snapshot = execution_state_snapshot
         self.resumed_from_run_id = resumed_from_run_id
         self.platform_runtime = platform_runtime
-        self.durable_runtime = durable_runtime
+        self.runtime_host = runtime_host
+        self.durable_runtime = (
+            runtime_host.runtime if runtime_host is not None else durable_runtime
+        )
         self.durable_execution_id = durable_execution_id
+        self.durable_goal = durable_goal
         self._durable_adapter: AgentExecutionAdapter | None = None
-        self.shadow_runtime = shadow_runtime
+        self.shadow_runtime = (
+            runtime_host.shadow if runtime_host is not None else shadow_runtime
+        )
         self._active_execution_state: ExecutionState | None = None
 
     def run(self, task: str) -> str:
@@ -127,7 +136,19 @@ class CodingAgent:
         run_started = perf_counter()
         run_deadline = run_started + self.run_timeout_seconds
         clean_task = self._extract_user_task(task)
-        if self.durable_runtime is not None:
+        resuming_durable_execution = bool(self.durable_execution_id)
+        durable_goal = self.durable_goal or clean_task
+        if self.runtime_host is not None:
+            self._durable_adapter = self.runtime_host.begin_legacy_run(
+                durable_goal,
+                execution_id=self.durable_execution_id,
+                budgets={
+                    "tokens": float(self.max_steps * 10_000),
+                    "tool_calls": float(self.max_steps),
+                },
+            )
+            self.durable_execution_id = self._durable_adapter.execution_id
+        elif self.durable_runtime is not None:
             self._durable_adapter = AgentExecutionAdapter(
                 self.durable_runtime,
                 clean_task,
@@ -136,6 +157,13 @@ class CodingAgent:
             )
             self.durable_execution_id = self._durable_adapter.execution_id
         run_id = self.storage.create_run(task=clean_task, model=self.model_client.model, cwd=self.cwd)
+        if self._durable_adapter is not None:
+            self.storage.add_step(run_id, "tool", {
+                "type": "durable_execution_link",
+                "execution_id": self._durable_adapter.execution_id,
+                "goal": durable_goal,
+                "resumed": resuming_durable_execution,
+            })
         execution_state = (
             ExecutionState.from_snapshot(
                 self.execution_state_snapshot,
@@ -168,6 +196,14 @@ class CodingAgent:
             if self.platform_runtime is not None
             else ""
         )
+        if self.runtime_host is not None and self._durable_adapter is not None:
+            platform_context += self.runtime_host.planning_context(
+                self._durable_adapter.execution_id
+            )
+            if resuming_durable_execution:
+                platform_context += self.runtime_host.recovery_context(
+                    self._durable_adapter.execution_id
+                )
         if self.platform_runtime is not None:
             self.platform_runtime.hooks.emit(
                 "session.start", {"run_id": run_id, "task": clean_task}
@@ -415,8 +451,22 @@ class CodingAgent:
 
             if isinstance(action, UpdatePlanAction):
                 self._report_action(action)
-                execution_state.update_plan(action)
-                plan_payload = self._plan_payload(step, action)
+                effective_action = action
+                if self.runtime_host is not None and self._durable_adapter is not None:
+                    self.runtime_host.observe_plan(
+                        self._durable_adapter.execution_id,
+                        action,
+                        task_id=self._durable_adapter.task_id,
+                    )
+                    if self.runtime_host.engine_owns("planning"):
+                        effective_action = self.runtime_host.authoritative_plan(
+                            self._durable_adapter.execution_id,
+                            progress=action,
+                        )
+                execution_state.update_plan(effective_action)
+                plan_payload = self._plan_payload(step, effective_action)
+                if effective_action is not action:
+                    plan_payload["authority"] = "execution_engine"
                 plan_updates.append(plan_payload)
                 self.storage.add_step(run_id, "tool", plan_payload)
                 self.storage.add_step(run_id, "tool", execution_state.snapshot())
@@ -651,11 +701,12 @@ class CodingAgent:
                 ]
                 self.reporter.mutation_preview(creates, modifies, deletes)
             self._report_action(action)
+            action_payload = action.model_dump(exclude_none=True)
             durable_action = (
                 self._durable_adapter.action_started(
-                    step, action.model_dump(exclude_none=True)
+                    step, action_payload
                 )
-                if self._durable_adapter is not None
+                if self._durable_adapter is not None and self.runtime_host is None
                 else None
             )
             if self.shadow_runtime is not None and self._durable_adapter is not None:
@@ -667,7 +718,22 @@ class CodingAgent:
                 )
             durable_effect_id = durable_action[0] if durable_action is not None else None
             durable_replay = durable_action[1] if durable_action is not None else None
-            if durable_replay is not None:
+            if self.runtime_host is not None and self._durable_adapter is not None:
+                tool_started = perf_counter()
+                hosted = self.runtime_host.execute_action(
+                    self._durable_adapter.execution_id,
+                    self._durable_adapter.task_id,
+                    step,
+                    action_payload,
+                    criterion_ids=(self._durable_adapter.criterion_id,),
+                    timeout_seconds=self.model_timeout_seconds,
+                )
+                tool_elapsed_ms = round((perf_counter() - tool_started) * 1000, 2)
+                result = hosted.result
+                result.metadata.setdefault("elapsed_ms", tool_elapsed_ms)
+                durable_effect_id = hosted.effect_id
+                durable_replay = {"replayed": True} if hosted.replayed else None
+            elif durable_replay is not None:
                 result = ToolResult(
                     ok=bool(durable_replay["ok"]),
                     output=str(durable_replay["output"]),
@@ -682,6 +748,7 @@ class CodingAgent:
                 durable_effect_id is not None
                 and durable_replay is None
                 and self._durable_adapter is not None
+                and self.runtime_host is None
             ):
                 self._durable_adapter.action_completed(
                     durable_effect_id,
@@ -887,6 +954,12 @@ class CodingAgent:
 
     def _finalize_run(self, result: AgentRunResult) -> AgentRunResult:
         if self._durable_adapter is not None:
+            if self.runtime_host is not None:
+                self.runtime_host.ensure_plan_observed(
+                    self._durable_adapter.execution_id,
+                    self.durable_goal or result.clean_task or result.task,
+                    task_id=self._durable_adapter.task_id,
+                )
             self._durable_adapter.finish(blocked=result.blocked, summary=result.message)
             result.durable_execution_id = self._durable_adapter.execution_id
             if self.shadow_runtime is not None:

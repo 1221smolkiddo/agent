@@ -18,6 +18,19 @@ def latest_execution_state(steps: list[dict[str, Any]]) -> dict[str, Any] | None
     return None
 
 
+def latest_durable_execution_id(steps: list[dict[str, Any]]) -> str | None:
+    for step in reversed(steps):
+        payload = step.get("payload", {})
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("type") != "durable_execution_link":
+            continue
+        execution_id = str(payload.get("execution_id", "")).strip()
+        if execution_id:
+            return execution_id
+    return None
+
+
 def format_run_detail(
     run: sqlite3.Row,
     steps: list[dict[str, Any]],

@@ -18,6 +18,7 @@ from .durable_execution import (
     ExecutionStatus,
     TaskProjection,
 )
+from .schema import UpdatePlanAction
 
 
 class MigrationMode(str, Enum):
@@ -35,6 +36,18 @@ class PromotionStage(int, Enum):
     SIDE_EFFECTS = 5
     RECOVERY_COMPLETION = 6
     ENGINE_ONLY = 7
+
+
+PROMOTION_DECISION_TYPES: dict[PromotionStage, tuple[str, ...]] = {
+    PromotionStage.PLANNING: ("planning",),
+    PromotionStage.SCHEDULING_BUDGETS: ("scheduling", "budget"),
+    PromotionStage.VERIFICATION_REPLANNING: (
+        "verification", "diagnosis", "replanning",
+    ),
+    PromotionStage.SIDE_EFFECTS: ("tool_selection", "tool_result", "approval"),
+    PromotionStage.RECOVERY_COMPLETION: ("recovery", "completion"),
+    PromotionStage.ENGINE_ONLY: ("engine_only",),
+}
 
 
 @dataclass(frozen=True)
@@ -93,28 +106,61 @@ class ShadowDivergenceStore:
                 (execution_id, decision_type, int(matched), time.time()),
             )
 
-    def list(self, execution_id: str | None = None) -> list[dict[str, Any]]:
+    def list(
+        self,
+        execution_id: str | None = None,
+        *,
+        decision_types: tuple[str, ...] | None = None,
+    ) -> list[dict[str, Any]]:
         query = "select id,payload from shadow_divergences"
-        params: tuple[Any, ...] = ()
+        conditions: list[str] = []
+        params: list[Any] = []
         if execution_id:
-            query += " where execution_id=?"
-            params = (execution_id,)
+            conditions.append("execution_id=?")
+            params.append(execution_id)
+        if decision_types:
+            placeholders = ",".join("?" for _item in decision_types)
+            conditions.append(f"decision_type in ({placeholders})")
+            params.extend(decision_types)
+        if conditions:
+            query += " where " + " and ".join(conditions)
         query += " order by id"
         with sqlite3.connect(self.path) as conn:
-            rows = conn.execute(query, params).fetchall()
+            rows = conn.execute(query, tuple(params)).fetchall()
         return [{"id": row[0], **json.loads(row[1])} for row in rows]
 
-    def metrics(self, execution_id: str | None = None) -> dict[str, Any]:
-        items = self.list(execution_id)
+    def has_comparison(self, execution_id: str, decision_type: str) -> bool:
+        with sqlite3.connect(self.path) as conn:
+            row = conn.execute(
+                """select 1 from shadow_comparisons
+                where execution_id=? and decision_type=? limit 1""",
+                (execution_id, decision_type),
+            ).fetchone()
+        return row is not None
+
+    def metrics(
+        self,
+        execution_id: str | None = None,
+        *,
+        decision_types: tuple[str, ...] | None = None,
+    ) -> dict[str, Any]:
+        items = self.list(execution_id, decision_types=decision_types)
         unexpected = [item for item in items if not item["expected"]]
         critical = [item for item in unexpected if item["severity"] == "critical"]
         query = "select count(*) from shadow_comparisons"
-        params: tuple[Any, ...] = ()
+        conditions: list[str] = []
+        params: list[Any] = []
         if execution_id:
-            query += " where execution_id=?"
-            params = (execution_id,)
+            conditions.append("execution_id=?")
+            params.append(execution_id)
+        if decision_types:
+            placeholders = ",".join("?" for _item in decision_types)
+            conditions.append(f"decision_type in ({placeholders})")
+            params.extend(decision_types)
+        if conditions:
+            query += " where " + " and ".join(conditions)
         with sqlite3.connect(self.path) as conn:
-            samples = int(conn.execute(query, params).fetchone()[0])
+            samples = int(conn.execute(query, tuple(params)).fetchone()[0])
         return {
             "samples": samples, "unexpected": len(unexpected), "critical": len(critical),
             "divergence_rate": len(unexpected) / samples if samples else 0.0,
@@ -295,7 +341,9 @@ class MigrationStateStore:
     ) -> dict[str, Any]:
         current = self.get()
         controller = MigrationController(PromotionStage(current["stage_value"]))
-        metrics = divergence_store.metrics()
+        decision_types = PROMOTION_DECISION_TYPES.get(target)
+        metrics = divergence_store.metrics(decision_types=decision_types)
+        metrics["decision_types"] = list(decision_types or ())
         controller.promote(target, metrics, policy)
         with sqlite3.connect(self.path) as conn:
             conn.execute(
@@ -454,6 +502,8 @@ def _probable_cause(
 def default_shadow_decision(
     decision_type: str, legacy: dict[str, Any], state: ExecutionProjection
 ) -> dict[str, Any]:
+    if decision_type == "planning":
+        return plan_decision_from_state(state)
     if decision_type == "tool_selection":
         active = any(task.state.value == "running" for task in state.tasks.values())
         return {"action": legacy.get("action"), "allowed": active}
@@ -470,3 +520,89 @@ def default_shadow_decision(
             "status": state.status.value,
         }
     return dict(legacy)
+
+
+def plan_decision_from_legacy(action: UpdatePlanAction) -> dict[str, Any]:
+    tasks = []
+    for index, step in enumerate(action.steps, 1):
+        tasks.append({
+            "id": step.id or f"legacy-{index}",
+            "title": step.step,
+            "parent_id": step.parent_id,
+            "dependencies": list(step.depends_on),
+            "criteria": list(step.acceptance_criteria) or [f"{step.step} complete"],
+        })
+    return _canonical_plan(tasks)
+
+
+def plan_decision_from_state(state: ExecutionProjection) -> dict[str, Any]:
+    tasks = []
+    for task in state.tasks.values():
+        tasks.append({
+            "id": task.id,
+            "title": task.title,
+            "parent_id": task.parent_id,
+            "dependencies": list(task.dependencies),
+            "criteria": [state.criteria[item].description for item in task.criteria],
+        })
+    return _canonical_plan(tasks)
+
+
+def _canonical_plan(tasks: list[dict[str, Any]]) -> dict[str, Any]:
+    aliases = {
+        str(task.get("id") or f"task-{index}"): f"task-{index}"
+        for index, task in enumerate(tasks, 1)
+    }
+    normalized: list[dict[str, Any]] = []
+    for index, task in enumerate(tasks, 1):
+        task_id = str(task.get("id") or f"task-{index}")
+        parent_id = task.get("parent_id")
+        normalized.append({
+            "id": aliases[task_id],
+            "title": " ".join(str(task.get("title", "")).lower().split()),
+            "parent_id": aliases.get(str(parent_id)) if parent_id else None,
+            "dependencies": sorted(
+                aliases.get(str(item), str(item))
+                for item in task.get("dependencies", [])
+            ),
+            "criteria": sorted(
+                " ".join(str(item).lower().split())
+                for item in task.get("criteria", [])
+            ),
+        })
+    titles = [item["title"] for item in normalized]
+    roots = [item for item in normalized if not item["dependencies"]]
+    edge_count = sum(len(item["dependencies"]) for item in normalized)
+    maximum_dependencies = max(
+        (len(item["dependencies"]) for item in normalized), default=0
+    )
+    phase_terms = {
+        "discovery": ("inspect", "discover", "analyze", "analyse", "investigate", "review"),
+        "implementation": ("implement", "change", "build", "fix", "write", "create", "update"),
+        "verification": ("verify", "test", "check", "validate", "confirm"),
+    }
+    phases = {
+        phase: any(any(term in title for term in terms) for title in titles)
+        for phase, terms in phase_terms.items()
+    }
+    if not normalized:
+        count_band = "empty"
+    elif len(normalized) == 1:
+        count_band = "single"
+    elif len(normalized) <= 4:
+        count_band = "compact"
+    else:
+        count_band = "extended"
+    if edge_count == 0:
+        dependency_shape = "independent"
+    elif len(roots) == 1 and maximum_dependencies <= 1:
+        dependency_shape = "linear"
+    else:
+        dependency_shape = "branched"
+    return {
+        "task_count_band": count_band,
+        "dependency_shape": dependency_shape,
+        "hierarchical": any(item["parent_id"] for item in normalized),
+        "criteria_complete": bool(normalized) and all(item["criteria"] for item in normalized),
+        "phases": phases,
+    }
