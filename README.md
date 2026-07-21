@@ -1,9 +1,10 @@
 # Agent47
 
-Agent47 is a CLI-first Python coding agent with repository intelligence, structured tool use,
-durable execution state, verification, recovery, sandboxing, model fallback, and machine-readable
-frontend events. The reusable core is separate from the terminal interfaces so other clients can
-drive the same agent behavior.
+Agent47 is a CLI-first Python coding agent built around an event-sourced execution runtime. It combines
+repository intelligence, structured tool use, transactional editing, criterion-backed verification,
+crash recovery, sandboxing, model fallback, dynamic extensions, skills, MCP, and multi-agent
+orchestration. The execution kernel, reasoning services, tool adapters, and terminal interfaces are
+separate so future clients and workers can reuse the same deterministic runtime contracts.
 
 Agent47 is currently alpha software. It has serious safety and reliability controls, but generated
 changes and approved commands still require human review. Read
@@ -12,6 +13,20 @@ changes and approved commands still require human review. Read
 ## Current Capabilities
 
 - CLI, interactive terminal, and versioned NDJSON interfaces.
+- An append-only SQLite execution log as the source of truth, with commands separated from events,
+  deterministic replay, checksummed snapshots, command idempotency, execution leases, fencing tokens,
+  persistent execution IDs, compatibility version `1`, and immutable execution traces.
+- Versioned execution DAGs with hierarchical tasks, dependencies, lifecycle invariants, scheduling policies,
+  risk and cost estimates, retry budgets, graph lineage, mutation-only planning, cancellation, pause, and resume.
+- Immutable acceptance criteria, versioned evidence, criterion-level verification, diagnosis records,
+  targeted replanning, first-class approvals, hierarchical resource budgets, model routing records,
+  execution memory, context compression, self-critique, and background worker APIs.
+- A runtime-adoption host that defaults to safe shadow operation: independent deterministic or model-backed
+  planning, semantic divergence reports, stage-specific promotion gates, transactional wrapping of the one
+  authoritative tool call, startup recovery, and durable run-to-execution resume links.
+- Versioned adapter capability contracts and negotiation for effect kinds, permissions, isolation,
+  idempotency, reconciliation, compensation, verification, cancellation, timeout support, concurrency,
+  retry safety, durability, resource accounting, and execution compatibility.
 - Workspace-aware file reads, exact edits, writes, deletes, unified patches, search, and code summaries.
 - Journaled workspace transactions with automatic checkpoints, atomic multi-file commit/rollback, crash
   recovery, three-way merge, move support, undo/redo, and selective or whole-workspace snapshot restore.
@@ -32,6 +47,17 @@ changes and approved commands still require human review. Read
 - Dry-run mode, copied-workspace sandboxes, and Docker or Podman container backends.
 - OpenAI-compatible providers, model profiles, streaming, bounded retries, state-preserving cross-provider fallback,
   provider-handoff audit records, usage, and cost records.
+- A dynamic platform with namespaced/versioned tools, aliases, JSON schemas, dependencies, health checks,
+  reload/removal, prioritized lifecycle hooks, scoped instructions, task-selected skills, plugin manifests,
+  and trusted workspace extension discovery.
+- MCP stdio clients with initialization and capability negotiation, tool/resource/prompt discovery, resource
+  reads and subscriptions, prompt retrieval, caching, allowlisted tools, bounded requests, reconnect, and
+  isolated authentication environment variables.
+- Built-in security audit, test generation, review, documentation, dependency, refactoring, performance, and
+  DevOps skills, plus planner, researcher, coder, reviewer, tester, security, documentation, performance,
+  refactoring, and dependency-analysis agent profiles.
+- Isolated subagent contexts with capability intersection, token/execution/time budgets, cancellation,
+  failure containment, dependency-aware DAG validation, and parallel ready-task orchestration APIs.
 - SQLite run history, work reports, redacted debug bundles, per-repository memory, deletion, pruning, resume, and revert.
 - Deterministic offline evals, opt-in live evals, capability reports, release smoke checks, and collaboration helpers.
 
@@ -60,6 +86,8 @@ AGENT_MODEL=qwen/qwen3-coder
 
 ```bash
 uv run code-agent doctor --strict
+uv run code-agent platform inspect
+uv run code-agent execution runtime-status
 uv run code-agent run "Inspect this repository and identify the highest-risk defect"
 ```
 
@@ -75,6 +103,7 @@ uv run code-agent run --dry-run "Plan the parser refactor"
 uv run code-agent run --sandbox "Refactor the parser in an isolated workspace"
 uv run code-agent run --sandbox --sandbox-backend docker "Run the refactor with container isolation"
 uv run code-agent run --deny-network-shell "Fix tests without install or network commands"
+uv run code-agent run "Continue the interrupted task" --execution-id <execution-id>
 ```
 
 Use `code-agent run --help` for model, profile, approval, sandbox, failure-budget, streaming,
@@ -127,11 +156,15 @@ code-agent doctor
 code-agent evals
 code-agent eval-reports
 code-agent release-smoke
+code-agent platform
+code-agent execution
 code-agent history
 code-agent resume
 code-agent revert
 code-agent transactions
 code-agent sandbox
+code-agent containers
+code-agent processes
 code-agent collab
 ```
 
@@ -152,12 +185,118 @@ uv run code-agent transactions redo <transaction-id>
 uv run code-agent transactions restore <transaction-id>
 uv run code-agent transactions recover
 uv run code-agent sandbox health --backend docker
+uv run code-agent platform inspect
+uv run code-agent execution runtime-status
+uv run code-agent execution list
+uv run code-agent execution trace <execution-id>
+uv run code-agent execution explain <execution-id>
+uv run code-agent execution recover-active
 uv run code-agent collab review --run-id 12 --strict
 ```
 
+## Architecture At A Glance
+
+```text
+CLI / interactive / NDJSON / future clients
+                    |
+                    v
+          ExecutionRuntimeHost
+          |         |          |
+          |         |          +--> migration gates and shadow comparison
+          |         +-------------> independent planner and graph mutations
+          v
+ commands -> append-only events -> projected execution state
+                    |
+                    +--> versioned DAG, criteria, evidence, budgets, approvals
+                    +--> trace, snapshots, replay, leases, recovery
+                    |
+                    v
+        hosted CodingAgent / workers / subagents
+                    |
+                    v
+      transactional capability adapters
+                    |
+                    v
+ files / shell / Git / MCP / models / dynamic tools
+```
+
+The kernel owns durable facts and invariants. Planners, schedulers, critics, verifiers, models,
+adapters, skills, agents, and interfaces remain replaceable extensions. The model proposes reasoning
+outputs but cannot directly mutate execution state.
+
+## Durable Execution Runtime
+
+Every hosted run has a stable execution ID and permanently records its engine, compatibility, and event
+schema versions. Commands express intent; validated events record facts; projections reconstruct current
+state. Snapshots accelerate replay but never replace the event log as the source of truth.
+
+The task lifecycle is validated by the engine:
+
+```text
+queued -> ready -> running -> verifying -> verified -> complete
+                   |             |
+                   |             +-> diagnosing -> replanning -> ready
+                   +-> waiting | blocked | failed | cancelled
+```
+
+Completed tasks and terminal executions are immutable. Dependencies must be complete before execution,
+and a task cannot become verified or complete until each criterion has linked immutable evidence and a
+passing verification record. External effects use a durable journal:
+
+```text
+pending -> running -> committed | failed | unknown
+unknown -> committed | failed | rolled_back
+```
+
+An ambiguous effect is reconciled before retry. A committed idempotency key replays its recorded result
+without calling the external system again. Normal Agent47 runs now store their execution link in run
+history, so `code-agent resume RUN_ID` restores the same event stream and injects a compressed recovery
+context. `code-agent run ... --execution-id ID` provides an explicit recovery path.
+
+### Runtime Modes And Promotion
+
+| Mode | Current behavior |
+| --- | --- |
+| `legacy` | Runs the prior loop without an execution host. Intended only as a migration fallback. |
+| `shadow` | Default. The legacy loop remains authoritative while the engine independently plans, projects, journals the single authoritative call, and records divergences. |
+| `primary` | Available only after planning qualification. The engine owns the versioned plan and graph; the legacy loop remains the worker and side-effect selector. |
+| `engine_only` | Fails closed until every later authority stage is implemented and qualified. |
+
+Authority promotion is deliberately sequential: trace/projection, planning/graph, scheduling/budgets,
+verification/diagnosis/replanning, side effects/approvals, recovery/completion, then engine-only operation.
+Only planning authority can currently be promoted. Each gate requires enough relevant shadow samples,
+zero allowed critical divergences, and a configured maximum divergence rate; unrelated sample types cannot
+satisfy a gate.
+
+```bash
+uv run code-agent execution runtime-status
+uv run code-agent execution shadow-report
+uv run code-agent execution promote planning --minimum-samples 100
+```
+
+Use `AGENT_SHADOW_PLANNER=deterministic` for offline reproducibility or `model` for an independent
+planner-model call. Model planning is budgeted and traced; malformed output, provider failures, and timeouts
+fall back to the deterministic planner and remain visible as execution diagnostics.
+
+Execution operations include create, list, show, trace, replay, recover, recover-active, explain,
+shadow-report, promotion status, runtime status, pause, resume, cancel, checkpoint, approve, and promote.
+`execution explain` reports blockers, unsatisfied criteria, evidence links, graph changes, model decisions,
+budget hotspots, and the critical path. Scheduling policy is replaceable independently of mechanics; FIFO,
+priority, critical-path, cost-optimized, and verification-first policies are implemented. The reusable
+autonomous executor adds bounded parallel workers, risk-triggered human checkpoints, lease heartbeats,
+criterion verification, diagnosis, retry-limited subtree repair, adaptive model routing, execution-memory
+retrieval, self-critique, and context compression. These components are available to the execution plane,
+while normal CLI authority remains limited by the migration stage described above.
+
+See [Durable Execution Engine](docs/EXECUTION_ENGINE.md) and
+[Execution Compatibility](docs/EXECUTION_COMPATIBILITY.md).
+
 ## Execution Model
 
-Workspace runs follow an explicit lifecycle:
+The event-sourced runtime and the hosted coding loop currently operate together. The runtime owns durable
+identity, plans, event projection, effects, evidence, replay, and migration metrics; the hosted loop still
+selects actions and performs its established repository workflow unless planning has been promoted.
+Workspace runs follow this explicit lifecycle:
 
 1. Classify the request and build a token-bounded context pack of exact files, symbols, relationships, and tests.
 2. Create or update a durable hierarchical plan with dependencies, hypotheses, and acceptance criteria.
@@ -165,13 +304,56 @@ Workspace runs follow an explicit lifecycle:
 4. Verify mutations against disk and run selected project checks.
 5. Diagnose failures, record evidence, invalidate stale assumptions, and require a revised plan.
 6. Reject repeated identical outcomes and unsupported completion claims.
-7. Checkpoint execution before later model turns and persist evidence, provider handoffs, confidence, and reports.
+7. Checkpoint execution before later model turns and persist evidence, provider handoffs, confidence, reports,
+   effect outcomes, and the durable run-to-execution link.
 
 Plans are execution contracts. Dependencies gate active work; completed steps with unmet `command:`, `evidence:`,
 or `file:` criteria become blocked. Failed planned verification requires a new plan revision before mutation,
-execution, or finalization. Resumed runs hydrate the latest persisted execution checkpoint.
+execution, or finalization. Resumed runs hydrate both the latest loop checkpoint and the canonical durable
+execution projection; ambiguous external effects are never silently repeated.
 
 See [Architecture](docs/ARCHITECTURE.md) for module boundaries and detailed data flow.
+
+## Dynamic Platform, Skills, MCP, And Agents
+
+Agent47 composes its extension surface through `PlatformRuntime`; it does not add workspace tools through
+another hard-coded switch. Runtime tools are namespaced, versioned, schema-described, permission-scoped,
+health-checked, and discoverable. Lifecycle hooks are priority ordered and isolate failures. Repository and
+workspace instructions are resolved hierarchically, while skills are selected from task wording and add
+workflow, verification, and acceptance guidance without overriding core security policy.
+
+```bash
+uv run code-agent platform inspect
+uv run code-agent platform inspect --trust-workspace-extensions
+```
+
+Workspace extension locations are:
+
+```text
+.agents/skills/<name>/SKILL.md
+.agents/plugins/<name>/plugin.json
+.agents/mcp.json
+```
+
+Executable workspace extensions are disabled by default. Set `AGENT_TRUST_WORKSPACE_EXTENSIONS=true` or
+pass `--trust-workspace-extensions` only after reviewing plugin manifests and MCP commands. Plugin commands
+must resolve inside their plugin directory, execute without a shell, receive a scrubbed environment, declare
+permissions and dependencies, and obey a timeout. Unloading a plugin removes its contributed tools, skills,
+profiles, and hooks.
+
+MCP servers use stdio JSON-RPC and receive only named authentication environment variables plus a minimal
+process environment. `allowed_tools` can restrict discovered tools; registered names are scoped under
+`mcp-<server>.*` and still pass dynamic-tool permission checks. Resources, prompts, subscriptions, caching,
+bounded reads, and reconnect are supported.
+
+The built-in agent catalog includes planner, researcher, coder, reviewer, tester, security-auditor,
+documentation-writer, performance-optimizer, refactoring-expert, and dependency-analyzer profiles.
+`SubagentManager` deep-copies JSON context, intersects capabilities, caps token/execution/time budgets,
+contains failures, and supports cancellation. `MultiAgentOrchestrator` validates dependency DAGs and can run
+independent ready nodes concurrently through an injected worker. These APIs exist in the reusable core; the
+normal CLI does not yet delegate every task to subagents automatically.
+
+See [Dynamic Platform](docs/PLATFORM.md) for manifests and configuration.
 
 ## Models And Providers
 
@@ -195,8 +377,11 @@ The canonical configuration list is `.env.example`. Important controls include:
 - Provider API keys and base URLs.
 - `AGENT_FALLBACK_MODELS`, `AGENT_MAX_TOKENS`, and model retry settings.
 - `AGENT_MAX_FAILURES` and `AGENT_CONTEXT_MAX_CHARS`.
-- `AGENT_DB_PATH`, `AGENT_STREAM`, and `AGENT_REVIEWER_PASS`.
+- `AGENT_DB_PATH`, `AGENT_EXECUTION_DB_PATH`, `AGENT_STREAM`, and `AGENT_REVIEWER_PASS`.
+- `AGENT_EXECUTION_MODE=legacy|shadow|primary|engine_only` and
+  `AGENT_SHADOW_PLANNER=deterministic|model`.
 - `AGENT_SHELL_NETWORK`, `AGENT_SANDBOX_BACKEND`, and `AGENT_SANDBOX_IMAGE`.
+- `AGENT_TRUST_WORKSPACE_EXTENSIONS` and reusable-container workspace/reuse settings.
 
 ## Permissions And Safety
 
@@ -205,6 +390,12 @@ JSON mode denies approvals unless an explicit approval mechanism is configured.
 
 Core controls include:
 
+- Event-sourced state transitions with deterministic replay, optimistic sequence checks, command
+  idempotency, checksummed snapshots, lease fencing, immutable terminal state, and DAG validation.
+- Capability negotiation before transactional effects, durable idempotency keys, unknown-effect quarantine,
+  adapter reconciliation before retry, and compensation only where the selected adapter declares support.
+- Hierarchical token, dollar, wall-time, CPU-time, tool, shell, network, and retry budgets in the execution
+  kernel; child scopes inherit ancestor enforcement and parallel work can reserve capacity.
 - Workspace-relative path validation for file and patch operations.
 - Refusal to read or modify credential files such as `.env`, `.npmrc`, `.pypirc`, and `.netrc`.
 - Pattern-based secret redaction before tool output or state is stored.
@@ -218,6 +409,11 @@ Core controls include:
 - Disk, process, CPU, memory, timeout, image, digest, and network controls for configured sandboxes.
 - Per-workspace reusable Docker/Podman containers shared by shell commands, LSP servers, and managed jobs.
 - Language-server edits are converted to unified patches and never bypass normal patch approval and verification.
+
+Agent47 is a local single-user CLI. It does not implement authentication, MFA, web sessions, RBAC, SSO,
+SCIM, organization policy distribution, multi-tenant isolation, or tamper-proof centralized audit. It is not
+SOC 2, ISO 27001, GDPR, or HIPAA certified. The controls here can contribute technical evidence to a broader
+program, but they are not a compliance claim.
 
 Ordinary runs use the hardened local subprocess policy. `--sandbox` is a strict security mode: it
 selects a healthy Docker or Podman backend and refuses to start if process isolation cannot be proven.
@@ -239,7 +435,12 @@ Agent47 stores local state under `.code-agent/`:
 
 - `agent.db`: redacted run tasks, steps, execution state, reports, model usage, file facts, persistent symbols,
   project-graph edges, and incremental-index statistics.
+- `executions.db`: append-only execution events, checksummed projection snapshots, leases, compatibility
+  metadata, versioned graphs, evidence, effects, approvals, budgets, traces, migration state, shadow samples,
+  and structured divergences.
 - `memory/project.md`: approval-gated, secret-scanned stable project facts.
+- `transactions/`: mutation journals and content-addressed workspace checkpoints used for recovery,
+  rollback, undo/redo, and selective restore.
 - `sandboxes/`: copied workspaces.
 - `debug-bundles/`: explicitly exported redacted diagnostics.
 - `eval-reports/`: saved benchmark results.
@@ -352,5 +553,9 @@ feature or fix branches and keep the CLI usable while core behavior evolves.
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
+- [Durable Execution Engine](docs/EXECUTION_ENGINE.md)
+- [Execution Compatibility And Kernel Freeze](docs/EXECUTION_COMPATIBILITY.md)
+- [Dynamic Platform, Skills, MCP, Plugins, And Agents](docs/PLATFORM.md)
+- [Security Control Review](docs/SECURITY_REVIEW.md)
 - [Install](docs/INSTALL.md)
 - [Known Limitations](docs/KNOWN_LIMITATIONS.md)
