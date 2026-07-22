@@ -504,6 +504,14 @@ def default_shadow_decision(
 ) -> dict[str, Any]:
     if decision_type == "planning":
         return plan_decision_from_state(state)
+    if decision_type == "scheduling":
+        active = [task for task in state.tasks.values() if task.state.value == "running"]
+        return {
+            "task_id": active[0].id if active else None,
+            "policy": legacy.get("policy", "priority"),
+        }
+    if decision_type == "budget":
+        return dict(legacy)
     if decision_type == "tool_selection":
         active = any(task.state.value == "running" for task in state.tasks.values())
         return {"action": legacy.get("action"), "allowed": active}

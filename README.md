@@ -264,7 +264,7 @@ context. `code-agent run ... --execution-id ID` provides an explicit recovery pa
 
 Authority promotion is deliberately sequential: trace/projection, planning/graph, scheduling/budgets,
 verification/diagnosis/replanning, side effects/approvals, recovery/completion, then engine-only operation.
-Only planning authority can currently be promoted. Each gate requires enough relevant shadow samples,
+Planning and scheduling/budget authority can currently be promoted. Each gate requires enough relevant shadow samples,
 zero allowed critical divergences, and a configured maximum divergence rate; unrelated sample types cannot
 satisfy a gate.
 

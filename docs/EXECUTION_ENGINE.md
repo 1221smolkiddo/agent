@@ -73,9 +73,13 @@ the deterministic provider on malformed output, provider failure, or timeout. Th
 remain in the execution trace.
 
 After planning qualification, `AGENT_EXECUTION_MODE=primary` makes the engine graph authoritative while
-the legacy loop remains the worker and side-effect selector. Primary mode fails closed before planning
-promotion and for later authority stages that this host has not adopted. `engine_only` remains disabled
-until all authority stages are qualified.
+the legacy loop remains the worker and side-effect selector. After scheduling-and-budget qualification,
+the engine also selects exactly one dependency-ready task, records the assignment, and supplies the
+worker with that task's bounded context. The worker must stop after its assignment; a later resume gets
+the next assignment. Tool, shell, MCP, and model usage are charged to a task scope and its execution
+ancestors, so parallel task scopes cannot collectively exceed an execution limit. Primary mode fails
+closed before planning promotion and for later authority stages that this host has not adopted.
+`engine_only` remains disabled until all authority stages are qualified.
 
 On startup the host replays active executions and changes orphaned `running` effects to `unknown`.
 Resuming with `--execution-id` requires the same goal and never repeats an ambiguous effect; its adapter

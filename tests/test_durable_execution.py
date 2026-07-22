@@ -177,6 +177,26 @@ def test_approvals_and_hierarchical_budgets_are_resources(tmp_path):
         engine.dispatch(Command("ReserveBudget", execution_id, {"scope": "execution/build", "kind": "tokens", "amount": 41}))
 
 
+def test_child_budget_consumption_is_accounted_against_execution_limit(tmp_path):
+    runtime = _runtime(tmp_path)
+    execution_id, _ = _one_task(runtime)
+    engine = runtime.engine
+    engine.dispatch(Command("ConfigureBudget", execution_id, {
+        "scope": "execution", "limits": {"tool_calls": 2},
+    }))
+    engine.dispatch(Command("ConsumeBudget", execution_id, {
+        "scope": "execution/tasks/a", "kind": "tool_calls", "amount": 1,
+    }))
+    engine.dispatch(Command("ConsumeBudget", execution_id, {
+        "scope": "execution/tasks/b", "kind": "tool_calls", "amount": 1,
+    }))
+    with pytest.raises(InvariantError, match="Budget exhausted"):
+        engine.dispatch(Command("ConsumeBudget", execution_id, {
+            "scope": "execution/tasks/c", "kind": "tool_calls", "amount": 1,
+        }))
+    assert engine.state(execution_id).budgets["execution"].consumed["tool_calls"] == 2
+
+
 def test_execution_lease_uses_fencing_tokens(tmp_path):
     store = SQLiteEventStore(tmp_path / "execution.db")
     engine = ExecutionEngine(store)

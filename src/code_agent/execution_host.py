@@ -245,6 +245,9 @@ class ExecutionRuntimeHost:
         ownership = {
             PromotionStage.TRACE_PROJECTION: {"trace", "projection"},
             PromotionStage.PLANNING: {"trace", "projection", "planning", "graph"},
+            PromotionStage.SCHEDULING_BUDGETS: {
+                "trace", "projection", "planning", "graph", "scheduling", "budgets",
+            },
         }
         return concern in ownership.get(self.stage, set())
 
@@ -276,12 +279,14 @@ class ExecutionRuntimeHost:
                 proposal = self.planning.planner.initial(goal, tasks)
                 self.planning.apply(execution_id, proposal)
             self._record_planner_trace(execution_id, forced_error=provider_error)
+        assigned_task_id = self._schedule_next(execution_id) if self.engine_owns("scheduling") else None
         return AgentExecutionAdapter(
             self.runtime,
             goal,
             execution_id=execution_id,
             budgets=budgets,
-            mirror_all_tasks=True,
+            mirror_all_tasks=not self.engine_owns("scheduling"),
+            task_id=assigned_task_id,
         )
 
     def observe_plan(
@@ -368,12 +373,24 @@ class ExecutionRuntimeHost:
         if not self.engine_owns("planning"):
             return ""
         plan = self.authoritative_plan(execution_id)
-        return (
+        context = (
             "\n\nExecution engine authority: the following versioned plan is authoritative. "
             "Follow it and do not replace its task graph. Report discoveries through normal tool "
             "results; proposed replans are observations until accepted by the engine.\n"
             + plan.model_dump_json(exclude_none=True)
         )
+        if self.engine_owns("scheduling"):
+            state = self.runtime.engine.state(execution_id)
+            active = [task for task in state.tasks.values() if task.state.value == "running"]
+            if active:
+                task = active[0]
+                context += (
+                    "\n\nExecution engine worker assignment: work only on task "
+                    f"`{task.id}` ({task.title}). Its acceptance criteria are authoritative. "
+                    "When that task is complete, stop; the scheduler will assign dependent work "
+                    "on a later resume."
+                )
+        return context
 
     def recovery_context(self, execution_id: str) -> str:
         state = self.runtime.engine.state(execution_id)
@@ -404,8 +421,14 @@ class ExecutionRuntimeHost:
     ) -> HostedActionResult:
         requirement, preferred = self._requirement(action)
         state = self.runtime.engine.state(execution_id)
-        task_id = self._task_for_action(state, task_id, action)
+        if self.engine_owns("scheduling"):
+            task = state.tasks.get(task_id)
+            if task is None or task.state.value != "running":
+                raise RuntimeError("The execution scheduler has not assigned a running task.")
+        else:
+            task_id = self._task_for_action(state, task_id, action)
         criterion_ids = tuple(state.tasks[task_id].criteria) or criterion_ids
+        self._consume_action_budget(execution_id, task_id, action)
         encoded = json.dumps(action, sort_keys=True, default=str)
         idempotency_key = hashlib.sha256(
             f"{execution_id}:{step}:{encoded}".encode()
@@ -469,6 +492,8 @@ class ExecutionRuntimeHost:
             "mode": self.mode.value,
             "stage": migration["stage"],
             "planning_authoritative": self.engine_owns("planning"),
+            "scheduling_authoritative": self.engine_owns("scheduling"),
+            "budgets_authoritative": self.engine_owns("budgets"),
             "side_effect_selection_authoritative": self.engine_owns("side_effects"),
             "recovered_executions": self.recovery_report,
             "planning_diagnostics": list(self.planning_diagnostics),
@@ -483,10 +508,10 @@ class ExecutionRuntimeHost:
                 "AGENT_EXECUTION_MODE=primary requires promotion to the planning stage. "
                 "Qualify shadow planning and run `code-agent execution promote planning` first."
             )
-        if self.mode == MigrationMode.PRIMARY and stage != PromotionStage.PLANNING:
+        if self.mode == MigrationMode.PRIMARY and stage.value > PromotionStage.SCHEDULING_BUDGETS.value:
             raise RuntimeError(
-                "This runtime host currently supports primary authority only at the planning "
-                "stage; later stages must remain in shadow mode until their adapters are adopted."
+                "This runtime host currently supports primary authority through scheduling and "
+                "budgets; later stages must remain in shadow mode until their adapters are adopted."
             )
         if self.mode == MigrationMode.ENGINE_ONLY:
             raise RuntimeError(
@@ -549,6 +574,52 @@ class ExecutionRuntimeHost:
                     self.runtime.engine.dispatch(Command("ConsumeBudget", execution_id, {
                         "scope": "execution", "kind": kind, "amount": float(value),
                     }))
+
+    def _schedule_next(self, execution_id: str) -> str:
+        state = self.runtime.engine.state(execution_id)
+        running = [task for task in state.tasks.values() if task.state.value == "running"]
+        if running:
+            return running[0].id
+        ready = self.runtime.scheduler.ready(state)
+        if not ready:
+            raise RuntimeError("The execution scheduler found no dependency-ready task to assign.")
+        task = ready[0]
+        self.runtime.engine.dispatch(Command("ScheduleTask", execution_id, {
+            "task_id": task.id,
+            "policy": self.runtime.scheduler.policy.name,
+            "worker": "legacy-worker",
+            "reason": "Engine-owned scheduling and budget authority.",
+        }))
+        self.shadow.observe(
+            execution_id,
+            "scheduling",
+            {"task_id": task.id, "policy": self.runtime.scheduler.policy.name},
+            task_id=task.id,
+        )
+        return task.id
+
+    def _consume_action_budget(
+        self, execution_id: str, task_id: str, action: dict[str, Any]
+    ) -> None:
+        if not self.engine_owns("budgets"):
+            return
+        action_type = str(action.get("type", ""))
+        kinds = ["tool_calls"]
+        if action_type in self.SHELL_ACTIONS:
+            kinds.append("shell_commands")
+        if action_type in self.MCP_ACTIONS:
+            kinds.append("network_requests")
+        scope = f"execution/tasks/{task_id}"
+        for kind in kinds:
+            self.runtime.engine.dispatch(Command("ConsumeBudget", execution_id, {
+                "scope": scope, "kind": kind, "amount": 1,
+            }))
+        self.shadow.observe(
+            execution_id,
+            "budget",
+            {"scope": scope, "kinds": kinds, "amount": 1},
+            task_id=task_id,
+        )
 
     @staticmethod
     def _adapter_registry(tools: Any) -> AdapterRegistry:

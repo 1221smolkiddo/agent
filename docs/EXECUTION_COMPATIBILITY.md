@@ -83,7 +83,10 @@ their corresponding scheduling/budget, verification/diagnosis/replanning, side-e
 recovery/completion decision families.
 
 Promotion state and the metrics used to authorize it are durable. Promotion can advance only one stage
-at a time through `code-agent execution promote STAGE`; it cannot skip an authority boundary.
+at a time through `code-agent execution promote STAGE`; it cannot skip an authority boundary. The host
+currently supports primary operation through `scheduling_budgets`: it emits an immutable task-assignment
+record, transitions only a dependency-ready task to running, and accounts action and model usage against
+the assigned task's hierarchical budget scope. It fails closed for later stages.
 
 Normal CLI runs are composed by `ExecutionRuntimeHost`. Shadow planning is independent of the legacy
 plan. Authoritative legacy tool selections are wrapped once by transactional adapters so the event log

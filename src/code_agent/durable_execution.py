@@ -260,6 +260,7 @@ class ExecutionProjection:
     approvals: dict[str, ApprovalProjection] = field(default_factory=dict)
     budgets: dict[str, BudgetProjection] = field(default_factory=dict)
     checkpoints: list[dict[str, Any]] = field(default_factory=list)
+    scheduling_records: list[dict[str, Any]] = field(default_factory=list)
     model_decisions: list[dict[str, Any]] = field(default_factory=list)
     memory_records: list[dict[str, Any]] = field(default_factory=list)
     critiques: list[dict[str, Any]] = field(default_factory=list)
@@ -572,6 +573,8 @@ class ProjectionBuilder:
             state.tasks[p["task_id"]].state = TaskState(p["to"])
             if p["to"] == TaskState.READY.value and p.get("retry"):
                 state.tasks[p["task_id"]].retries += 1
+        elif kind == "TaskScheduled":
+            state.scheduling_records.append(dict(p))
         elif kind == "EvidenceRecorded":
             evidence = EvidenceProjection(
                 p["evidence_id"], p["task_id"], p["kind"], p["summary"],
@@ -613,13 +616,18 @@ class ProjectionBuilder:
         elif kind == "ApprovalRevoked":
             state.approvals[p["approval_id"]].revoked = True
         elif kind in {"BudgetReserved", "BudgetConsumed", "BudgetReleased"}:
-            budget = state.budgets.setdefault(p["scope"], BudgetProjection(p["scope"]))
+            # Account every event at its scope and each ancestor. This makes a task
+            # reservation visible to its subtree and prevents sibling workers from
+            # collectively exceeding an execution-level limit.
+            scopes = _scope_lineage(str(p["scope"]))
             target = "reserved" if kind != "BudgetConsumed" else "consumed"
             sign = -1 if kind == "BudgetReleased" else 1
-            values = getattr(budget, target)
-            values[p["kind"]] = values.get(p["kind"], 0) + sign * float(p["amount"])
-            if kind == "BudgetConsumed" and p.get("from_reservation"):
-                budget.reserved[p["kind"]] = budget.reserved.get(p["kind"], 0) - float(p["amount"])
+            for scope in scopes:
+                budget = state.budgets.setdefault(scope, BudgetProjection(scope))
+                values = getattr(budget, target)
+                values[p["kind"]] = values.get(p["kind"], 0) + sign * float(p["amount"])
+                if kind == "BudgetConsumed" and p.get("from_reservation"):
+                    budget.reserved[p["kind"]] = budget.reserved.get(p["kind"], 0) - float(p["amount"])
         elif kind == "BudgetConfigured":
             state.budgets[p["scope"]] = BudgetProjection(p["scope"], dict(p["limits"]))
         elif kind == "ModelRouted":
@@ -750,6 +758,7 @@ class ExecutionEngine:
         handlers: dict[str, Callable[[ExecutionProjection, dict[str, Any]], list[tuple[str, dict[str, Any]]]]] = {
             "AddTasks": self._add_tasks, "MutateGraph": self._mutate_graph,
             "TransitionTask": self._transition_task, "RecordEvidence": self._record_evidence,
+            "ScheduleTask": self._schedule_task,
             "VerifyCriterion": self._verify_criterion, "RecordDiagnosis": self._record_diagnosis,
             "RequestEffect": self._request_effect, "ChangeEffectState": self._change_effect,
             "RequestApproval": self._request_approval, "GrantApproval": self._grant_approval,
@@ -875,6 +884,28 @@ class ExecutionEngine:
         if retry and task.retries >= task.retry_limit:
             raise InvariantError("Task retry budget is exhausted.")
         return [("TaskTransitioned", {"task_id": task.id, "from": task.state.value, "to": target.value, "reason": p.get("reason", ""), "retry": retry})]
+
+    def _schedule_task(self, state: ExecutionProjection, p: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+        task = state.tasks[p["task_id"]]
+        if task.state not in {TaskState.QUEUED, TaskState.READY}:
+            raise InvariantError("Only queued or ready tasks can be scheduled.")
+        unmet = [dep for dep in task.dependencies if state.tasks[dep].state != TaskState.COMPLETE]
+        if unmet:
+            raise InvariantError("Scheduler cannot run a dependency-blocked task: " + ", ".join(unmet))
+        facts: list[tuple[str, dict[str, Any]]] = [("TaskScheduled", {
+            "task_id": task.id, "policy": p.get("policy", "priority"),
+            "worker": p.get("worker", "legacy-worker"), "reason": p.get("reason", ""),
+        })]
+        if task.state == TaskState.QUEUED:
+            facts.append(("TaskTransitioned", {
+                "task_id": task.id, "from": task.state.value, "to": "ready",
+                "reason": "Selected by the execution scheduler.", "retry": False,
+            }))
+        facts.append(("TaskTransitioned", {
+            "task_id": task.id, "from": "ready", "to": "running",
+            "reason": "Assigned to the execution worker.", "retry": False,
+        }))
+        return facts
 
     def _record_evidence(self, state: ExecutionProjection, p: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
         task_id = p["task_id"]
@@ -1495,6 +1526,7 @@ class AgentExecutionAdapter:
         execution_id: str | None = None,
         budgets: dict[str, float] | None = None,
         mirror_all_tasks: bool = False,
+        task_id: str | None = None,
     ) -> None:
         self.runtime = runtime
         self.execution_id = execution_id or runtime.create_planned(goal, budgets=budgets)
@@ -1510,10 +1542,16 @@ class AgentExecutionAdapter:
         ] or [
             task for task in state.tasks.values() if task.state not in TERMINAL_TASK_STATES
         ]
+        if task_id is not None:
+            task = state.tasks.get(task_id)
+            if task is None or task.state not in {TaskState.READY, TaskState.RUNNING}:
+                raise InvariantError("Assigned execution task is not ready for the worker.")
+            candidates = [task]
         if not candidates:
             raise InvariantError("Execution has no resumable task for the legacy worker.")
         self.task_id = candidates[0].id
         self.criterion_id = state.tasks[self.task_id].criteria[0]
+        self.budget_scope = f"execution/tasks/{self.task_id}"
         self._finished = False
         task = state.tasks[self.task_id]
         if task.state == TaskState.QUEUED:
@@ -1574,7 +1612,7 @@ class AgentExecutionAdapter:
         for kind, amount in usage.items():
             if amount is not None and float(amount) >= 0:
                 engine.dispatch(Command("ConsumeBudget", self.execution_id, {
-                    "scope": "execution", "kind": kind, "amount": float(amount),
+                    "scope": self.budget_scope, "kind": kind, "amount": float(amount),
                 }))
 
     def action_completed(self, effect_id: str, *, ok: bool, output: str, elapsed_ms: float) -> str:
@@ -1635,7 +1673,8 @@ class AgentExecutionAdapter:
                     "Authoritative legacy outcome could not be projected across the execution DAG."
                 )
         engine.checkpoint(self.execution_id, "agent_run_finalized")
-        engine.dispatch(Command("CompleteExecution", self.execution_id))
+        if all(task.state == TaskState.COMPLETE for task in engine.state(self.execution_id).tasks.values()):
+            engine.dispatch(Command("CompleteExecution", self.execution_id))
 
     def _complete_task_from_authoritative_outcome(
         self, task_id: str, summary: str
@@ -1747,6 +1786,7 @@ def projection_from_dict(raw: dict[str, Any]) -> ExecutionProjection:
     for key, item in raw.get("budgets", {}).items():
         state.budgets[key] = BudgetProjection(**item)
     state.checkpoints = list(raw.get("checkpoints", []))
+    state.scheduling_records = list(raw.get("scheduling_records", []))
     state.model_decisions = list(raw.get("model_decisions", []))
     state.memory_records = list(raw.get("memory_records", []))
     state.critiques = list(raw.get("critiques", []))

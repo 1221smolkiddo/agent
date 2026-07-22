@@ -605,6 +605,52 @@ def test_primary_host_requires_planning_promotion_and_owns_only_the_graph(tmp_pa
     assert "authoritative" in primary.planning_context(adapter.execution_id)
 
 
+def test_primary_scheduling_assigns_one_task_and_enforces_task_budget(tmp_path):
+    class Tools:
+        def run(self, _action):
+            return ToolResult(ok=True, output="ok")
+
+    path = tmp_path / "host.db"
+    divergences = ShadowDivergenceStore(path)
+    for _index in range(10):
+        divergences.record_comparison("run", "planning", matched=True)
+    migration = MigrationStateStore(path)
+    migration.promote(
+        PromotionStage.PLANNING, divergences,
+        PromotionPolicy(minimum_samples=10, maximum_divergence_rate=0),
+    )
+    for _index in range(10):
+        divergences.record_comparison("run", "scheduling", matched=True)
+        divergences.record_comparison("run", "budget", matched=True)
+    migration.promote(
+        PromotionStage.SCHEDULING_BUDGETS, divergences,
+        PromotionPolicy(minimum_samples=10, maximum_divergence_rate=0),
+    )
+
+    host = ExecutionRuntimeHost(path, "primary", tools=Tools(), recover_on_start=False)
+    adapter = host.begin_legacy_run("inspect README", budgets={"tool_calls": 1})
+    state = host.runtime.engine.state(adapter.execution_id)
+    assert host.engine_owns("scheduling")
+    assert host.engine_owns("budgets")
+    assert state.scheduling_records[-1]["task_id"] == adapter.task_id
+    assert state.tasks[adapter.task_id].state.value == "running"
+    assert "worker assignment" in host.planning_context(adapter.execution_id)
+
+    host.execute_action(
+        adapter.execution_id, adapter.task_id, 1,
+        {"type": "read_file", "path": "README.md"},
+    )
+    with pytest.raises(InvariantError, match="Budget exhausted"):
+        host.execute_action(
+            adapter.execution_id, adapter.task_id, 2,
+            {"type": "read_file", "path": "README.md"},
+        )
+    adapter.finish(blocked=False, summary="first scheduled task complete")
+    state = host.runtime.engine.state(adapter.execution_id)
+    assert state.status == ExecutionStatus.ACTIVE
+    assert state.tasks[adapter.task_id].state.value == "complete"
+
+
 def test_planning_promotion_ignores_unrelated_shadow_samples(tmp_path):
     path = tmp_path / "host.db"
     divergences = ShadowDivergenceStore(path)
