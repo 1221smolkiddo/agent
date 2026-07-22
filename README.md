@@ -259,12 +259,12 @@ context. `code-agent run ... --execution-id ID` provides an explicit recovery pa
 | --- | --- |
 | `legacy` | Runs the prior loop without an execution host. Intended only as a migration fallback. |
 | `shadow` | Default. The legacy loop remains authoritative while the engine independently plans, projects, journals the single authoritative call, and records divergences. |
-| `primary` | Available only after planning qualification. The engine owns the versioned plan and graph; the legacy loop remains the worker and side-effect selector. |
+| `primary` | Available after the relevant promotion gate. The engine currently owns planning, graph, scheduling, budgets, verification, diagnosis, replanning, and task acceptance; the legacy loop remains the worker and side-effect selector. |
 | `engine_only` | Fails closed until every later authority stage is implemented and qualified. |
 
 Authority promotion is deliberately sequential: trace/projection, planning/graph, scheduling/budgets,
 verification/diagnosis/replanning, side effects/approvals, recovery/completion, then engine-only operation.
-Planning and scheduling/budget authority can currently be promoted. Each gate requires enough relevant shadow samples,
+Planning, scheduling/budget, and verification/diagnosis/replanning authority can currently be promoted. Each gate requires enough relevant shadow samples,
 zero allowed critical divergences, and a configured maximum divergence rate; unrelated sample types cannot
 satisfy a gate.
 

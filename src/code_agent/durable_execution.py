@@ -21,6 +21,15 @@ CURRENT_COMPATIBILITY_VERSION = "1"
 CURRENT_EVENT_SCHEMA_VERSION = 1
 SUPPORTED_COMPATIBILITY_VERSIONS = frozenset({"1"})
 
+# A worker may submit observations and invoke its pre-authorized effects, but it
+# cannot turn those observations into durable lifecycle truth.
+WORKER_FORBIDDEN_COMMANDS = frozenset({
+    "TransitionTask", "CompleteExecution", "FailExecution", "VerifyCriterion",
+    "RecordVerificationDecision", "RecordDiagnosis", "RecordRepairDecision",
+    "MutateGraph", "AddTasks", "ScheduleTask", "ConfigureBudget", "ReserveBudget",
+    "ConsumeBudget", "ReleaseBudget", "RequestApproval", "GrantApproval", "RevokeApproval",
+})
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
@@ -53,6 +62,7 @@ class TaskState(str, Enum):
     REPLANNING = "replanning"
     VERIFIED = "verified"
     COMPLETE = "complete"
+    SUPERSEDED = "superseded"
     FAILED = "failed"
     CANCELLED = "cancelled"
 
@@ -74,7 +84,26 @@ class EffectState(str, Enum):
     UNKNOWN = "unknown"
 
 
-TERMINAL_TASK_STATES = {TaskState.COMPLETE, TaskState.FAILED, TaskState.CANCELLED}
+class VerificationStatus(str, Enum):
+    VERIFIED = "verified"
+    FAILED = "failed"
+    INCONCLUSIVE = "inconclusive"
+    BLOCKED = "blocked"
+
+
+class BlockedReason(str, Enum):
+    APPROVAL = "approval"
+    EXTERNAL_SERVICE = "external_service"
+    MISSING_RESOURCE = "missing_resource"
+    DEPENDENCY = "dependency"
+    LEASE = "lease"
+    BUDGET = "budget"
+    POLICY = "policy"
+    USER_INPUT = "user_input"
+    OTHER = "other"
+
+
+TERMINAL_TASK_STATES = {TaskState.COMPLETE, TaskState.SUPERSEDED, TaskState.FAILED, TaskState.CANCELLED}
 TASK_TRANSITIONS: dict[TaskState, frozenset[TaskState]] = {
     TaskState.QUEUED: frozenset({TaskState.READY, TaskState.BLOCKED, TaskState.CANCELLED}),
     TaskState.READY: frozenset({TaskState.RUNNING, TaskState.BLOCKED, TaskState.CANCELLED}),
@@ -83,7 +112,7 @@ TASK_TRANSITIONS: dict[TaskState, frozenset[TaskState]] = {
     TaskState.BLOCKED: frozenset({TaskState.READY, TaskState.FAILED, TaskState.CANCELLED}),
     TaskState.VERIFYING: frozenset({TaskState.VERIFIED, TaskState.DIAGNOSING}),
     TaskState.DIAGNOSING: frozenset({TaskState.READY, TaskState.REPLANNING, TaskState.FAILED}),
-    TaskState.REPLANNING: frozenset({TaskState.READY, TaskState.FAILED}),
+    TaskState.REPLANNING: frozenset({TaskState.READY, TaskState.SUPERSEDED, TaskState.FAILED}),
     TaskState.VERIFIED: frozenset({TaskState.COMPLETE}),
     TaskState.COMPLETE: frozenset(),
     TaskState.FAILED: frozenset(),
@@ -174,6 +203,7 @@ class TaskProjection:
     retry_limit: int = 2
     retries: int = 0
     assigned_agent: str | None = None
+    blocked_reason: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -196,6 +226,22 @@ class EvidenceProjection:
     payload: dict[str, Any]
     version: int
     supersedes: str | None = None
+
+
+@dataclass(frozen=True)
+class VerificationDecision:
+    """Policy-owned, immutable acceptance decision; never a worker state request."""
+
+    task_id: str
+    criterion_id: str
+    evidence_ids: tuple[str, ...]
+    policy: str
+    decision: VerificationStatus
+    confidence: float
+    reasoning_summary: str
+    latency_ms: float = 0.0
+    cost: float = 0.0
+    blocked_reason: str | None = None
 
 
 @dataclass
@@ -261,6 +307,8 @@ class ExecutionProjection:
     budgets: dict[str, BudgetProjection] = field(default_factory=dict)
     checkpoints: list[dict[str, Any]] = field(default_factory=list)
     scheduling_records: list[dict[str, Any]] = field(default_factory=list)
+    task_execution_results: list[dict[str, Any]] = field(default_factory=list)
+    repair_decisions: list[dict[str, Any]] = field(default_factory=list)
     model_decisions: list[dict[str, Any]] = field(default_factory=list)
     memory_records: list[dict[str, Any]] = field(default_factory=list)
     critiques: list[dict[str, Any]] = field(default_factory=list)
@@ -570,9 +618,11 @@ class ProjectionBuilder:
             if "metadata" in p:
                 task.metadata = {**task.metadata, **dict(p["metadata"])}
         elif kind == "TaskTransitioned":
-            state.tasks[p["task_id"]].state = TaskState(p["to"])
+            task = state.tasks[p["task_id"]]
+            task.state = TaskState(p["to"])
+            task.blocked_reason = p.get("blocked_reason") if task.state == TaskState.BLOCKED else None
             if p["to"] == TaskState.READY.value and p.get("retry"):
-                state.tasks[p["task_id"]].retries += 1
+                task.retries += 1
         elif kind == "TaskScheduled":
             state.scheduling_records.append(dict(p))
         elif kind == "EvidenceRecorded":
@@ -586,12 +636,28 @@ class ProjectionBuilder:
         elif kind in {"VerificationPassed", "VerificationFailed"}:
             record = dict(p)
             record["passed"] = kind == "VerificationPassed"
+            record["decision"] = (
+                VerificationStatus.VERIFIED.value
+                if kind == "VerificationPassed" else VerificationStatus.FAILED.value
+            )
+            record.setdefault("policy", "legacy")
+            record.setdefault("reasoning_summary", str(p.get("reason", "")))
             state.verifications[p["verification_id"]] = record
             criterion = state.criteria[p["criterion_id"]]
             criterion.verification_ids.append(p["verification_id"])
             criterion.satisfied = kind == "VerificationPassed"
+        elif kind == "VerificationDecisionRecorded":
+            record = dict(p)
+            state.verifications[p["verification_id"]] = record
+            criterion = state.criteria[p["criterion_id"]]
+            criterion.verification_ids.append(p["verification_id"])
+            criterion.satisfied = p["decision"] == VerificationStatus.VERIFIED.value
         elif kind == "DiagnosisRecorded":
             state.diagnoses.append(dict(p))
+        elif kind == "TaskExecutionResultRecorded":
+            state.task_execution_results.append(dict(p))
+        elif kind == "RepairDecisionRecorded":
+            state.repair_decisions.append(dict(p))
         elif kind == "EffectRequested":
             effect = EffectProjection(
                 p["effect_id"], p["task_id"], p["kind"], p["idempotency_key"],
@@ -733,6 +799,8 @@ class ExecutionEngine:
     def _decide(self, state: ExecutionProjection, command: Command) -> list[tuple[str, dict[str, Any]]]:
         p = command.payload
         t = command.type
+        if command.actor.startswith("worker") and t in WORKER_FORBIDDEN_COMMANDS:
+            raise PermissionError(f"Worker authority cannot issue {t}.")
         if t == "CreateExecution":
             if state.sequence:
                 raise InvariantError("Execution already exists.")
@@ -759,7 +827,11 @@ class ExecutionEngine:
             "AddTasks": self._add_tasks, "MutateGraph": self._mutate_graph,
             "TransitionTask": self._transition_task, "RecordEvidence": self._record_evidence,
             "ScheduleTask": self._schedule_task,
-            "VerifyCriterion": self._verify_criterion, "RecordDiagnosis": self._record_diagnosis,
+            "VerifyCriterion": self._verify_criterion,
+            "RecordVerificationDecision": self._record_verification_decision,
+            "RecordDiagnosis": self._record_diagnosis,
+            "RecordTaskExecutionResult": self._record_task_execution_result,
+            "RecordRepairDecision": self._record_repair_decision,
             "RequestEffect": self._request_effect, "ChangeEffectState": self._change_effect,
             "RequestApproval": self._request_approval, "GrantApproval": self._grant_approval,
             "RevokeApproval": self._revoke_approval, "ConfigureBudget": self._configure_budget,
@@ -778,7 +850,7 @@ class ExecutionEngine:
         if t in simple:
             return [(simple[t], dict(p))]
         if t == "CompleteExecution":
-            if any(task.state != TaskState.COMPLETE for task in state.tasks.values()):
+            if any(task.state not in {TaskState.COMPLETE, TaskState.SUPERSEDED} for task in state.tasks.values()):
                 raise InvariantError("Execution has incomplete tasks.")
             return [("ExecutionCompleted", dict(p))]
         raise ValueError(f"Unsupported execution command: {t}")
@@ -816,11 +888,16 @@ class ExecutionEngine:
     def _mutate_graph(self, state: ExecutionProjection, p: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
         if int(p.get("base_version", -1)) != state.graph_version:
             raise ConcurrencyError("Graph mutation is based on a stale version.")
+        repair_decision_id = p.get("repair_decision_id")
+        if repair_decision_id and repair_decision_id not in {
+            item["repair_id"] for item in state.repair_decisions
+        }:
+            raise InvariantError("Graph mutation references an unknown repair decision.")
         version = state.graph_version + 1
         facts: list[tuple[str, dict[str, Any]]] = [("GraphVersionCreated", {
             "version": version, "parent_version": state.graph_version,
             "rationale": p.get("rationale", "replan"), "mutation": p.get("operation", "update"),
-            "affected_subtree": p.get("affected_subtree"),
+            "affected_subtree": p.get("affected_subtree"), "repair_decision_id": p.get("repair_decision_id"),
         })]
         operation = p.get("operation")
         if operation == "delete":
@@ -880,10 +957,29 @@ class ExecutionEngine:
             unmet = [cid for cid in task.criteria if not state.criteria[cid].satisfied]
             if unmet:
                 raise InvariantError("Task criteria are not verified: " + ", ".join(unmet))
+            without_decision = [
+                criterion_id for criterion_id in task.criteria
+                if not any(
+                    item.get("criterion_id") == criterion_id
+                    and item.get("decision") == VerificationStatus.VERIFIED.value
+                    for item in state.verifications.values()
+                )
+            ]
+            if without_decision:
+                raise InvariantError(
+                    "Task criteria lack a persisted verified decision: " + ", ".join(without_decision)
+                )
+        blocked_reason = p.get("blocked_reason")
+        if target == TaskState.BLOCKED:
+            if blocked_reason not in {item.value for item in BlockedReason}:
+                raise InvariantError("Blocked tasks require a typed blocked_reason.")
         retry = task.state in {TaskState.DIAGNOSING, TaskState.REPLANNING} and target == TaskState.READY
         if retry and task.retries >= task.retry_limit:
             raise InvariantError("Task retry budget is exhausted.")
-        return [("TaskTransitioned", {"task_id": task.id, "from": task.state.value, "to": target.value, "reason": p.get("reason", ""), "retry": retry})]
+        return [("TaskTransitioned", {
+            "task_id": task.id, "from": task.state.value, "to": target.value,
+            "reason": p.get("reason", ""), "blocked_reason": blocked_reason, "retry": retry,
+        })]
 
     def _schedule_task(self, state: ExecutionProjection, p: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
         task = state.tasks[p["task_id"]]
@@ -940,13 +1036,74 @@ class ExecutionEngine:
         })]
 
     @staticmethod
+    def _record_verification_decision(
+        state: ExecutionProjection, p: dict[str, Any]
+    ) -> list[tuple[str, dict[str, Any]]]:
+        criterion = state.criteria[p["criterion_id"]]
+        evidence_ids = list(p.get("evidence_ids", []))
+        if any(eid not in criterion.evidence_ids for eid in evidence_ids):
+            raise InvariantError("Verification decision references unlinked evidence.")
+        decision = VerificationStatus(p["decision"])
+        confidence = float(p.get("confidence", 0))
+        if not 0 <= confidence <= 1:
+            raise InvariantError("Verification confidence must be between zero and one.")
+        blocked_reason = p.get("blocked_reason")
+        if decision == VerificationStatus.BLOCKED and blocked_reason not in {item.value for item in BlockedReason}:
+            raise InvariantError("Blocked verification requires a typed blocked_reason.")
+        return [("VerificationDecisionRecorded", {
+            "verification_id": p.get("verification_id") or _id("verify"),
+            "task_id": criterion.task_id, "criterion_id": criterion.id,
+            "evidence_ids": evidence_ids, "policy": str(p.get("policy", "normal")),
+            "decision": decision.value, "confidence": confidence,
+            "reasoning_summary": str(p.get("reasoning_summary", "")),
+            "latency_ms": float(p.get("latency_ms", 0)), "cost": float(p.get("cost", 0)),
+            "blocked_reason": blocked_reason,
+        })]
+
+    @staticmethod
     def _record_diagnosis(state: ExecutionProjection, p: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
         if p["task_id"] not in state.tasks:
             raise InvariantError("Diagnosis task does not exist.")
         confidence = float(p.get("confidence", 0))
         if not 0 <= confidence <= 1:
             raise InvariantError("Diagnosis confidence must be between zero and one.")
-        return [("DiagnosisRecorded", {**p, "diagnosis_id": p.get("diagnosis_id") or _id("diagnosis")})]
+        decision_ids = list(p.get("verification_ids", []))
+        if any(item not in state.verifications for item in decision_ids):
+            raise InvariantError("Diagnosis references an unknown verification decision.")
+        return [("DiagnosisRecorded", {
+            **p, "verification_ids": decision_ids,
+            "diagnosis_id": p.get("diagnosis_id") or _id("diagnosis"),
+        })]
+
+    @staticmethod
+    def _record_task_execution_result(
+        state: ExecutionProjection, p: dict[str, Any]
+    ) -> list[tuple[str, dict[str, Any]]]:
+        task = state.tasks[p["task_id"]]
+        if task.state != TaskState.RUNNING:
+            raise InvariantError("Only the running assigned task may report observations.")
+        assessment = str(p.get("worker_assessment", "unknown"))
+        if assessment not in {"completed", "partial", "blocked", "failed", "unknown"}:
+            raise InvariantError("Task execution result has an invalid worker_assessment.")
+        return [("TaskExecutionResultRecorded", {
+            "result_id": p.get("result_id") or _id("task-result"), "task_id": task.id,
+            "evidence_ids": list(p.get("evidence_ids", [])),
+            "artifacts": list(p.get("artifacts", [])), "observed_effects": list(p.get("observed_effects", [])),
+            "metrics": dict(p.get("metrics", {})), "warnings": list(p.get("warnings", [])),
+            "worker_assessment": assessment,
+        })]
+
+    @staticmethod
+    def _record_repair_decision(
+        state: ExecutionProjection, p: dict[str, Any]
+    ) -> list[tuple[str, dict[str, Any]]]:
+        if p["task_id"] not in state.tasks or p["diagnosis_id"] not in {item["diagnosis_id"] for item in state.diagnoses}:
+            raise InvariantError("Repair decision requires an existing task and diagnosis.")
+        return [("RepairDecisionRecorded", {
+            **p, "repair_id": p.get("repair_id") or _id("repair"),
+            "expected_criteria": list(p.get("expected_criteria", [])),
+            "approver": p.get("approver"),
+        })]
 
     @staticmethod
     def _request_effect(state: ExecutionProjection, p: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
@@ -1094,28 +1251,65 @@ class Scheduler:
 
 
 class CriterionVerifier:
+    policy = "normal"
+
+    def evaluate(
+        self, criterion: CriterionProjection, evidence: list[EvidenceProjection]
+    ) -> VerificationDecision:
+        if not evidence:
+            return VerificationDecision(
+                criterion.task_id, criterion.id, (), self.policy,
+                VerificationStatus.INCONCLUSIVE, 0.0,
+                "No immutable evidence is linked to this criterion.",
+            )
+        failed = [item for item in evidence if item.payload.get("ok") is False]
+        if failed:
+            return VerificationDecision(
+                criterion.task_id, criterion.id, tuple(item.id for item in evidence), self.policy,
+                VerificationStatus.FAILED, min(0.95, 0.6 + 0.1 * len(failed)),
+                f"{len(failed)} linked evidence record(s) report failure.",
+            )
+        return VerificationDecision(
+            criterion.task_id, criterion.id, tuple(item.id for item in evidence), self.policy,
+            VerificationStatus.VERIFIED, min(0.99, 0.8 + 0.03 * len(evidence)),
+            f"Satisfied by {len(evidence)} immutable evidence record(s).",
+        )
+
     def verify(
         self, criterion: CriterionProjection, evidence: list[EvidenceProjection]
     ) -> tuple[bool, str]:
-        if not evidence:
-            return False, "No evidence is linked to the criterion."
-        failed = [item for item in evidence if item.payload.get("ok") is False]
-        if failed:
-            return False, f"{len(failed)} linked evidence record(s) report failure."
-        return True, f"Satisfied by {len(evidence)} immutable evidence record(s)."
+        decision = self.evaluate(criterion, evidence)
+        return decision.decision == VerificationStatus.VERIFIED, decision.reasoning_summary
 
 
 class Diagnoser:
-    def diagnose(self, task: TaskProjection, evidence: list[EvidenceProjection]) -> dict[str, Any]:
-        failures = [item for item in evidence if item.payload.get("ok") is False]
-        category = "verification" if failures else "insufficient_evidence"
-        confidence = min(0.95, 0.5 + 0.1 * len(failures))
+    def diagnose(self, task: TaskProjection, decisions: list[dict[str, Any] | EvidenceProjection]) -> dict[str, Any]:
+        """Explain persisted verification decisions.
+
+        EvidenceProjection input remains a compatibility fallback for callers from
+        compatibility version 1; the verification-primary host never uses it.
+        """
+        legacy_evidence = [item for item in decisions if isinstance(item, EvidenceProjection)]
+        records = [item for item in decisions if isinstance(item, dict)]
+        failed = [item for item in records if item.get("decision") == VerificationStatus.FAILED.value]
+        evidence_failures = [item for item in legacy_evidence if item.payload.get("ok") is False]
+        category = "verification" if failed else "insufficient_evidence"
+        if evidence_failures:
+            category = "verification"
+        confidence = min(0.95, 0.5 + 0.1 * max(len(failed), len(evidence_failures)))
         return {
             "task_id": task.id, "classification": category,
-            "hypothesis": failures[-1].summary if failures else "Required evidence is missing.",
+            "hypothesis": (
+                failed[-1].get("reasoning_summary", "Verification failed.") if failed
+                else (evidence_failures[-1].summary if evidence_failures else "Required evidence is missing.")
+            ),
             "confidence": confidence,
             "repair_strategy": "Repair the narrow failing scope and regenerate only affected evidence.",
-            "evidence_ids": [item.id for item in failures],
+            "verification_ids": [item["verification_id"] for item in records],
+            "evidence_ids": (
+                [evidence_id for item in records for evidence_id in item.get("evidence_ids", [])]
+                or [item.id for item in legacy_evidence]
+            ),
         }
 
 
@@ -1344,7 +1538,11 @@ class AutonomousExecutor:
                             "scope": "task.execute", "risk": "high", "task_ids": [task.id],
                             "reason": f"Human checkpoint for risk score {task.risk:g}",
                         })
-                        dispatch("TransitionTask", {"task_id": task.id, "to": "blocked", "reason": "awaiting human checkpoint"})
+                        dispatch("TransitionTask", {
+                            "task_id": task.id, "to": "blocked",
+                            "reason": "awaiting human checkpoint",
+                            "blocked_reason": BlockedReason.APPROVAL.value,
+                        })
                         continue
                     if task.state == TaskState.QUEUED:
                         dispatch("TransitionTask", {"task_id": task.id, "to": "ready"})
@@ -1391,35 +1589,42 @@ class AutonomousExecutor:
             evidence_ids.append(event.payload["evidence_id"])
         dispatch("TransitionTask", {"task_id": task_id, "to": "verifying"})
         current = self.runtime.engine.state(execution_id)
+        decisions: list[dict[str, Any]] = []
         passed_all = True
         for criterion_id in task.criteria:
             criterion = current.criteria[criterion_id]
             linked = [current.evidence[eid] for eid in evidence_ids]
-            passed, reason = self.runtime.verifier.verify(criterion, linked)
-            passed_all &= passed
-            dispatch("VerifyCriterion", {
-                "criterion_id": criterion_id, "evidence_ids": evidence_ids,
-                "passed": passed, "reason": reason, "verifier": "criterion-engine",
-            })
+            decision = self.runtime.verifier.evaluate(criterion, linked)
+            event = dispatch("RecordVerificationDecision", {
+                "criterion_id": criterion_id, "evidence_ids": list(decision.evidence_ids),
+                "policy": decision.policy, "decision": decision.decision.value,
+                "confidence": decision.confidence, "reasoning_summary": decision.reasoning_summary,
+                "latency_ms": decision.latency_ms, "cost": decision.cost,
+            })[0]
+            decisions.append(event.payload)
+            passed_all &= decision.decision == VerificationStatus.VERIFIED
         if passed_all:
             dispatch("TransitionTask", {"task_id": task_id, "to": "verified"})
             dispatch("TransitionTask", {"task_id": task_id, "to": "complete"})
             return
         dispatch("TransitionTask", {"task_id": task_id, "to": "diagnosing"})
         current = self.runtime.engine.state(execution_id)
-        diagnosis = self.runtime.diagnoser.diagnose(
-            current.tasks[task_id], [current.evidence[eid] for eid in evidence_ids]
-        )
+        diagnosis = self.runtime.diagnoser.diagnose(current.tasks[task_id], decisions)
         diagnosis = dispatch("RecordDiagnosis", diagnosis)[0].payload
         if current.tasks[task_id].retries < current.tasks[task_id].retry_limit:
             dispatch("TransitionTask", {"task_id": task_id, "to": "replanning"})
             refreshed = self.runtime.engine.state(execution_id)
+            repair = dispatch("RecordRepairDecision", {
+                "task_id": task_id, "diagnosis_id": diagnosis["diagnosis_id"],
+                "repair_policy": {"max_retries": current.tasks[task_id].retry_limit},
+                "reason": diagnosis["repair_strategy"], "expected_criteria": list(task.criteria),
+            })[0].payload
             dispatch("MutateGraph", {
                 "base_version": refreshed.graph_version,
                 "operation": "update",
                 "task_id": task_id,
                 "affected_subtree": task_id,
-                "rationale": diagnosis["repair_strategy"],
+                "rationale": diagnosis["repair_strategy"], "repair_decision_id": repair["repair_id"],
                 "changes": {"metadata": {
                     "last_diagnosis": diagnosis["diagnosis_id"],
                     "repair_strategy": diagnosis["repair_strategy"],
@@ -1765,7 +1970,8 @@ def projection_from_dict(raw: dict[str, Any]) -> ExecutionProjection:
             priority=item.get("priority", 0), risk=item.get("risk", 0),
             estimated_cost=item.get("estimated_cost", 0), criteria=tuple(item.get("criteria", [])),
             retry_limit=item.get("retry_limit", 2), retries=item.get("retries", 0),
-            assigned_agent=item.get("assigned_agent"), metadata=dict(item.get("metadata", {})),
+            assigned_agent=item.get("assigned_agent"), blocked_reason=item.get("blocked_reason"),
+            metadata=dict(item.get("metadata", {})),
         )
     for key, item in raw.get("criteria", {}).items():
         state.criteria[key] = CriterionProjection(**item)
@@ -1787,6 +1993,8 @@ def projection_from_dict(raw: dict[str, Any]) -> ExecutionProjection:
         state.budgets[key] = BudgetProjection(**item)
     state.checkpoints = list(raw.get("checkpoints", []))
     state.scheduling_records = list(raw.get("scheduling_records", []))
+    state.task_execution_results = list(raw.get("task_execution_results", []))
+    state.repair_decisions = list(raw.get("repair_decisions", []))
     state.model_decisions = list(raw.get("model_decisions", []))
     state.memory_records = list(raw.get("memory_records", []))
     state.critiques = list(raw.get("critiques", []))

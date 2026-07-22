@@ -960,7 +960,15 @@ class CodingAgent:
                     self.durable_goal or result.clean_task or result.task,
                     task_id=self._durable_adapter.task_id,
                 )
-            self._durable_adapter.finish(blocked=result.blocked, summary=result.message)
+            if self.runtime_host is not None and self.runtime_host.engine_owns("verification"):
+                self.runtime_host.finalize_worker_result(
+                    self._durable_adapter.execution_id,
+                    self._durable_adapter.task_id,
+                    worker_assessment="failed" if result.blocked else "completed",
+                    summary=result.message,
+                )
+            else:
+                self._durable_adapter.finish(blocked=result.blocked, summary=result.message)
             result.durable_execution_id = self._durable_adapter.execution_id
             if self.shadow_runtime is not None:
                 self.shadow_runtime.observe(

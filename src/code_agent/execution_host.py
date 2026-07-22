@@ -9,10 +9,13 @@ from typing import Any, Protocol
 
 from .durable_execution import (
     AgentExecutionAdapter,
+    BlockedReason,
     Command,
     DurableExecutionRuntime,
     ExecutionProjection,
     ExecutionStatus,
+    TaskState,
+    VerificationStatus,
 )
 from .execution_adapters import (
     FilesystemAdapter,
@@ -248,6 +251,10 @@ class ExecutionRuntimeHost:
             PromotionStage.SCHEDULING_BUDGETS: {
                 "trace", "projection", "planning", "graph", "scheduling", "budgets",
             },
+            PromotionStage.VERIFICATION_REPLANNING: {
+                "trace", "projection", "planning", "graph", "scheduling", "budgets",
+                "verification", "diagnosis", "replanning", "completion",
+            },
         }
         return concern in ownership.get(self.stage, set())
 
@@ -467,6 +474,138 @@ class ExecutionRuntimeHost:
             result.replayed,
         )
 
+    def finalize_worker_result(
+        self,
+        execution_id: str,
+        task_id: str,
+        *,
+        worker_assessment: str,
+        summary: str,
+    ) -> ExecutionProjection:
+        """Accept worker observations, then let the engine decide the task outcome.
+
+        This is deliberately the only host path that can advance a worker-assigned
+        task beyond RUNNING in verification-primary mode.
+        """
+        state = self.runtime.engine.state(execution_id)
+        task = state.tasks[task_id]
+        if task.state != TaskState.RUNNING:
+            raise RuntimeError("Only the currently assigned running task can be finalized.")
+        evidence_ids = sorted({
+            evidence_id
+            for criterion_id in task.criteria
+            for evidence_id in state.criteria[criterion_id].evidence_ids
+        })
+        self.runtime.engine.dispatch(Command("RecordTaskExecutionResult", execution_id, {
+            "task_id": task_id,
+            "evidence_ids": evidence_ids,
+            "artifacts": [], "observed_effects": evidence_ids,
+            "metrics": {}, "warnings": [summary[:1000]] if summary else [],
+            "worker_assessment": worker_assessment,
+        }, actor="worker:legacy"))
+        self.runtime.engine.dispatch(Command("TransitionTask", execution_id, {
+            "task_id": task_id, "to": "verifying", "reason": "Worker observations submitted.",
+        }))
+        decisions: list[dict[str, Any]] = []
+        state = self.runtime.engine.state(execution_id)
+        for criterion_id in task.criteria:
+            criterion = state.criteria[criterion_id]
+            evidence = [state.evidence[item] for item in criterion.evidence_ids]
+            decision = self.runtime.verifier.evaluate(criterion, evidence)
+            event = self.runtime.engine.dispatch(Command("RecordVerificationDecision", execution_id, {
+                "criterion_id": criterion_id,
+                "evidence_ids": list(decision.evidence_ids),
+                "policy": decision.policy, "decision": decision.decision.value,
+                "confidence": decision.confidence,
+                "reasoning_summary": decision.reasoning_summary,
+                "latency_ms": decision.latency_ms, "cost": decision.cost,
+                "blocked_reason": decision.blocked_reason,
+            }))[0]
+            decisions.append(event.payload)
+        if all(item["decision"] == VerificationStatus.VERIFIED.value for item in decisions):
+            self.runtime.engine.dispatch(Command("TransitionTask", execution_id, {
+                "task_id": task_id, "to": "verified", "reason": "All immutable criteria verified.",
+            }))
+            self.runtime.engine.dispatch(Command("TransitionTask", execution_id, {
+                "task_id": task_id, "to": "complete", "reason": "Engine accepted verification decisions.",
+            }))
+            self._complete_execution_if_ready(execution_id)
+        elif any(item["decision"] == VerificationStatus.BLOCKED.value for item in decisions):
+            reason = next(item.get("blocked_reason") for item in decisions if item["decision"] == VerificationStatus.BLOCKED.value)
+            self.runtime.engine.dispatch(Command("TransitionTask", execution_id, {
+                "task_id": task_id, "to": "blocked", "reason": "Verification is blocked.",
+                "blocked_reason": reason or BlockedReason.OTHER.value,
+            }))
+        else:
+            self._diagnose_and_replan(execution_id, task_id, decisions)
+        self.shadow.observe(
+            execution_id, "verification",
+            {"task_id": task_id, "decisions": [item["decision"] for item in decisions]},
+            task_id=task_id, evidence_ids=tuple(evidence_ids),
+        )
+        return self.runtime.engine.state(execution_id)
+
+    def _diagnose_and_replan(
+        self, execution_id: str, task_id: str, decisions: list[dict[str, Any]]
+    ) -> None:
+        self.runtime.engine.dispatch(Command("TransitionTask", execution_id, {
+            "task_id": task_id, "to": "diagnosing", "reason": "Verification did not accept the worker result.",
+        }))
+        state = self.runtime.engine.state(execution_id)
+        diagnosis = self.runtime.diagnoser.diagnose(state.tasks[task_id], decisions)
+        diagnosis_event = self.runtime.engine.dispatch(Command("RecordDiagnosis", execution_id, diagnosis))[0]
+        diagnosis = diagnosis_event.payload
+        self.shadow.observe(
+            execution_id, "diagnosis",
+            {"task_id": task_id, "classification": diagnosis["classification"]}, task_id=task_id,
+        )
+        task = self.runtime.engine.state(execution_id).tasks[task_id]
+        if task.retries >= task.retry_limit:
+            self.runtime.engine.dispatch(Command("TransitionTask", execution_id, {
+                "task_id": task_id, "to": "failed", "reason": "Repair policy retry budget exhausted.",
+            }))
+            return
+        self.runtime.engine.dispatch(Command("TransitionTask", execution_id, {
+            "task_id": task_id, "to": "replanning", "reason": diagnosis["repair_strategy"],
+        }))
+        state = self.runtime.engine.state(execution_id)
+        repair_task_id = f"repair-{task_id}-{task.retries + 1}"
+        repair = self.runtime.engine.dispatch(Command("RecordRepairDecision", execution_id, {
+            "task_id": task_id, "diagnosis_id": diagnosis["diagnosis_id"],
+            "repair_policy": {"max_retries": task.retry_limit, "attempt": task.retries + 1},
+            "reason": diagnosis["repair_strategy"], "expected_criteria": list(task.criteria),
+        }))[0].payload
+        dependents = [
+            {"task_id": child.id, "dependencies": [repair_task_id if dep == task_id else dep for dep in child.dependencies]}
+            for child in state.tasks.values() if task_id in child.dependencies
+        ]
+        criteria = [state.criteria[item].description for item in task.criteria]
+        self.runtime.engine.dispatch(Command("MutateGraph", execution_id, {
+            "base_version": state.graph_version, "operation": "insert",
+            "affected_subtree": task_id, "rationale": diagnosis["repair_strategy"],
+            "repair_decision_id": repair["repair_id"],
+            "tasks": [{
+                "id": repair_task_id, "title": f"Repair: {task.title}",
+                "parent_id": task.parent_id, "dependencies": list(task.dependencies),
+                "priority": task.priority, "risk": task.risk, "criteria": criteria,
+                "retry_limit": task.retry_limit, "metadata": {"supersedes": task_id, "repair_id": repair["repair_id"]},
+            }], "dependency_updates": dependents,
+        }))
+        self.runtime.engine.dispatch(Command("TransitionTask", execution_id, {
+            "task_id": task_id, "to": "superseded", "reason": diagnosis["repair_strategy"],
+        }))
+        self.shadow.observe(
+            execution_id, "replanning",
+            {"task_id": task_id, "repair_task_id": repair_task_id, "repair_id": repair["repair_id"]},
+            task_id=task_id,
+        )
+
+    def _complete_execution_if_ready(self, execution_id: str) -> None:
+        state = self.runtime.engine.state(execution_id)
+        if state.tasks and all(task.state in {TaskState.COMPLETE, TaskState.SUPERSEDED} for task in state.tasks.values()):
+            self.runtime.engine.checkpoint(execution_id, "engine_verified_completion")
+            self.runtime.engine.dispatch(Command("CompleteExecution", execution_id))
+
     def recover_active(self) -> list[dict[str, Any]]:
         recovered: list[dict[str, Any]] = []
         for item in self.runtime.store.executions(limit=10_000):
@@ -494,6 +633,10 @@ class ExecutionRuntimeHost:
             "planning_authoritative": self.engine_owns("planning"),
             "scheduling_authoritative": self.engine_owns("scheduling"),
             "budgets_authoritative": self.engine_owns("budgets"),
+            "verification_authoritative": self.engine_owns("verification"),
+            "diagnosis_authoritative": self.engine_owns("diagnosis"),
+            "replanning_authoritative": self.engine_owns("replanning"),
+            "completion_authoritative": self.engine_owns("completion"),
             "side_effect_selection_authoritative": self.engine_owns("side_effects"),
             "recovered_executions": self.recovery_report,
             "planning_diagnostics": list(self.planning_diagnostics),
@@ -508,10 +651,10 @@ class ExecutionRuntimeHost:
                 "AGENT_EXECUTION_MODE=primary requires promotion to the planning stage. "
                 "Qualify shadow planning and run `code-agent execution promote planning` first."
             )
-        if self.mode == MigrationMode.PRIMARY and stage.value > PromotionStage.SCHEDULING_BUDGETS.value:
+        if self.mode == MigrationMode.PRIMARY and stage.value > PromotionStage.VERIFICATION_REPLANNING.value:
             raise RuntimeError(
-                "This runtime host currently supports primary authority through scheduling and "
-                "budgets; later stages must remain in shadow mode until their adapters are adopted."
+                "This runtime host currently supports primary authority through verification, "
+                "diagnosis, and replanning; later stages must remain in shadow mode until adopted."
             )
         if self.mode == MigrationMode.ENGINE_ONLY:
             raise RuntimeError(

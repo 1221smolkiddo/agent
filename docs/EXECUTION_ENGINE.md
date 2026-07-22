@@ -109,6 +109,33 @@ Failed verification enters diagnosis. The diagnoser records classification, root
 confidence, source evidence, and repair strategy. Retry transitions consume the task retry budget and
 re-enter only the affected task/subtree.
 
+## Authority contracts
+
+The execution engine treats models, workers, verifiers, diagnosers, and replanners as replaceable
+components with explicit authority boundaries:
+
+- A worker executes only its assigned contract through authorized runtime tools and emits a strictly
+  observational `TaskExecutionResult`: evidence references, artifacts, observed effects, metrics,
+  warnings, and an advisory `worker_assessment` (`completed`, `partial`, `blocked`, `failed`, or
+  `unknown`). Workers cannot transition tasks, verify criteria, allocate budgets, mutate graphs,
+  schedule work, approve effects, or emit lifecycle events.
+- Only the runtime transitions lifecycle, accepts evidence, allocates budgets, schedules work, mutates
+  graphs, persists authoritative events, and completes an execution.
+- A verifier evaluates criteria and emits one immutable `VerificationDecision` per attempt. Decisions
+  contain criterion/evidence references, policy, `verified|failed|inconclusive|blocked`, policy-owned
+  confidence, concise reasoning summary, latency, cost, and (when blocked) a typed reason.
+- A diagnoser consumes verification decisions and recommends repair; it cannot verify, schedule, or
+  mutate state. A replanner produces versioned graph mutations and repair tasks but cannot complete work.
+
+No task may enter `complete` unless its active immutable criteria are satisfied by persisted immutable
+verification decisions with decision `verified`. A worker's own assessment is never acceptance evidence.
+`blocked` carries one of `approval`, `external_service`, `missing_resource`, `dependency`, `lease`,
+`budget`, `policy`, `user_input`, or `other`.
+
+When work is not accepted, the runtime creates a diagnosis and an immutable `RepairDecision` linked to
+the diagnosis, repair policy, expected criteria, approver, and resulting graph mutation. Original task
+criteria are not rewritten: the original task is superseded and a new repair task preserves the lineage.
+
 ## Transactional side effects
 
 External actions have a durable effect journal:

@@ -197,6 +197,16 @@ def test_child_budget_consumption_is_accounted_against_execution_limit(tmp_path)
     assert engine.state(execution_id).budgets["execution"].consumed["tool_calls"] == 2
 
 
+def test_worker_actor_cannot_emit_lifecycle_authority_commands(tmp_path):
+    runtime = _runtime(tmp_path)
+    execution_id, _criterion_id = _one_task(runtime)
+    with pytest.raises(PermissionError, match="Worker authority"):
+        runtime.engine.dispatch(Command(
+            "TransitionTask", execution_id,
+            {"task_id": "build", "to": "ready"}, actor="worker:untrusted",
+        ))
+
+
 def test_execution_lease_uses_fencing_tokens(tmp_path):
     store = SQLiteEventStore(tmp_path / "execution.db")
     engine = ExecutionEngine(store)

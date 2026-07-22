@@ -651,6 +651,44 @@ def test_primary_scheduling_assigns_one_task_and_enforces_task_budget(tmp_path):
     assert state.tasks[adapter.task_id].state.value == "complete"
 
 
+def test_primary_verification_refuses_worker_completion_without_evidence(tmp_path):
+    class Tools:
+        def run(self, _action):
+            return ToolResult(ok=True, output="ok")
+
+    path = tmp_path / "host.db"
+    divergences = ShadowDivergenceStore(path)
+    policy = PromotionPolicy(minimum_samples=10, maximum_divergence_rate=0)
+    migration = MigrationStateStore(path)
+    for _index in range(10):
+        divergences.record_comparison("run", "planning", matched=True)
+    migration.promote(PromotionStage.PLANNING, divergences, policy)
+    for _index in range(10):
+        divergences.record_comparison("run", "scheduling", matched=True)
+        divergences.record_comparison("run", "budget", matched=True)
+    migration.promote(PromotionStage.SCHEDULING_BUDGETS, divergences, policy)
+    for _index in range(10):
+        divergences.record_comparison("run", "verification", matched=True)
+        divergences.record_comparison("run", "diagnosis", matched=True)
+        divergences.record_comparison("run", "replanning", matched=True)
+    migration.promote(PromotionStage.VERIFICATION_REPLANNING, divergences, policy)
+
+    host = ExecutionRuntimeHost(path, "primary", tools=Tools(), recover_on_start=False)
+    adapter = host.begin_legacy_run("inspect README")
+    state = host.finalize_worker_result(
+        adapter.execution_id, adapter.task_id,
+        worker_assessment="completed", summary="worker says it is done",
+    )
+    assert host.engine_owns("verification")
+    assert state.tasks[adapter.task_id].state.value == "superseded"
+    assert state.task_execution_results[-1]["worker_assessment"] == "completed"
+    assert state.verifications
+    assert {item["decision"] for item in state.verifications.values()} == {"inconclusive"}
+    assert state.diagnoses[-1]["verification_ids"]
+    assert state.repair_decisions[-1]["diagnosis_id"] == state.diagnoses[-1]["diagnosis_id"]
+    assert any(task.metadata.get("supersedes") == adapter.task_id for task in state.tasks.values())
+
+
 def test_planning_promotion_ignores_unrelated_shadow_samples(tmp_path):
     path = tmp_path / "host.db"
     divergences = ShadowDivergenceStore(path)

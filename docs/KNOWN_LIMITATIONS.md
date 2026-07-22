@@ -131,11 +131,12 @@ hard security sandbox. These limitations are part of the operating contract.
 ## Durable Runtime Migration
 
 - The event-sourced runtime is the default shadow host. In primary mode the engine can own planning,
-  graph state, task scheduling, and hierarchical budgets, but the legacy model loop remains the worker
-  and still selects side effects. One primary run receives one scheduler assignment; continuing a DAG
-  requires a resume so the engine can assign the next dependency-ready task.
-- Scheduling, verification/replanning, side effects/approvals, recovery/completion, and engine-only
-  authority remain gated until their runtime-adoption passes are implemented and qualified.
+  graph state, task scheduling, hierarchical budgets, verification, diagnosis, replanning, and task
+  acceptance, but the legacy model loop remains the worker and still selects side effects. One primary
+  run receives one scheduler assignment; continuing a DAG requires a resume so the engine can assign
+  the next dependency-ready task.
+- Side effects/approvals, recovery/completion, and engine-only authority remain gated until their
+  runtime-adoption passes are implemented and qualified.
 - Deterministic shadow planning is reproducible but intentionally generic. Model shadow planning adds a
   separate provider call and can increase latency and cost; failures fall back and remain visible in the trace.
 - An ambiguous external effect is intentionally not retried automatically when its adapter cannot reconcile

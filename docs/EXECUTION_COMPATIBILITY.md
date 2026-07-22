@@ -24,6 +24,11 @@ The kernel contains only event persistence and replay, command validation, state
 invariants, leases, versioned graphs, effect journaling, evidence, approvals, budgets, and extension
 capability negotiation.
 
+Worker actors are capability-restricted: they may record observational task execution results and use
+their authorized effect path, but commands for lifecycle transitions, verification, diagnosis, repair,
+graph mutation, scheduling, budgets, approvals, and execution completion are rejected. This preserves
+the kernel rule that only the deterministic runtime converts observations into durable truth.
+
 The following remain outside the kernel and are replaceable:
 
 - planners and graph-mutation producers;
@@ -84,9 +89,10 @@ recovery/completion decision families.
 
 Promotion state and the metrics used to authorize it are durable. Promotion can advance only one stage
 at a time through `code-agent execution promote STAGE`; it cannot skip an authority boundary. The host
-currently supports primary operation through `scheduling_budgets`: it emits an immutable task-assignment
-record, transitions only a dependency-ready task to running, and accounts action and model usage against
-the assigned task's hierarchical budget scope. It fails closed for later stages.
+currently supports primary operation through `verification_replanning`: it emits an immutable
+task-assignment record, transitions only a dependency-ready task to running, accounts action and model
+usage against the assigned task's hierarchical budget scope, and accepts worker observations only through
+persisted verification, diagnosis, and repair decisions. It fails closed for later stages.
 
 Normal CLI runs are composed by `ExecutionRuntimeHost`. Shadow planning is independent of the legacy
 plan. Authoritative legacy tool selections are wrapped once by transactional adapters so the event log
