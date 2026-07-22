@@ -29,6 +29,12 @@ their authorized effect path, but commands for lifecycle transitions, verificati
 graph mutation, scheduling, budgets, approvals, and execution completion are rejected. This preserves
 the kernel rule that only the deterministic runtime converts observations into durable truth.
 
+Effects are also kernel resources with immutable lifecycle events. Worker-originated effect requests do
+not select an adapter or authorize dispatch. The runtime alone advances an effect through
+`requested`, `authorized`, `prepared`, `dispatched`, and a terminal committed, failed, unknown,
+compensated, or cancelled outcome. Completion is a derived invariant over graph state, verification,
+effects, approvals, and budgets; no worker is permitted to emit it.
+
 The following remain outside the kernel and are replaceable:
 
 - planners and graph-mutation producers;

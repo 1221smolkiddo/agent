@@ -689,6 +689,46 @@ def test_primary_verification_refuses_worker_completion_without_evidence(tmp_pat
     assert any(task.metadata.get("supersedes") == adapter.task_id for task in state.tasks.values())
 
 
+def test_primary_effects_require_runtime_approval_before_adapter_dispatch(tmp_path):
+    class Tools:
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, _action):
+            self.calls += 1
+            return ToolResult(ok=True, output="written")
+
+    path = tmp_path / "host.db"
+    divergences = ShadowDivergenceStore(path)
+    policy = PromotionPolicy(minimum_samples=1, maximum_divergence_rate=0)
+    migration = MigrationStateStore(path)
+    for stage, decisions in (
+        (PromotionStage.PLANNING, ("planning",)),
+        (PromotionStage.SCHEDULING_BUDGETS, ("scheduling", "budget")),
+        (PromotionStage.VERIFICATION_REPLANNING, ("verification", "diagnosis", "replanning")),
+        (PromotionStage.SIDE_EFFECTS, ("tool_selection", "tool_result", "approval")),
+    ):
+        for decision in decisions:
+            divergences.record_comparison("run", decision, matched=True)
+        migration.promote(stage, divergences, policy)
+
+    tools = Tools()
+    host = ExecutionRuntimeHost(path, "primary", tools=tools, recover_on_start=False)
+    adapter = host.begin_legacy_run("update README")
+    action = {"type": "write_file", "path": "README.md", "content": "updated"}
+    blocked = host.execute_action(adapter.execution_id, adapter.task_id, 1, action)
+    assert not blocked.result.ok and blocked.result.metadata["effect_status"] == "blocked"
+    assert tools.calls == 0
+    state = host.runtime.engine.state(adapter.execution_id)
+    approval_id = next(iter(state.approvals))
+    host.runtime.engine.dispatch(Command("GrantApproval", adapter.execution_id, {
+        "approval_id": approval_id, "granted_by": "user",
+    }))
+    committed = host.execute_action(adapter.execution_id, adapter.task_id, 1, action)
+    assert committed.result.ok and tools.calls == 1
+    assert host.runtime.engine.state(adapter.execution_id).effects[committed.effect_id].state == EffectState.COMMITTED
+
+
 def test_planning_promotion_ignores_unrelated_shadow_samples(tmp_path):
     path = tmp_path / "host.db"
     divergences = ShadowDivergenceStore(path)

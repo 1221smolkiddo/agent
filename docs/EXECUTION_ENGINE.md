@@ -156,6 +156,30 @@ During runtime adoption, legacy-selected filesystem, shell/process, Git, MCP/net
 actions already use this journal, but the legacy policy remains authoritative until the side-effects
 promotion stage.
 
+## Engine-owned effect lifecycle
+
+Effects are first-class durable execution resources, not unstructured tool calls. A worker may submit
+an effect request, but only the runtime may authorize, prepare, dispatch, reconcile, compensate, or
+cancel it. The normal lifecycle is:
+
+```text
+requested -> authorized -> prepared -> dispatched -> committed
+                                           |             |
+                                           -> failed     -> compensated
+                                           -> unknown
+requested|authorized|prepared -> cancelled
+```
+
+Before adapter dispatch, the runtime evaluates capability requirements, policy, budgets, isolation,
+idempotency, retry safety, and approval resources. Sensitive filesystem, shell, Git, MCP, and network
+effects remain `requested` until a durable approval matching the task and effect scope is granted.
+Ambiguous dispatched effects are reconciled during runtime recovery; they are never blindly repeated.
+
+`ExecutionCompleted` is derived, not asserted by a worker: the runtime emits it only when the graph is
+complete or validly superseded, criteria are verified, no effect is unresolved, no approval is pending,
+and budget invariants hold. In `engine_only` mode, legacy worker implementations may remain as replaceable
+workers, but no legacy component owns lifecycle, effects, approvals, recovery, or completion.
+
 ## Approvals, leases, and budgets
 
 Approvals are durable resources with ID, scope, risk, granting identity, affected tasks, timestamps,

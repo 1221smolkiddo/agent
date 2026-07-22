@@ -76,9 +76,16 @@ class ExecutionStatus(str, Enum):
 
 
 class EffectState(str, Enum):
+    REQUESTED = "requested"
+    AUTHORIZED = "authorized"
+    PREPARED = "prepared"
+    DISPATCHED = "dispatched"
+    # PENDING and RUNNING are retained solely to replay pre-effect-pipeline streams.
     PENDING = "pending"
     RUNNING = "running"
     COMMITTED = "committed"
+    COMPENSATED = "compensated"
+    CANCELLED = "cancelled"
     ROLLED_BACK = "rolled_back"
     FAILED = "failed"
     UNKNOWN = "unknown"
@@ -661,6 +668,7 @@ class ProjectionBuilder:
         elif kind == "EffectRequested":
             effect = EffectProjection(
                 p["effect_id"], p["task_id"], p["kind"], p["idempotency_key"],
+                state=EffectState(p.get("state", EffectState.REQUESTED.value)),
                 request=dict(p.get("request", {})),
             )
             state.effects[effect.id] = effect
@@ -850,10 +858,33 @@ class ExecutionEngine:
         if t in simple:
             return [(simple[t], dict(p))]
         if t == "CompleteExecution":
-            if any(task.state not in {TaskState.COMPLETE, TaskState.SUPERSEDED} for task in state.tasks.values()):
-                raise InvariantError("Execution has incomplete tasks.")
+            blockers = self.completion_blockers(state)
+            if blockers:
+                raise InvariantError("Execution completion invariants are not satisfied: " + "; ".join(blockers))
             return [("ExecutionCompleted", dict(p))]
         raise ValueError(f"Unsupported execution command: {t}")
+
+    @staticmethod
+    def completion_blockers(state: ExecutionProjection) -> list[str]:
+        blockers: list[str] = []
+        if any(task.state not in {TaskState.COMPLETE, TaskState.SUPERSEDED} for task in state.tasks.values()):
+            blockers.append("graph has incomplete tasks")
+        unresolved = [
+            effect.id for effect in state.effects.values()
+            if effect.state in {
+                EffectState.REQUESTED, EffectState.AUTHORIZED, EffectState.PREPARED,
+                EffectState.DISPATCHED, EffectState.PENDING, EffectState.RUNNING, EffectState.UNKNOWN,
+            }
+        ]
+        if unresolved:
+            blockers.append("unresolved effects: " + ", ".join(sorted(unresolved)))
+        pending_approvals = [
+            approval.id for approval in state.approvals.values()
+            if not approval.granted_at and not approval.revoked
+        ]
+        if pending_approvals:
+            blockers.append("pending approvals: " + ", ".join(sorted(pending_approvals)))
+        return blockers
 
     def _add_tasks(self, state: ExecutionProjection, p: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
         tasks = list(p.get("tasks", []))
@@ -1119,11 +1150,16 @@ class ExecutionEngine:
         effect = state.effects[p["effect_id"]]
         target = EffectState(p["state"])
         allowed = {
+            EffectState.REQUESTED: {EffectState.AUTHORIZED, EffectState.RUNNING, EffectState.CANCELLED, EffectState.FAILED},
+            EffectState.AUTHORIZED: {EffectState.PREPARED, EffectState.CANCELLED, EffectState.FAILED},
+            EffectState.PREPARED: {EffectState.DISPATCHED, EffectState.CANCELLED, EffectState.FAILED},
+            EffectState.DISPATCHED: {EffectState.COMMITTED, EffectState.FAILED, EffectState.UNKNOWN},
             EffectState.PENDING: {EffectState.RUNNING, EffectState.FAILED},
             EffectState.RUNNING: {EffectState.COMMITTED, EffectState.FAILED, EffectState.UNKNOWN},
-            EffectState.UNKNOWN: {EffectState.COMMITTED, EffectState.FAILED, EffectState.ROLLED_BACK},
-            EffectState.COMMITTED: {EffectState.ROLLED_BACK},
+            EffectState.UNKNOWN: {EffectState.COMMITTED, EffectState.FAILED, EffectState.ROLLED_BACK, EffectState.COMPENSATED},
+            EffectState.COMMITTED: {EffectState.ROLLED_BACK, EffectState.COMPENSATED},
             EffectState.FAILED: set(), EffectState.ROLLED_BACK: set(),
+            EffectState.COMPENSATED: set(), EffectState.CANCELLED: set(),
         }
         if target not in allowed[effect.state]:
             raise InvariantError(f"Illegal effect transition: {effect.state.value} -> {target.value}")
@@ -1710,7 +1746,7 @@ class DurableExecutionRuntime:
             raise InvariantError("Snapshot recovery diverged from full event replay.")
         if reconcile_orphaned_effects and full.status == ExecutionStatus.ACTIVE:
             for effect in list(full.effects.values()):
-                if effect.state == EffectState.RUNNING:
+                if effect.state in {EffectState.DISPATCHED, EffectState.RUNNING}:
                     self.engine.dispatch(Command("ChangeEffectState", execution_id, {
                         "effect_id": effect.id,
                         "state": "unknown",
@@ -1790,10 +1826,18 @@ class AgentExecutionAdapter:
                 "elapsed_ms": float(effect.result.get("elapsed_ms", 0)),
                 "replayed": True,
             }
-        if effect.state == EffectState.PENDING:
+        if effect.state in {EffectState.REQUESTED, EffectState.PENDING}:
             self.runtime.engine.dispatch(Command("ChangeEffectState", self.execution_id, {
-                "effect_id": effect_id, "state": "running",
+                "effect_id": effect_id, "state": "running" if effect.state == EffectState.PENDING else "authorized",
             }))
+            effect = self.runtime.engine.state(self.execution_id).effects[effect_id]
+            if effect.state == EffectState.AUTHORIZED:
+                self.runtime.engine.dispatch(Command("ChangeEffectState", self.execution_id, {
+                    "effect_id": effect_id, "state": "prepared",
+                }))
+                self.runtime.engine.dispatch(Command("ChangeEffectState", self.execution_id, {
+                    "effect_id": effect_id, "state": "dispatched",
+                }))
         return effect_id, None
 
     def model_usage(self, payload: dict[str, Any]) -> None:
@@ -1822,7 +1866,7 @@ class AgentExecutionAdapter:
 
     def action_completed(self, effect_id: str, *, ok: bool, output: str, elapsed_ms: float) -> str:
         effect = self.runtime.engine.state(self.execution_id).effects[effect_id]
-        if effect.state == EffectState.RUNNING:
+        if effect.state in {EffectState.DISPATCHED, EffectState.RUNNING}:
             self.runtime.engine.dispatch(Command("ChangeEffectState", self.execution_id, {
                 "effect_id": effect_id, "state": "committed" if ok else "failed",
                 "result": {"ok": ok, "output": output[:4000], "elapsed_ms": elapsed_ms},

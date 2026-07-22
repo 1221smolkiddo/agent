@@ -29,6 +29,7 @@ ACTION_ADAPTER = TypeAdapter(AgentAction)
 ExecuteCallable = Callable[[dict[str, Any], AdapterContext], EffectOutcome]
 ReconcileCallable = Callable[[PreparedEffect], EffectOutcome]
 CompensateCallable = Callable[[PreparedEffect, EffectOutcome], CompensationOutcome]
+AuthorizeCallable = Callable[[str, PreparedEffect], bool]
 
 
 class CallableTransactionalAdapter:
@@ -262,6 +263,7 @@ class TransactionalEffectRunner:
         actor: str = "primary",
         timeout_seconds: float = 30,
         lease_token: int | None = None,
+        authorize: AuthorizeCallable | None = None,
     ) -> AdapterExecutionResult:
         state = self.engine.state(execution_id)
         adapter = self.registry.resolve(requirement, preferred=preferred_adapter)
@@ -286,7 +288,7 @@ class TransactionalEffectRunner:
             else self.engine.state(execution_id).effect_keys[idempotency_key]
         )
         effect = self.engine.state(execution_id).effects[effect_id]
-        if effect.state in {EffectState.COMMITTED, EffectState.FAILED}:
+        if effect.state in {EffectState.COMMITTED, EffectState.FAILED, EffectState.CANCELLED, EffectState.COMPENSATED}:
             state = self.engine.state(execution_id)
             evidence_ids = tuple(
                 evidence.id
@@ -305,13 +307,26 @@ class TransactionalEffectRunner:
                 evidence_ids,
                 replayed=True,
             )
+        if authorize is not None and not authorize(effect_id, prepared):
+            return AdapterExecutionResult(
+                effect_id,
+                EffectOutcome(False, "blocked", "Effect is awaiting runtime authorization."),
+                (),
+            )
         if effect.state == EffectState.UNKNOWN:
             outcome = adapter.reconcile(prepared)
         else:
-            if effect.state == EffectState.PENDING:
+            pipeline = {
+                EffectState.REQUESTED: EffectState.AUTHORIZED,
+                EffectState.AUTHORIZED: EffectState.PREPARED,
+                EffectState.PREPARED: EffectState.DISPATCHED,
+                EffectState.PENDING: EffectState.RUNNING,
+            }
+            while effect.state in pipeline:
                 self.engine.dispatch(command("ChangeEffectState", {
-                    "effect_id": effect_id, "state": "running",
+                    "effect_id": effect_id, "state": pipeline[effect.state].value,
                 }))
+                effect = self.engine.state(execution_id).effects[effect_id]
             try:
                 outcome = adapter.execute(prepared)
             except Exception as exc:
@@ -323,7 +338,7 @@ class TransactionalEffectRunner:
         )
         current = self.engine.state(execution_id).effects[effect_id]
         if (
-            current.state in {EffectState.RUNNING, EffectState.UNKNOWN}
+            current.state in {EffectState.DISPATCHED, EffectState.RUNNING, EffectState.UNKNOWN}
             and current.state.value != target
         ):
             self.engine.dispatch(command("ChangeEffectState", {

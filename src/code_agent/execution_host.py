@@ -253,10 +253,20 @@ class ExecutionRuntimeHost:
             },
             PromotionStage.VERIFICATION_REPLANNING: {
                 "trace", "projection", "planning", "graph", "scheduling", "budgets",
-                "verification", "diagnosis", "replanning", "completion",
+                "verification", "diagnosis", "replanning",
             },
+            PromotionStage.SIDE_EFFECTS: {
+                "trace", "projection", "planning", "graph", "scheduling", "budgets",
+                "verification", "diagnosis", "replanning", "side_effects", "approvals",
+            },
+            PromotionStage.RECOVERY_COMPLETION: {
+                "trace", "projection", "planning", "graph", "scheduling", "budgets",
+                "verification", "diagnosis", "replanning", "completion", "side_effects", "approvals", "recovery",
+            },
+            PromotionStage.ENGINE_ONLY: {"*"},
         }
-        return concern in ownership.get(self.stage, set())
+        owned = ownership.get(self.stage, set())
+        return "*" in owned or concern in owned
 
     def begin_legacy_run(
         self,
@@ -454,6 +464,11 @@ class ExecutionRuntimeHost:
                 else "engine-plan-legacy-worker"
             ),
             timeout_seconds=timeout_seconds,
+            authorize=(
+                (lambda _effect_id, prepared: self._authorize_effect(
+                    execution_id, task_id, prepared.kind, action
+                )) if self.engine_owns("side_effects") else None
+            ),
         )
         metadata = dict(result.outcome.metadata)
         metadata.update({
@@ -529,7 +544,8 @@ class ExecutionRuntimeHost:
             self.runtime.engine.dispatch(Command("TransitionTask", execution_id, {
                 "task_id": task_id, "to": "complete", "reason": "Engine accepted verification decisions.",
             }))
-            self._complete_execution_if_ready(execution_id)
+            if self.engine_owns("completion"):
+                self._complete_execution_if_ready(execution_id)
         elif any(item["decision"] == VerificationStatus.BLOCKED.value for item in decisions):
             reason = next(item.get("blocked_reason") for item in decisions if item["decision"] == VerificationStatus.BLOCKED.value)
             self.runtime.engine.dispatch(Command("TransitionTask", execution_id, {
@@ -614,6 +630,10 @@ class ExecutionRuntimeHost:
             if state.status != ExecutionStatus.ACTIVE:
                 continue
             restored = self.runtime.recover(execution_id)
+            reconciled: list[str] = []
+            if self.engine_owns("recovery"):
+                reconciled = self._reconcile_unknown_effects(execution_id, restored)
+                restored = self.runtime.engine.state(execution_id)
             recovered.append({
                 "execution_id": execution_id,
                 "status": restored.status.value,
@@ -622,8 +642,34 @@ class ExecutionRuntimeHost:
                     for effect in restored.effects.values()
                     if effect.state.value == "unknown"
                 ),
+                "reconciled_effects": reconciled,
             })
         return recovered
+
+    def _reconcile_unknown_effects(
+        self, execution_id: str, state: ExecutionProjection
+    ) -> list[str]:
+        reconciled: list[str] = []
+        for effect in state.effects.values():
+            if effect.state.value != "unknown":
+                continue
+            prepared = effect.request.get("prepared", {})
+            action = prepared.get("action") if isinstance(prepared, dict) else None
+            if not isinstance(action, dict):
+                continue
+            requirement, preferred = self._requirement(action)
+            result = self.effects.run(
+                execution_id, effect.task_id, {"action": action}, requirement,
+                idempotency_key=effect.idempotency_key,
+                criterion_ids=tuple(self.runtime.engine.state(execution_id).tasks[effect.task_id].criteria),
+                preferred_adapter=preferred, actor="runtime-recovery",
+                authorize=lambda _effect_id, prepared_effect: self._authorize_effect(
+                    execution_id, effect.task_id, prepared_effect.kind, action
+                ),
+            )
+            if result.outcome.status != "unknown":
+                reconciled.append(effect.id)
+        return reconciled
 
     def status(self) -> dict[str, Any]:
         migration = self.migration.get()
@@ -651,15 +697,13 @@ class ExecutionRuntimeHost:
                 "AGENT_EXECUTION_MODE=primary requires promotion to the planning stage. "
                 "Qualify shadow planning and run `code-agent execution promote planning` first."
             )
-        if self.mode == MigrationMode.PRIMARY and stage.value > PromotionStage.VERIFICATION_REPLANNING.value:
+        if self.mode == MigrationMode.PRIMARY and stage.value > PromotionStage.RECOVERY_COMPLETION.value:
             raise RuntimeError(
-                "This runtime host currently supports primary authority through verification, "
-                "diagnosis, and replanning; later stages must remain in shadow mode until adopted."
+                "This runtime host currently supports primary authority through effects, recovery, "
+                "and completion; engine-only mode requires its final promotion gate."
             )
-        if self.mode == MigrationMode.ENGINE_ONLY:
-            raise RuntimeError(
-                "Engine-only operation is unavailable until every authority stage is qualified."
-            )
+        if self.mode == MigrationMode.ENGINE_ONLY and stage != PromotionStage.ENGINE_ONLY:
+            raise RuntimeError("Engine-only operation requires promotion through every authority stage.")
 
     def _record_planner_trace(
         self, execution_id: str, *, forced_error: str | None = None
@@ -763,6 +807,48 @@ class ExecutionRuntimeHost:
             {"scope": scope, "kinds": kinds, "amount": 1},
             task_id=task_id,
         )
+
+    def _authorize_effect(
+        self, execution_id: str, task_id: str, effect_kind: str, action: dict[str, Any]
+    ) -> bool:
+        """Runtime-only policy and approval gate for dispatched external effects."""
+        action_type = str(action.get("type", ""))
+        sensitive = (
+            action_type in self.FILE_WRITE_ACTIONS
+            or action_type in self.SHELL_ACTIONS
+            or action_type in self.MCP_ACTIONS
+            or action_type in self.GIT_ACTIONS
+        )
+        if not sensitive:
+            return True
+        scope = f"effect.{effect_kind}"
+        state = self.runtime.engine.state(execution_id)
+        approved = any(
+            approval.granted_at and not approval.revoked
+            and task_id in approval.task_ids and approval.scope == scope
+            for approval in state.approvals.values()
+        )
+        if approved:
+            self.shadow.observe(
+                execution_id, "approval",
+                {"task_id": task_id, "scope": scope, "authorized": True}, task_id=task_id,
+            )
+            return True
+        pending = any(
+            not approval.granted_at and not approval.revoked
+            and task_id in approval.task_ids and approval.scope == scope
+            for approval in state.approvals.values()
+        )
+        if not pending:
+            self.runtime.engine.dispatch(Command("RequestApproval", execution_id, {
+                "scope": scope, "risk": "high", "task_ids": [task_id],
+                "reason": f"Runtime authorization is required before {effect_kind} dispatch.",
+            }, actor="runtime-policy"))
+        self.shadow.observe(
+            execution_id, "approval",
+            {"task_id": task_id, "scope": scope, "authorized": False}, task_id=task_id,
+        )
+        return False
 
     @staticmethod
     def _adapter_registry(tools: Any) -> AdapterRegistry:

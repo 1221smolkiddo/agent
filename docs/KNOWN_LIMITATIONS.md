@@ -135,8 +135,10 @@ hard security sandbox. These limitations are part of the operating contract.
   acceptance, but the legacy model loop remains the worker and still selects side effects. One primary
   run receives one scheduler assignment; continuing a DAG requires a resume so the engine can assign
   the next dependency-ready task.
-- Side effects/approvals, recovery/completion, and engine-only authority remain gated until their
-  runtime-adoption passes are implemented and qualified.
+- Side-effect/approval, recovery/completion, and engine-only authority are implemented behind their
+  sequential promotion gates. They remain disabled until each gate has sufficient scoped shadow samples
+  and no critical unexpected divergence; production qualification still needs repeated real isolated
+  workloads beyond deterministic local tests.
 - Deterministic shadow planning is reproducible but intentionally generic. Model shadow planning adds a
   separate provider call and can increase latency and cost; failures fall back and remain visible in the trace.
 - An ambiguous external effect is intentionally not retried automatically when its adapter cannot reconcile
