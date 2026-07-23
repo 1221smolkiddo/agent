@@ -233,11 +233,13 @@ def test_registered_model_runtime_defaults_are_applied(tmp_path: Path) -> None:
         agent_model_preset="deepseek-v4-flash",
         nvidia_api_key="nvidia-key",
         agent_max_tokens=16384,
+        agent_fallback_models="",
         agent_reviewer_pass=False,
         agent_db_path=tmp_path / "agent.db",
     )
 
-    agent = create_agent(settings=settings, cwd=tmp_path, model=None, dry_run=True, max_steps=1)
+    with pytest.warns(RuntimeWarning, match="no fallback model configured"):
+        agent = create_agent(settings=settings, cwd=tmp_path, model=None, dry_run=True, max_steps=1)
 
     assert agent.model_client.max_tokens == 8192
     assert agent.model_client.temperature == 0.2
