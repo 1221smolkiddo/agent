@@ -38,7 +38,9 @@ def provider_spec(name: str) -> ProviderSpec:
     raise ValueError(f"Unknown provider '{name}'. Expected one of: {allowed}.")
 
 
-def validate_provider_key(provider: str, key: str, *, base_url: str | None = None) -> tuple[bool, str]:
+def validate_provider_key(
+    provider: str, key: str, *, base_url: str | None = None
+) -> tuple[bool, str]:
     """Perform a no-cost provider authentication check without emitting the key."""
     spec = provider_spec(provider)
     endpoint_by_provider = {

@@ -24,9 +24,9 @@ from .config import Settings
 from .account.profile import AccountStore
 from .auth.config import OAuthConfigurationError
 from .auth.google import GoogleAuthenticator
-from .auth.oauth import OAuthError
+from .auth.oauth import OAuthError, OAuthRefreshError
 from .auth.session import LocalSession
-from .credentials.keyring import CredentialStore, KeyringUnavailableError
+from .credentials.keyring import CredentialStore, KeyringUnavailableError, keyring_setup_hint
 from .credentials.providers import provider_spec, provider_specs, validate_provider_key
 from .container_manager import ContainerError, ContainerManager
 from .debug_bundle import export_debug_bundle
@@ -117,6 +117,7 @@ containers_app = typer.Typer(help="Create, inspect, stop, and clean reusable wor
 platform_app = typer.Typer(help="Inspect dynamic tools, skills, agents, plugins, and MCP servers.")
 execution_app = typer.Typer(help="Create, inspect, control, checkpoint, and replay durable executions.")
 keys_app = typer.Typer(help="Manage API keys in the operating system credential store.", invoke_without_command=True)
+auth_app = typer.Typer(help="Sign in, sign out, and manage Google OAuth authentication.")
 app.add_typer(history_app, name="history")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(collab_app, name="collab")
@@ -126,6 +127,7 @@ app.add_typer(containers_app, name="containers")
 app.add_typer(platform_app, name="platform")
 app.add_typer(execution_app, name="execution")
 app.add_typer(keys_app, name="keys")
+app.add_typer(auth_app, name="auth")
 
 
 def validate_profile_option(value: Optional[str]) -> Optional[str]:
@@ -164,8 +166,13 @@ def _credential_error(exc: Exception) -> None:
     raise typer.Exit(code=1)
 
 
-@app.command("login")
-def login_command() -> None:
+# ======================================================================
+# Auth command group: agent47 auth {login,logout,status,refresh,repair}
+# ======================================================================
+
+
+@auth_app.command("login")
+def auth_login_command() -> None:
     """Sign in locally with Google using OAuth PKCE."""
     try:
         typer.echo("Opening browser for Google sign-in…")
@@ -179,9 +186,11 @@ def login_command() -> None:
     typer.echo(account.email)
 
 
-@app.command("logout")
-def logout_command(
-    remove_keys: bool = typer.Option(False, "--remove-keys", help="Also delete all saved provider API keys."),
+@auth_app.command("logout")
+def auth_logout_command(
+    remove_keys: bool = typer.Option(
+        False, "--remove-keys", help="Also delete all saved provider API keys."
+    ),
 ) -> None:
     """Remove the local Google session and optionally saved BYOK credentials."""
     try:
@@ -197,11 +206,107 @@ def logout_command(
         _credential_error(exc)
         return
     if profile_deleted or tokens_deleted:
-        typer.echo("Signed out. Local Google session credentials were removed.")
+        typer.echo("Signed out.  Local Google session credentials were removed.")
     else:
         typer.echo("You are not currently signed in.")
     if removed:
         typer.echo("Removed API keys: " + ", ".join(removed))
+
+
+@auth_app.command("status")
+def auth_status_command() -> None:
+    """Show the current authentication and session status."""
+    account = AccountStore().load()
+    typer.echo("─── Authentication ───")
+    if account:
+        typer.echo("  ✓ Logged In")
+    else:
+        typer.echo("  ✗ Not Logged In")
+        typer.echo("\n  Run 'agent47 auth login' to sign in.")
+        raise typer.Exit(code=1)
+
+    # Session validity.
+    try:
+        store = CredentialStore()
+        tokens = store.get_oauth_tokens()
+    except KeyringUnavailableError:
+        tokens = None
+
+    if tokens:
+        has_access = isinstance(tokens.get("access_token"), str) and bool(
+            tokens.get("access_token")
+        )
+        has_refresh = isinstance(tokens.get("refresh_token"), str) and bool(
+            tokens.get("refresh_token")
+        )
+        typer.echo(f"  {'✓' if has_access else '✗'} Access Token")
+        typer.echo(f"  {'✓' if has_refresh else '✗'} Refresh Token")
+    else:
+        typer.echo("  ✗ No Session Tokens")
+
+    typer.echo(f"\n  Provider:   Google")
+    typer.echo(f"  Email:      {account.email}")
+    typer.echo(f"  Name:       {account.name}")
+    typer.echo(f"  Created:    {account.created_at}")
+    typer.echo(f"  Last Login: {account.last_login_at}")
+
+
+@auth_app.command("refresh")
+def auth_refresh_command() -> None:
+    """Force-refresh the OAuth access token."""
+    try:
+        auth = GoogleAuthenticator()
+        new_token = auth.refresh()
+    except (OAuthConfigurationError, KeyringUnavailableError) as exc:
+        typer.echo(f"Refresh failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    if new_token:
+        typer.echo("✓ Access token refreshed successfully.")
+    else:
+        typer.echo(
+            "Could not refresh the access token.  "
+            "Run 'agent47 auth login' to sign in again.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+
+@auth_app.command("repair")
+def auth_repair_command() -> None:
+    """Automatically recover from stale sessions, missing metadata, or invalid tokens."""
+    try:
+        auth = GoogleAuthenticator()
+        actions = auth.repair()
+    except (OAuthConfigurationError, KeyringUnavailableError) as exc:
+        typer.echo(f"Repair failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    if actions:
+        for action in actions:
+            typer.echo(f"  • {action}")
+        typer.echo("\n✓ Repair complete.")
+    else:
+        typer.echo("✓ Authentication state is healthy.  No repair needed.")
+
+
+# ======================================================================
+# Backward-compatible root-level aliases
+# ======================================================================
+
+
+@app.command("login", hidden=True)
+def login_command() -> None:
+    """Sign in locally with Google using OAuth PKCE (alias for 'auth login')."""
+    auth_login_command()
+
+
+@app.command("logout", hidden=True)
+def logout_command(
+    remove_keys: bool = typer.Option(
+        False, "--remove-keys", help="Also delete all saved provider API keys."
+    ),
+) -> None:
+    """Sign out (alias for 'auth logout')."""
+    auth_logout_command(remove_keys=remove_keys)
 
 
 @app.command("account")
@@ -209,15 +314,15 @@ def account_command() -> None:
     """Show the locally stored Google account profile."""
     account = AccountStore().load()
     if account is None:
-        typer.echo("Not signed in. Run 'agent47 login' to authenticate.")
+        typer.echo("Not signed in.  Run 'agent47 auth login' to authenticate.")
         raise typer.Exit(code=1)
     typer.echo("Google Account")
-    typer.echo(f"Name: {account.name}")
-    typer.echo(f"Email: {account.email}")
-    typer.echo("Provider: Google")
-    typer.echo("Signed In: Yes")
-    typer.echo(f"Created: {account.created_at}")
-    typer.echo(f"Last Login: {account.last_login_at}")
+    typer.echo(f"  Name:       {account.name}")
+    typer.echo(f"  Email:      {account.email}")
+    typer.echo(f"  Provider:   Google")
+    typer.echo(f"  Signed In:  Yes")
+    typer.echo(f"  Created:    {account.created_at}")
+    typer.echo(f"  Last Login: {account.last_login_at}")
 
 
 @app.command("whoami")
@@ -234,9 +339,14 @@ def whoami_command() -> None:
         store = CredentialStore()
         for spec in provider_specs():
             marker = "✓" if store.get_provider_key(spec.name) else "✗"
-            typer.echo(f"{marker} {spec.display_name}")
+            typer.echo(f"  {marker} {spec.display_name}")
     except KeyringUnavailableError as exc:
         _credential_error(exc)
+
+
+# ======================================================================
+# Keys command group
+# ======================================================================
 
 
 @keys_app.callback()
@@ -249,23 +359,50 @@ def keys_command(ctx: typer.Context) -> None:
 
 @keys_app.command("list")
 def keys_list_command() -> None:
+    """Show which providers have stored API keys."""
     try:
         store = CredentialStore()
         for spec in provider_specs():
             status = "configured" if store.get_provider_key(spec.name) else "not configured"
-            typer.echo(f"{spec.name:<12} {status}")
+            typer.echo(f"  {spec.name:<12} {status}")
     except KeyringUnavailableError as exc:
         _credential_error(exc)
 
 
 @keys_app.command("add")
-def keys_add_command(provider: str) -> None:
-    """Prompt for and save an API key in the platform credential manager."""
+def keys_add_command(
+    provider: str = typer.Argument(...),
+    base_url: str | None = typer.Option(
+        None, "--base-url", help="Base URL for OpenAI-compatible providers."
+    ),
+    skip_validation: bool = typer.Option(
+        False, "--skip-validation", help="Store the key without testing it first."
+    ),
+) -> None:
+    """Prompt for, validate, and save an API key in the platform credential manager."""
     try:
         spec = provider_spec(provider)
-        key = typer.prompt(f"{spec.display_name} API key", hide_input=True, confirmation_prompt=True)
+    except ValueError as exc:
+        _credential_error(exc)
+        return
+    key = typer.prompt(
+        f"{spec.display_name} API key", hide_input=True, confirmation_prompt=True
+    )
+    if not key.strip():
+        typer.echo("API key must not be blank.", err=True)
+        raise typer.Exit(code=1)
+    # Validate the key against the provider before storing.
+    if not skip_validation:
+        typer.echo(f"Validating {spec.display_name} key…")
+        valid, message = validate_provider_key(spec.name, key.strip(), base_url=base_url)
+        if not valid:
+            typer.echo(f"Validation failed: {message}", err=True)
+            typer.echo("Use --skip-validation to store the key anyway.", err=True)
+            raise typer.Exit(code=1)
+        typer.echo(f"  ✓ {message}")
+    try:
         CredentialStore().set_provider_key(spec.name, key)
-    except (ValueError, KeyringUnavailableError) as exc:
+    except KeyringUnavailableError as exc:
         _credential_error(exc)
         return
     typer.echo(f"Saved {spec.display_name} API key to secure local storage.")
@@ -273,19 +410,26 @@ def keys_add_command(provider: str) -> None:
 
 @keys_app.command("remove")
 def keys_remove_command(provider: str) -> None:
+    """Remove a stored API key from the platform credential manager."""
     try:
         spec = provider_spec(provider)
         removed = CredentialStore().delete_provider_key(spec.name)
     except (ValueError, KeyringUnavailableError) as exc:
         _credential_error(exc)
         return
-    typer.echo(f"Removed {spec.display_name} API key." if removed else f"No {spec.display_name} API key was saved.")
+    typer.echo(
+        f"Removed {spec.display_name} API key."
+        if removed
+        else f"No {spec.display_name} API key was saved."
+    )
 
 
 @keys_app.command("test")
 def keys_test_command(
     provider: str = typer.Argument(...),
-    base_url: str | None = typer.Option(None, "--base-url", help="Base URL for an OpenAI-compatible provider."),
+    base_url: str | None = typer.Option(
+        None, "--base-url", help="Base URL for an OpenAI-compatible provider."
+    ),
 ) -> None:
     """Perform a no-cost provider check with a securely stored API key."""
     try:
@@ -304,14 +448,161 @@ def keys_test_command(
         raise typer.Exit(code=1)
 
 
+@keys_app.command("rotate")
+def keys_rotate_command(
+    provider: str = typer.Argument(...),
+    base_url: str | None = typer.Option(
+        None, "--base-url", help="Base URL for OpenAI-compatible providers."
+    ),
+    skip_validation: bool = typer.Option(
+        False, "--skip-validation", help="Store the key without testing it first."
+    ),
+) -> None:
+    """Replace an existing provider API key with a new one."""
+    try:
+        spec = provider_spec(provider)
+    except ValueError as exc:
+        _credential_error(exc)
+        return
+    store = CredentialStore()
+    existing = store.get_provider_key(spec.name)
+    if not existing:
+        typer.echo(f"No existing {spec.display_name} API key found.  Use 'keys add' instead.")
+        raise typer.Exit(code=1)
+    new_key = typer.prompt(
+        f"New {spec.display_name} API key", hide_input=True, confirmation_prompt=True
+    )
+    if not new_key.strip():
+        typer.echo("API key must not be blank.", err=True)
+        raise typer.Exit(code=1)
+    # Validate before replacing.
+    if not skip_validation:
+        typer.echo(f"Validating new {spec.display_name} key…")
+        valid, message = validate_provider_key(spec.name, new_key.strip(), base_url=base_url)
+        if not valid:
+            typer.echo(f"Validation failed: {message}", err=True)
+            typer.echo("The old key has NOT been replaced.", err=True)
+            typer.echo("Use --skip-validation to replace anyway.", err=True)
+            raise typer.Exit(code=1)
+        typer.echo(f"  ✓ {message}")
+    try:
+        store.set_provider_key(spec.name, new_key)
+    except KeyringUnavailableError as exc:
+        _credential_error(exc)
+        return
+    typer.echo(f"Rotated {spec.display_name} API key in secure local storage.")
+
+
+@keys_app.command("migrate")
+def keys_migrate_command(
+    env_file: Path = typer.Option(
+        Path(".env"), "--env-file", help="Path to the .env file to scan."
+    ),
+    remove: bool = typer.Option(
+        False, "--remove", help="Remove migrated keys from the .env file."
+    ),
+) -> None:
+    """Detect provider API keys in .env and import them into secure storage."""
+    migrated, skipped = _migrate_env_keys(env_file, remove=remove)
+    if not migrated and not skipped:
+        typer.echo("No provider API keys found in the .env file.")
+        return
+    for name in migrated:
+        typer.echo(f"  ✓ Migrated {name}")
+    for name, reason in skipped:
+        typer.echo(f"  ✗ Skipped {name}: {reason}")
+    if migrated:
+        typer.echo(f"\n{len(migrated)} key(s) imported into secure local storage.")
+
+
+def _migrate_env_keys(
+    env_path: Path, *, remove: bool
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Scan a .env file for provider keys and migrate them to the keyring.
+
+    Returns (migrated_names, [(skipped_name, reason), ...]).
+    Never displays any key values.
+    """
+    if not env_path.exists():
+        return [], []
+
+    migrated: list[str] = []
+    skipped: list[tuple[str, str]] = []
+    lines = env_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    removed_vars: set[str] = set()
+
+    store = CredentialStore()
+    for spec in provider_specs():
+        if not spec.environment_variable:
+            continue
+        env_var = spec.environment_variable
+        # Find the value in the .env content.
+        value = None
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("#") or "=" not in stripped:
+                continue
+            var_name, _, var_value = stripped.partition("=")
+            if var_name.strip() == env_var and var_value.strip():
+                value = var_value.strip().strip("'\"")
+                break
+        if not value:
+            continue
+        # Check if already in keyring.
+        try:
+            existing = store.get_provider_key(spec.name)
+            if existing:
+                skipped.append((spec.display_name, "already configured in keyring"))
+                continue
+        except KeyringUnavailableError:
+            skipped.append((spec.display_name, "keyring unavailable"))
+            continue
+        # Confirm with user.
+        if not typer.confirm(
+            f"Import {spec.display_name} key from .env into secure storage?"
+        ):
+            skipped.append((spec.display_name, "user declined"))
+            continue
+        try:
+            store.set_provider_key(spec.name, value)
+            # Verify.
+            stored = store.get_provider_key(spec.name)
+            if stored != value:
+                skipped.append((spec.display_name, "verification failed"))
+                continue
+        except KeyringUnavailableError:
+            skipped.append((spec.display_name, "keyring unavailable"))
+            continue
+        migrated.append(spec.display_name)
+        if remove:
+            removed_vars.add(env_var)
+
+    # Remove migrated keys from .env if requested.
+    if remove and removed_vars:
+        new_lines: list[str] = []
+        for line in lines:
+            stripped = line.strip()
+            if "=" in stripped and not stripped.startswith("#"):
+                var_name = stripped.partition("=")[0].strip()
+                if var_name in removed_vars:
+                    continue
+            new_lines.append(line)
+        env_path.write_text("".join(new_lines), encoding="utf-8")
+
+    return migrated, skipped
+
+
 @app.command("config")
 def config_command() -> None:
     """Show safe local configuration and credential-store status."""
     settings = Settings()
     oauth_ready = bool(os.environ.get("GOOGLE_CLIENT_ID"))
-    typer.echo(f"Google OAuth: {'configured' if oauth_ready else 'not configured'}")
-    typer.echo(f"Provider: {settings.provider_name}")
-    typer.echo(f"Model: {settings.agent_model}")
+    keyring_ok = CredentialStore.is_available()
+    typer.echo(f"Google OAuth:     {'configured' if oauth_ready else 'not configured'}")
+    typer.echo(f"Keyring Backend:  {CredentialStore.backend_name()}")
+    typer.echo(f"Keyring Status:   {'available' if keyring_ok else 'unavailable'}")
+    typer.echo(f"Provider:         {settings.provider_name}")
+    typer.echo(f"Model:            {settings.agent_model}")
     typer.echo("API keys: managed through 'agent47 keys' and never displayed here.")
 
 

@@ -18,7 +18,9 @@ class Account:
     last_login_at: str
 
     @classmethod
-    def from_google_profile(cls, profile: dict[str, Any], *, created_at: str | None = None) -> "Account":
+    def from_google_profile(
+        cls, profile: dict[str, Any], *, created_at: str | None = None
+    ) -> "Account":
         user_id = str(profile.get("sub") or "").strip()
         email = str(profile.get("email") or "").strip()
         if not user_id or not email:

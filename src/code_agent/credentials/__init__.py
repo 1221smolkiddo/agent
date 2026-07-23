@@ -1,12 +1,13 @@
 """OS-backed credentials for Agent47 providers and OAuth tokens."""
 
-from .keyring import CredentialStore, KeyringUnavailableError
+from .keyring import CredentialStore, KeyringUnavailableError, keyring_setup_hint
 from .providers import ProviderSpec, provider_spec, provider_specs, validate_provider_key
 
 __all__ = [
     "CredentialStore",
     "KeyringUnavailableError",
     "ProviderSpec",
+    "keyring_setup_hint",
     "provider_spec",
     "provider_specs",
     "validate_provider_key",

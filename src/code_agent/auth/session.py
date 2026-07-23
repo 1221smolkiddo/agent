@@ -8,7 +8,9 @@ from .models import Account
 class LocalSession:
     """Coordinates non-sensitive profile metadata and keyring-held OAuth tokens."""
 
-    def __init__(self, accounts: AccountStore | None = None, credentials: CredentialStore | None = None) -> None:
+    def __init__(
+        self, accounts: AccountStore | None = None, credentials: CredentialStore | None = None
+    ) -> None:
         self.accounts = accounts or AccountStore()
         self.credentials = credentials or CredentialStore()
 

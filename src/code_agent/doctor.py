@@ -1,8 +1,17 @@
+"""Comprehensive environment diagnostics for Agent47.
+
+Covers: Python version, platform, workspace, storage, console scripts,
+external tools (git, rg, docker/podman), API keys, model configuration,
+authentication, session validity, keyring health, internet connectivity,
+stored provider keys, and provider reachability.
+"""
+
 from __future__ import annotations
 
 import json
 import platform
 import shutil
+import socket
 import sqlite3
 import sys
 import tempfile
@@ -72,9 +81,11 @@ class DoctorReport:
             "",
             "Checks:",
         ]
+        status_icons = {"pass": "✓", "warn": "⚠", "fail": "✗"}
         for check in self.checks:
-            suffix = f" Hint: {check.hint}" if check.hint else ""
-            lines.append(f"- {check.status.upper()} {check.name}: {check.detail}{suffix}")
+            icon = status_icons.get(check.status, "?")
+            suffix = f"  Hint: {check.hint}" if check.hint else ""
+            lines.append(f"  {icon} {check.status.upper()} {check.name}: {check.detail}{suffix}")
         return "\n".join(lines)
 
 
@@ -82,22 +93,36 @@ def run_doctor(cwd: Path | None = None, settings: Settings | None = None) -> Doc
     workspace = (cwd or Path.cwd()).resolve()
     config = settings or Settings()
     checks = [
+        # ── Runtime ──
         _check_python_version(),
         _check_supported_platform(),
         _check_workspace_writable(workspace),
         _check_storage(config.agent_db_path),
         _check_console_scripts(),
-        _check_command("git", required=False, hint="Install git for patch application and git diff awareness."),
+        # ── External Tools ──
+        _check_command(
+            "git", required=False, hint="Install git for patch application and git diff awareness."
+        ),
         _check_command(
             "rg",
             required=False,
             hint="Install ripgrep for faster project search; Agent47 has a slower Python fallback.",
         ),
+        _check_docker_or_podman(),
+        # ── Configuration ──
         _check_api_key(config),
         _check_model_deadlines(config),
         _check_fallback_models(config),
         _check_env_file(workspace),
         _check_project_memory(workspace),
+        # ── Authentication & Credentials ──
+        _check_authentication(),
+        _check_session(),
+        _check_keyring(),
+        _check_stored_provider_keys(),
+        # ── Network ──
+        _check_internet(),
+        _check_provider_reachability(config),
     ]
     return DoctorReport(
         platform=f"{platform.system()} {platform.release()}",
@@ -107,67 +132,22 @@ def run_doctor(cwd: Path | None = None, settings: Settings | None = None) -> Doc
     )
 
 
+# ======================================================================
+# Runtime checks
+# ======================================================================
+
+
 def _check_python_version() -> DoctorCheck:
     version = sys.version_info
     if version >= (3, 11):
-        return DoctorCheck("python-version", "pass", f"{version.major}.{version.minor}.{version.micro}")
+        return DoctorCheck(
+            "python-version", "pass", f"{version.major}.{version.minor}.{version.micro}"
+        )
     return DoctorCheck(
         "python-version",
         "fail",
         f"{version.major}.{version.minor}.{version.micro}",
         "Install Python 3.11 or newer.",
-    )
-
-
-def _check_model_deadlines(settings: Settings) -> DoctorCheck:
-    if settings.agent_run_timeout_seconds < settings.agent_model_timeout_seconds:
-        return DoctorCheck(
-            "model-deadlines",
-            "warn",
-            (
-                f"turn={settings.agent_model_timeout_seconds:g}s, "
-                f"run={settings.agent_run_timeout_seconds:g}s"
-            ),
-            "Keep the run deadline at least as large as the model-turn deadline.",
-        )
-    return DoctorCheck(
-        "model-deadlines",
-        "pass",
-        (
-            f"turn={settings.agent_model_timeout_seconds:g}s, "
-            f"run={settings.agent_run_timeout_seconds:g}s; Agent47-owned retries"
-        ),
-    )
-
-
-def _check_fallback_models(settings: Settings) -> DoctorCheck:
-    models = settings.fallback_model_list
-    if not models:
-        return DoctorCheck(
-            "model-fallback",
-            "pass",
-            "no fallback models configured (optional; startup warning enabled)",
-            "Set AGENT_FALLBACK_MODELS to one or more models with configured provider credentials.",
-        )
-    missing: list[str] = []
-    for model in models:
-        registered = find_registered_model(model)
-        provider = registered.provider if registered else settings.provider_name
-        try:
-            settings.model_api_key_for(provider)
-        except RuntimeError:
-            missing.append(f"{model} ({provider})")
-    if missing:
-        return DoctorCheck(
-            "model-fallback",
-            "warn",
-            f"{len(models)} configured; missing credentials for: {', '.join(missing)}",
-            "Configure the required provider keys or remove unusable fallback models.",
-        )
-    return DoctorCheck(
-        "model-fallback",
-        "pass",
-        f"{len(models)} configured with available provider credentials",
     )
 
 
@@ -186,7 +166,9 @@ def _check_supported_platform() -> DoctorCheck:
 def _check_workspace_writable(workspace: Path) -> DoctorCheck:
     try:
         workspace.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(prefix=".agent47-doctor-", dir=workspace, delete=True):
+        with tempfile.NamedTemporaryFile(
+            prefix=".agent47-doctor-", dir=workspace, delete=True
+        ):
             pass
     except OSError as exc:
         return DoctorCheck(
@@ -240,6 +222,11 @@ def _check_console_scripts() -> DoctorCheck:
     )
 
 
+# ======================================================================
+# External tools
+# ======================================================================
+
+
 def _check_command(command: str, *, required: bool, hint: str) -> DoctorCheck:
     path = shutil.which(command)
     if path:
@@ -249,6 +236,80 @@ def _check_command(command: str, *, required: bool, hint: str) -> DoctorCheck:
         "fail" if required else "warn",
         "not found on PATH",
         hint,
+    )
+
+
+def _check_docker_or_podman() -> DoctorCheck:
+    docker = shutil.which("docker")
+    podman = shutil.which("podman")
+    if docker and podman:
+        return DoctorCheck("container-runtime", "pass", f"docker={docker}, podman={podman}")
+    if docker:
+        return DoctorCheck("container-runtime", "pass", f"docker={docker}")
+    if podman:
+        return DoctorCheck("container-runtime", "pass", f"podman={podman}")
+    return DoctorCheck(
+        "container-runtime",
+        "warn",
+        "neither docker nor podman found on PATH",
+        "Install Docker or Podman for container sandbox isolation.",
+    )
+
+
+# ======================================================================
+# Configuration checks
+# ======================================================================
+
+
+def _check_model_deadlines(settings: Settings) -> DoctorCheck:
+    if settings.agent_run_timeout_seconds < settings.agent_model_timeout_seconds:
+        return DoctorCheck(
+            "model-deadlines",
+            "warn",
+            (
+                f"turn={settings.agent_model_timeout_seconds:g}s, "
+                f"run={settings.agent_run_timeout_seconds:g}s"
+            ),
+            "Keep the run deadline at least as large as the model-turn deadline.",
+        )
+    return DoctorCheck(
+        "model-deadlines",
+        "pass",
+        (
+            f"turn={settings.agent_model_timeout_seconds:g}s, "
+            f"run={settings.agent_run_timeout_seconds:g}s; Agent47-owned retries"
+        ),
+    )
+
+
+def _check_fallback_models(settings: Settings) -> DoctorCheck:
+    models = settings.fallback_model_list
+    if not models:
+        return DoctorCheck(
+            "model-fallback",
+            "pass",
+            "no fallback models configured (optional; startup warning enabled)",
+            "Set AGENT_FALLBACK_MODELS to one or more models with configured provider credentials.",
+        )
+    missing: list[str] = []
+    for model in models:
+        registered = find_registered_model(model)
+        provider = registered.provider if registered else settings.provider_name
+        try:
+            settings.model_api_key_for(provider)
+        except RuntimeError:
+            missing.append(f"{model} ({provider})")
+    if missing:
+        return DoctorCheck(
+            "model-fallback",
+            "warn",
+            f"{len(models)} configured; missing credentials for: {', '.join(missing)}",
+            "Configure the required provider keys or remove unusable fallback models.",
+        )
+    return DoctorCheck(
+        "model-fallback",
+        "pass",
+        f"{len(models)} configured with available provider credentials",
     )
 
 
@@ -334,3 +395,199 @@ def _check_project_memory(workspace: Path) -> DoctorCheck:
             f"Keep project memory below {MAX_MEMORY_FILE_CHARS} chars.",
         )
     return DoctorCheck("project-memory", "pass", f"{path} ({len(content)} chars)")
+
+
+# ======================================================================
+# Authentication & Credentials
+# ======================================================================
+
+
+def _check_authentication() -> DoctorCheck:
+    """Check whether a Google account profile is stored locally."""
+    try:
+        from .account.profile import AccountStore
+
+        account = AccountStore().load()
+    except Exception:
+        return DoctorCheck(
+            "authentication",
+            "warn",
+            "could not read account profile",
+            "Run 'agent47 auth login' to sign in.",
+        )
+    if account:
+        return DoctorCheck(
+            "authentication",
+            "pass",
+            f"signed in as {account.email} (provider: {account.provider})",
+        )
+    return DoctorCheck(
+        "authentication",
+        "warn",
+        "not signed in",
+        "Run 'agent47 auth login' to sign in with Google.",
+    )
+
+
+def _check_session() -> DoctorCheck:
+    """Check whether OAuth tokens are available and include a refresh token."""
+    try:
+        from .credentials.keyring import CredentialStore
+
+        store = CredentialStore()
+        tokens = store.get_oauth_tokens()
+    except Exception:
+        return DoctorCheck(
+            "session",
+            "warn",
+            "could not access credential store",
+            "Check keyring availability with 'agent47 doctor'.",
+        )
+    if not tokens:
+        return DoctorCheck(
+            "session",
+            "warn",
+            "no OAuth tokens stored",
+            "Run 'agent47 auth login' to sign in.",
+        )
+    has_refresh = isinstance(tokens.get("refresh_token"), str) and bool(
+        tokens.get("refresh_token")
+    )
+    has_access = isinstance(tokens.get("access_token"), str) and bool(
+        tokens.get("access_token")
+    )
+    parts = []
+    if has_access:
+        parts.append("access token present")
+    if has_refresh:
+        parts.append("refresh token present")
+    if not parts:
+        return DoctorCheck(
+            "session",
+            "warn",
+            "tokens stored but incomplete",
+            "Run 'agent47 auth repair' or 'agent47 auth login'.",
+        )
+    return DoctorCheck("session", "pass", "; ".join(parts))
+
+
+def _check_keyring() -> DoctorCheck:
+    """Check that the OS credential store is accessible and using a secure backend."""
+    try:
+        from .credentials.keyring import CredentialStore
+
+        CredentialStore._backend()
+        backend = CredentialStore.backend_name()
+        return DoctorCheck("keyring", "pass", f"secure backend: {backend}")
+    except Exception as exc:
+        from .credentials.keyring import keyring_setup_hint
+
+        return DoctorCheck(
+            "keyring",
+            "fail",
+            str(exc).split("\n")[0],
+            keyring_setup_hint(),
+        )
+
+
+def _check_stored_provider_keys() -> DoctorCheck:
+    """Count how many provider API keys are stored in the keyring."""
+    try:
+        from .credentials.keyring import CredentialStore
+        from .credentials.providers import provider_specs
+
+        store = CredentialStore()
+        configured = []
+        for spec in provider_specs():
+            try:
+                if store.get_provider_key(spec.name):
+                    configured.append(spec.display_name)
+            except Exception:
+                pass
+        if configured:
+            return DoctorCheck(
+                "stored-api-keys",
+                "pass",
+                f"{len(configured)} provider(s): {', '.join(configured)}",
+            )
+        return DoctorCheck(
+            "stored-api-keys",
+            "warn",
+            "no provider API keys in secure storage",
+            "Run 'agent47 keys add <provider>' to store keys securely.",
+        )
+    except Exception:
+        return DoctorCheck(
+            "stored-api-keys",
+            "warn",
+            "could not query keyring",
+            "Check keyring availability.",
+        )
+
+
+# ======================================================================
+# Network checks
+# ======================================================================
+
+
+def _check_internet() -> DoctorCheck:
+    """Basic connectivity check via DNS resolution."""
+    hosts = ["accounts.google.com", "api.openai.com", "dns.google"]
+    resolved = []
+    for host in hosts:
+        try:
+            socket.getaddrinfo(host, 443, socket.AF_UNSPEC, socket.SOCK_STREAM)
+            resolved.append(host)
+        except (socket.gaierror, OSError):
+            pass
+    if resolved:
+        return DoctorCheck("internet", "pass", f"DNS resolved: {', '.join(resolved)}")
+    return DoctorCheck(
+        "internet",
+        "warn",
+        "could not resolve any test hosts",
+        "Check your network connection and DNS configuration.",
+    )
+
+
+def _check_provider_reachability(settings: Settings) -> DoctorCheck:
+    """Lightweight TCP connect test to the configured provider."""
+    try:
+        preset = resolve_model_preset(settings.agent_model_preset)
+        provider = settings.provider_name_for(preset.provider if preset else None)
+    except (RuntimeError, ValueError):
+        return DoctorCheck(
+            "provider-reachability",
+            "warn",
+            "could not determine provider",
+            "Configure AGENT_PROVIDER.",
+        )
+
+    host_by_provider = {
+        "openrouter": "openrouter.ai",
+        "openai": "api.openai.com",
+        "gemini": "generativelanguage.googleapis.com",
+        "deepseek": "api.deepseek.com",
+        "nvidia": "integrate.api.nvidia.com",
+        "groq": "api.groq.com",
+        "anthropic": "api.anthropic.com",
+    }
+    host = host_by_provider.get(provider)
+    if not host:
+        return DoctorCheck(
+            "provider-reachability",
+            "warn",
+            f"no known endpoint for provider {provider}",
+            "Use 'agent47 keys test <provider>' for a full check.",
+        )
+    try:
+        sock = socket.create_connection((host, 443), timeout=5)
+        sock.close()
+        return DoctorCheck("provider-reachability", "pass", f"{host}:443 reachable")
+    except (socket.timeout, OSError):
+        return DoctorCheck(
+            "provider-reachability",
+            "warn",
+            f"could not reach {host}:443",
+            "Check your network or firewall settings.",
+        )

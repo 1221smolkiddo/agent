@@ -19,7 +19,8 @@ class GoogleOAuthConfig:
         client_id = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
         if not client_id:
             raise OAuthConfigurationError(
-                "Google sign-in is not configured. Set GOOGLE_CLIENT_ID to a Google Desktop OAuth client ID."
+                "Google sign-in is not configured.  "
+                "Set GOOGLE_CLIENT_ID to a Google Desktop OAuth client ID."
             )
         raw_timeout = os.environ.get("GOOGLE_OAUTH_TIMEOUT_SECONDS", "180")
         try:

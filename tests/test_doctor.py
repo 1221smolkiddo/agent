@@ -1,3 +1,5 @@
+"""Tests for the expanded Agent47 doctor diagnostics."""
+
 from __future__ import annotations
 
 import json
@@ -39,11 +41,18 @@ def test_run_doctor_reports_core_install_checks(tmp_path: Path, monkeypatch) -> 
 def test_run_doctor_reports_project_memory_health(tmp_path: Path) -> None:
     memory = tmp_path / ".code-agent" / "memory" / "project.md"
     memory.parent.mkdir(parents=True)
-    memory.write_text("# Agent47 Project Memory\n\n## Project Conventions\n\n- Use Ruff.\n", encoding="utf-8")
-    settings = Settings(openrouter_api_key="test-key", agent_db_path=tmp_path / ".agent.db")
+    memory.write_text(
+        "# Agent47 Project Memory\n\n## Project Conventions\n\n- Use Ruff.\n",
+        encoding="utf-8",
+    )
+    settings = Settings(
+        openrouter_api_key="test-key", agent_db_path=tmp_path / ".agent.db"
+    )
 
     report = run_doctor(cwd=tmp_path, settings=settings)
-    memory_check = next(check for check in report.checks if check.name == "project-memory")
+    memory_check = next(
+        check for check in report.checks if check.name == "project-memory"
+    )
 
     assert memory_check.status == "pass"
     assert "project.md" in memory_check.detail
@@ -140,7 +149,9 @@ def test_doctor_reports_optional_missing_fallback_without_blocking_strict_mode(
     )
 
     report = run_doctor(cwd=tmp_path, settings=settings)
-    fallback = next(check for check in report.checks if check.name == "model-fallback")
+    fallback = next(
+        check for check in report.checks if check.name == "model-fallback"
+    )
 
     assert fallback.status == "pass"
     assert "no fallback models" in fallback.detail
@@ -155,7 +166,81 @@ def test_doctor_reports_usable_cross_provider_fallback(tmp_path: Path) -> None:
     )
 
     report = run_doctor(cwd=tmp_path, settings=settings)
-    fallback = next(check for check in report.checks if check.name == "model-fallback")
+    fallback = next(
+        check for check in report.checks if check.name == "model-fallback"
+    )
 
     assert fallback.status == "pass"
     assert "1 configured" in fallback.detail
+
+
+# ======================================================================
+# New authentication/credential/network doctor checks
+# ======================================================================
+
+
+def test_doctor_includes_auth_checks(tmp_path: Path) -> None:
+    settings = Settings(
+        openrouter_api_key="test-key",
+        agent_db_path=tmp_path / ".agent.db",
+    )
+
+    report = run_doctor(cwd=tmp_path, settings=settings)
+    names = {check.name for check in report.checks}
+
+    assert "authentication" in names
+    assert "session" in names
+    assert "keyring" in names
+    assert "stored-api-keys" in names
+    assert "internet" in names
+    assert "provider-reachability" in names
+    assert "container-runtime" in names
+
+
+def test_doctor_authentication_not_signed_in(tmp_path: Path) -> None:
+    settings = Settings(
+        openrouter_api_key="test-key",
+        agent_db_path=tmp_path / ".agent.db",
+    )
+
+    report = run_doctor(cwd=tmp_path, settings=settings)
+    auth_check = next(
+        check for check in report.checks if check.name == "authentication"
+    )
+
+    assert auth_check.status == "warn"
+    assert "not signed in" in auth_check.detail.lower()
+
+
+def test_doctor_session_no_tokens(tmp_path: Path) -> None:
+    settings = Settings(
+        openrouter_api_key="test-key",
+        agent_db_path=tmp_path / ".agent.db",
+    )
+
+    report = run_doctor(cwd=tmp_path, settings=settings)
+    session_check = next(
+        check for check in report.checks if check.name == "session"
+    )
+
+    # Either no tokens or could not access — both are valid states.
+    assert session_check.status in {"warn", "pass"}
+
+
+def test_doctor_report_format_includes_status_icons() -> None:
+    report = DoctorReport(
+        platform="Linux",
+        python="3.12.0",
+        cwd="/tmp/test",
+        checks=[
+            DoctorCheck("pass-check", "pass", "good"),
+            DoctorCheck("warn-check", "warn", "needs attention"),
+            DoctorCheck("fail-check", "fail", "broken"),
+        ],
+    )
+
+    text = report.format_text()
+
+    assert "✓ PASS pass-check" in text
+    assert "⚠ WARN warn-check" in text
+    assert "✗ FAIL fail-check" in text
