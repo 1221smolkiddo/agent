@@ -324,7 +324,7 @@ def test_model_selection_table_shows_capabilities() -> None:
 
 
 def test_compact_model_labels_are_readable() -> None:
-    model = interactive.REGISTERED_MODELS["deepseek-v4-flash"]
+    model = interactive.REGISTERED_MODELS["deepseek-flash"]
 
     assert interactive.compact_capabilities(model.capabilities) == "T S U"
     assert interactive.compact_model_score(model) == "Q4 F5 $5"

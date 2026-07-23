@@ -230,7 +230,7 @@ def test_factory_uses_registered_fallback_model_provider(tmp_path: Path) -> None
 def test_registered_model_runtime_defaults_are_applied(tmp_path: Path) -> None:
     settings = Settings(
         _env_file=None,
-        agent_model_preset="deepseek-v4-flash",
+        agent_model_preset="glm-5.2",
         nvidia_api_key="nvidia-key",
         agent_max_tokens=16384,
         agent_fallback_models="",
@@ -244,9 +244,7 @@ def test_registered_model_runtime_defaults_are_applied(tmp_path: Path) -> None:
     assert agent.model_client.max_tokens == 8192
     assert agent.model_client.temperature == 0.2
     assert agent.model_client.include_stream_usage is False
-    assert agent.model_client.extra_body == {
-        "chat_template_kwargs": {"thinking": True, "reasoning_effort": "high"}
-    }
+    assert agent.model_client.extra_body is None
 
 
 def test_fallback_client_stops_on_non_fallbackable_auth_error() -> None:

@@ -138,24 +138,6 @@ REGISTERED_MODELS: dict[str, RegisteredModel] = {
         reasoning=4,
         runtime=ModelRuntimeDefaults(max_tokens=8192, temperature=0.2),
     ),
-    "deepseek-v4-flash": RegisteredModel(
-        name="deepseek-v4-flash",
-        provider="nvidia",
-        model="deepseek-ai/deepseek-v4-flash",
-        description="DeepSeek V4 Flash on NVIDIA NIM with a large context window for fast coding agents.",
-        required_key="NVIDIA_API_KEY",
-        capabilities=ModelCapabilities(stream_usage=False),
-        context_window="1M",
-        quality=4,
-        speed=5,
-        cost=5,
-        reasoning=4,
-        runtime=ModelRuntimeDefaults(
-            max_tokens=8192,
-            temperature=0.2,
-            extra_body={"chat_template_kwargs": {"thinking": True, "reasoning_effort": "high"}},
-        ),
-    ),
 }
 
 
