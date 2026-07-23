@@ -221,6 +221,23 @@ uv run code-agent run --preset gemini-flash "Review this repository"
 uv run code-agent run --provider nvidia --model z-ai/glm-5.2 "Fix the failing test"
 ```
 
+## Local Sign-In And BYOK
+
+Agent47 is local-first: Google sign-in is optional and uses the OAuth authorization-code flow with PKCE.
+The temporary callback listener is bound to `127.0.0.1` on an available port and is shut down after login.
+OAuth tokens and API keys are stored in the operating system credential manager; only non-sensitive profile
+metadata is saved locally. Configure a Google Desktop OAuth client with `GOOGLE_CLIENT_ID`, then run:
+
+```bash
+agent47 login
+agent47 keys add gemini
+agent47 whoami
+```
+
+Manage keys with `agent47 keys list`, `agent47 keys remove <provider>`, and `agent47 keys test [provider]`.
+Supported key providers include OpenAI, Anthropic, Gemini, OpenRouter, Groq, DeepSeek, NVIDIA NIM, and a
+generic OpenAI-compatible entry. Agent runtime providers automatically prefer a secure BYOK key over `.env`.
+
 The platform layer adds namespaced/versioned tools, lifecycle hooks, scoped instructions, built-in skills,
 workspace skills, plugin manifests, and MCP stdio servers. Built-in skills cover security auditing, test
 generation, code review, documentation, dependency analysis, refactoring, performance, and DevOps.

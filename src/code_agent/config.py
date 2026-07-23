@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     nvidia_api_key: str | None = None
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
 
+    compatible_api_key: str | None = None
+    compatible_base_url: str | None = None
+
     agent_model: str = "qwen/qwen3-coder"
     agent_profile: str = "default"
     agent_planner_model: str | None = None
@@ -92,12 +95,24 @@ class Settings(BaseSettings):
 
     def model_api_key_for(self, provider_override: str | None) -> str:
         provider = self.provider_name_for(provider_override)
+        # A locally managed BYOK credential takes precedence over .env. The
+        # keyring facade deliberately falls back to environment configuration
+        # if the OS credential manager is not available on this machine.
+        try:
+            from .credentials.keyring import CredentialStore, KeyringUnavailableError
+
+            stored_key = CredentialStore().get_provider_key(provider)
+        except KeyringUnavailableError:
+            stored_key = None
+        if stored_key:
+            return stored_key
         key_by_provider = {
             "openrouter": self.openrouter_api_key,
             "openai": self.openai_api_key,
             "gemini": self.gemini_api_key,
             "deepseek": self.deepseek_api_key,
             "nvidia": self.nvidia_api_key,
+            "compatible": self.compatible_api_key,
         }
         key = key_by_provider[provider]
         if not key:
@@ -107,6 +122,7 @@ class Settings(BaseSettings):
                 "gemini": "GEMINI_API_KEY",
                 "deepseek": "DEEPSEEK_API_KEY",
                 "nvidia": "NVIDIA_API_KEY",
+                "compatible": "COMPATIBLE_API_KEY",
             }
             raise RuntimeError(
                 f"{env_by_provider[provider]} is required for AGENT_PROVIDER={provider}."
@@ -129,6 +145,10 @@ class Settings(BaseSettings):
             return self.deepseek_base_url
         if provider == "nvidia":
             return self.nvidia_base_url
+        if provider == "compatible":
+            if not self.compatible_base_url:
+                raise RuntimeError("COMPATIBLE_BASE_URL is required for AGENT_PROVIDER=compatible.")
+            return self.compatible_base_url
         raise RuntimeError(f"AGENT_PROVIDER must be one of: {provider_name_list()}.")
 
     @property

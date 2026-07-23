@@ -270,29 +270,16 @@ def _check_api_key(settings: Settings) -> DoctorCheck:
             str(exc),
             "Set AGENT_MODEL_PRESET to a known preset or leave it empty.",
         )
-    env_by_provider = {
-        "openrouter": "OPENROUTER_API_KEY",
-        "openai": "OPENAI_API_KEY",
-        "gemini": "GEMINI_API_KEY",
-        "deepseek": "DEEPSEEK_API_KEY",
-        "nvidia": "NVIDIA_API_KEY",
-    }
-    key_by_provider = {
-        "openrouter": settings.openrouter_api_key,
-        "openai": settings.openai_api_key,
-        "gemini": settings.gemini_api_key,
-        "deepseek": settings.deepseek_api_key,
-        "nvidia": settings.nvidia_api_key,
-    }
-    env_name = env_by_provider[provider]
-    if key_by_provider[provider]:
+    try:
+        settings.model_api_key_for(provider)
         return DoctorCheck("api-key", "pass", f"configured for provider {provider}")
-    return DoctorCheck(
-        "api-key",
-        "warn",
-        f"not configured for provider {provider}",
-        f"Set {env_name} before running live model tasks.",
-    )
+    except RuntimeError as exc:
+        return DoctorCheck(
+            "api-key",
+            "warn",
+            f"not configured for provider {provider}",
+            str(exc),
+        )
 
 
 def _check_env_file(workspace: Path) -> DoctorCheck:

@@ -14,7 +14,11 @@ from code_agent.doctor import DoctorCheck, DoctorReport, run_doctor
 def test_run_doctor_reports_core_install_checks(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     (tmp_path / ".env.example").write_text("OPENROUTER_API_KEY=\n", encoding="utf-8")
-    settings = Settings(openrouter_api_key="test-key", agent_db_path=tmp_path / ".agent.db")
+    settings = Settings(
+        openrouter_api_key="test-key",
+        agent_fallback_models="",
+        agent_db_path=tmp_path / ".agent.db",
+    )
 
     report = run_doctor(cwd=tmp_path, settings=settings)
     names = {check.name for check in report.checks}
@@ -129,7 +133,11 @@ def test_doctor_cli_outputs_json(monkeypatch, tmp_path: Path) -> None:
 def test_doctor_reports_optional_missing_fallback_without_blocking_strict_mode(
     tmp_path: Path,
 ) -> None:
-    settings = Settings(openrouter_api_key="test-key", agent_db_path=tmp_path / ".agent.db")
+    settings = Settings(
+        openrouter_api_key="test-key",
+        agent_fallback_models="",
+        agent_db_path=tmp_path / ".agent.db",
+    )
 
     report = run_doctor(cwd=tmp_path, settings=settings)
     fallback = next(check for check in report.checks if check.name == "model-fallback")

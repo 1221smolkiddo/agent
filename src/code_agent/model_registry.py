@@ -5,7 +5,7 @@ from typing import Any
 from typing import Literal
 
 
-ProviderName = Literal["openrouter", "openai", "gemini", "deepseek", "nvidia"]
+ProviderName = Literal["openrouter", "openai", "gemini", "deepseek", "nvidia", "compatible"]
 
 PROVIDER_NAMES: tuple[ProviderName, ...] = (
     "openrouter",
@@ -13,6 +13,7 @@ PROVIDER_NAMES: tuple[ProviderName, ...] = (
     "gemini",
     "deepseek",
     "nvidia",
+    "compatible",
 )
 
 

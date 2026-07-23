@@ -70,6 +70,13 @@ class InteractiveAgent(Protocol):
 
 
 def main() -> None:
+    # `agent47` remains the interactive default, while named commands share
+    # the richer Typer CLI used by `code-agent` (for example `agent47 login`).
+    if len(sys.argv) > 1:
+        from .cli import app
+
+        app(prog_name="agent47")
+        return
     settings = Settings()
     base_cwd = Path.cwd().resolve()
     cwd = base_cwd
