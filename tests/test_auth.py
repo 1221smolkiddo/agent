@@ -17,7 +17,6 @@ from __future__ import annotations
 import hashlib
 import base64
 import re
-import threading
 import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -38,7 +37,6 @@ from code_agent.auth.pkce import (
     generate_state,
 )
 from code_agent.auth.session import LocalSession
-from code_agent.credentials.keyring import KeyringUnavailableError
 from code_agent.credentials.providers import provider_spec, validate_provider_key
 from code_agent.config import Settings
 
@@ -193,7 +191,7 @@ class TestCallbackServer:
             try:
                 from urllib.error import HTTPError
 
-                with urlopen(base + "/wrong?code=x&state=y", timeout=5) as resp:  # noqa: S310
+                with urlopen(base + "/wrong?code=x&state=y", timeout=5):  # noqa: S310
                     pass
                 pytest.fail("Expected 404")
             except HTTPError as exc:
@@ -213,7 +211,7 @@ class TestCallbackServer:
 
                 with urlopen(  # noqa: S310
                     server.redirect_uri + "?code=second&state=s", timeout=5
-                ) as resp:
+                ):
                     pass
                 pytest.fail("Expected 409")
             except HTTPError as exc:
@@ -234,7 +232,7 @@ class TestCallbackServer:
                     data=b"",
                     method="POST",
                 )
-                with urlopen(req, timeout=5) as resp:  # noqa: S310
+                with urlopen(req, timeout=5):  # noqa: S310
                     pass
                 pytest.fail("Expected 405")
             except HTTPError as exc:

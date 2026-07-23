@@ -24,9 +24,9 @@ from .config import Settings
 from .account.profile import AccountStore
 from .auth.config import OAuthConfigurationError
 from .auth.google import GoogleAuthenticator
-from .auth.oauth import OAuthError, OAuthRefreshError
+from .auth.oauth import OAuthError
 from .auth.session import LocalSession
-from .credentials.keyring import CredentialStore, KeyringUnavailableError, keyring_setup_hint
+from .credentials.keyring import CredentialStore, KeyringUnavailableError
 from .credentials.providers import provider_spec, provider_specs, validate_provider_key
 from .container_manager import ContainerError, ContainerManager
 from .debug_bundle import export_debug_bundle
@@ -244,7 +244,7 @@ def auth_status_command() -> None:
     else:
         typer.echo("  ✗ No Session Tokens")
 
-    typer.echo(f"\n  Provider:   Google")
+    typer.echo("\n  Provider:   Google")
     typer.echo(f"  Email:      {account.email}")
     typer.echo(f"  Name:       {account.name}")
     typer.echo(f"  Created:    {account.created_at}")
@@ -319,8 +319,8 @@ def account_command() -> None:
     typer.echo("Google Account")
     typer.echo(f"  Name:       {account.name}")
     typer.echo(f"  Email:      {account.email}")
-    typer.echo(f"  Provider:   Google")
-    typer.echo(f"  Signed In:  Yes")
+    typer.echo("  Provider:   Google")
+    typer.echo("  Signed In:  Yes")
     typer.echo(f"  Created:    {account.created_at}")
     typer.echo(f"  Last Login: {account.last_login_at}")
 
