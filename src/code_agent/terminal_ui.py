@@ -334,3 +334,190 @@ def _with_spacers(items: list[object]) -> list[object]:
             spaced.append(Text(""))
         spaced.append(item)
     return spaced
+
+
+def print_help_panel(by_category: dict[str, list[object]]) -> None:
+    """Render single-page categorized help panel with icons."""
+    from .command_registry import CATEGORY_ICONS
+
+    sections: list[object] = []
+    for category, commands in by_category.items():
+        if not commands:
+            continue
+        icon = CATEGORY_ICONS.get(category, "•")
+        header = Text(f"{icon} {category}", style="bold cyan")
+
+        table = Table(show_header=False, box=None, padding=(0, 2, 0, 2), expand=True)
+        table.add_column("Command", style="cyan", no_wrap=True, width=18)
+        table.add_column("Description", style="default")
+
+        for cmd in commands:
+            name = getattr(cmd, "name", str(cmd))
+            desc = getattr(cmd, "description", "")
+            table.add_row(name, desc)
+
+        sections.extend([header, table])
+
+    footer = Text()
+    footer.append("Tip: Use ", style="muted")
+    footer.append("/advanced", style="bold cyan")
+    footer.append(" to see all power-user commands.\n", style="muted")
+    footer.append("Shortcuts: ", style="muted")
+    footer.append("Ctrl+C", style="bold")
+    footer.append(" Stop turn | ", style="muted")
+    footer.append("Ctrl+E", style="bold")
+    footer.append(" Exit session", style="muted")
+    sections.append(footer)
+
+    print_renderable_panel("Help", Group(*_with_spacers(sections)), style="cyan")
+
+
+def print_advanced_panel(by_category: dict[str, list[object]]) -> None:
+    """Render full power-user command reference by category with icons."""
+    from .command_registry import CATEGORY_ICONS
+
+    sections: list[object] = []
+    for category, commands in by_category.items():
+        if not commands:
+            continue
+        icon = CATEGORY_ICONS.get(category, "•")
+        header = Text(f"{icon} {category}", style="bold cyan")
+
+        table = Table(show_header=False, box=None, padding=(0, 2, 0, 2), expand=True)
+        table.add_column("Command", style="cyan", no_wrap=True, width=22)
+        table.add_column("Description", style="default")
+
+        for cmd in commands:
+            name = getattr(cmd, "name", str(cmd))
+            desc = getattr(cmd, "description", "")
+            badge = " [hidden]" if getattr(cmd, "hidden", False) else ""
+            table.add_row(name + badge, desc)
+
+        sections.extend([header, table])
+
+    print_renderable_panel("Advanced Commands Reference", Group(*_with_spacers(sections)), style="magenta")
+
+
+def print_keys_panel(
+    provider_states: list[tuple[str, bool, str]],
+    current_provider: str,
+    current_model: str,
+    fallback_chain: list[str],
+) -> None:
+    """Render API Key configuration panel with status, current model, and fallback chain."""
+    table = Table(show_header=True, header_style="bold cyan", box=box.SIMPLE, padding=(0, 2), expand=True)
+    table.add_column("Provider", style="bold", no_wrap=True)
+    table.add_column("Status", no_wrap=True)
+    table.add_column("Environment / Keyring", style="muted")
+
+    for display_name, configured, env_var in provider_states:
+        status_text = Text("✓ Configured", style="bold green") if configured else Text("✗ Missing", style="bold red")
+        table.add_row(display_name, status_text, env_var or "keyring")
+
+    sections: list[object] = [table]
+
+    meta_table = Table.grid(expand=True, padding=(0, 2))
+    meta_table.add_column(style="muted", no_wrap=True)
+    meta_table.add_column()
+    meta_table.add_row(Text("Current Provider", style="bold"), Text(current_provider, style="cyan"))
+    meta_table.add_row(Text("Current Model", style="bold"), Text(current_model, style="cyan"))
+    if fallback_chain:
+        chain_str = " -> ".join(fallback_chain)
+        meta_table.add_row(Text("Fallback Chain", style="bold"), Text(chain_str, style="default"))
+
+    sections.append(meta_table)
+
+    missing = [name for name, cfg, _ in provider_states if not cfg]
+    if missing:
+        guidance = Text()
+        guidance.append("To add a missing key:\n", style="muted")
+        guidance.append(f"  agent47 keys add {missing[0].lower().split()[0]}\n", style="bold yellow")
+        guidance.append("  or set the environment variable in your .env file.", style="muted")
+        sections.append(guidance)
+
+    print_renderable_panel("API Keys", Group(*_with_spacers(sections)), style="cyan")
+
+
+def print_status_panel(
+    rows: list[tuple[str, str, str]],
+) -> None:
+    """Render enriched status panel hiding empty/unavailable rows."""
+    table = Table.grid(expand=True, padding=(0, 3))
+    table.add_column(style="muted", no_wrap=True)
+    table.add_column()
+
+    for category, key, value in rows:
+        if not value or value == "none" or value == "unknown":
+            continue
+        label = f"{category} • {key}" if category else key
+        table.add_row(Text(label, style="bold"), Text(value, style="default"))
+
+    print_renderable_panel("Status", table, style="cyan")
+
+
+def print_command_preview(meta: object) -> None:
+    """Render detailed command preview card."""
+    from .command_registry import CATEGORY_ICONS
+
+    name = getattr(meta, "name", "/command")
+    category = getattr(meta, "category", "General")
+    icon = CATEGORY_ICONS.get(category, "•")
+    desc = getattr(meta, "description", "")
+    usage = getattr(meta, "usage", "")
+    examples = getattr(meta, "examples", ())
+    aliases = getattr(meta, "aliases", ())
+    keywords = getattr(meta, "keywords", ())
+
+    sections: list[object] = []
+    
+    header = Text()
+    header.append(f"{icon} {name}\n", style="bold cyan")
+    header.append(desc, style="default")
+    sections.append(header)
+
+    grid = Table.grid(expand=True, padding=(0, 2))
+    grid.add_column(style="muted", no_wrap=True)
+    grid.add_column()
+
+    grid.add_row(Text("Category", style="bold"), Text(f"{icon} {category}"))
+
+    if usage:
+        grid.add_row(Text("Usage", style="bold"), Text(usage, style="yellow"))
+    if examples:
+        grid.add_row(Text("Examples", style="bold"), Text("\n".join(examples), style="green"))
+    if aliases:
+        grid.add_row(Text("Aliases", style="bold"), Text(", ".join(aliases), style="default"))
+    if keywords:
+        grid.add_row(Text("Keywords", style="bold"), Text(", ".join(keywords), style="muted"))
+
+    sections.append(grid)
+
+    print_renderable_panel(f"Command Info: {name}", Group(*_with_spacers(sections)), style="cyan")
+
+
+def print_suggestions_panel(query: str, suggestions: list[object]) -> None:
+    """Render fuzzy suggestion panel when an unknown command is typed."""
+    from .command_registry import CATEGORY_ICONS
+
+    text = Text()
+    text.append(f"Unknown command: {query}\n\n", style="danger")
+
+    if suggestions:
+        text.append("Did you mean?\n", style="muted")
+        for s in suggestions:
+            name = getattr(s, "name", str(s))
+            desc = getattr(s, "description", "")
+            cat = getattr(s, "category", "")
+            icon = CATEGORY_ICONS.get(cat, "•")
+            text.append(f"  {icon} ", style="default")
+            text.append(f"{name:<18}", style="bold cyan")
+            text.append(f"{desc}\n", style="default")
+    else:
+        text.append("Type ", style="muted")
+        text.append("/", style="bold cyan")
+        text.append(" to browse available commands, or ", style="muted")
+        text.append("/help", style="bold cyan")
+        text.append(" for assistance.", style="muted")
+
+    print_renderable_panel("Unknown Command", text, style="red")
+

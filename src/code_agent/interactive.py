@@ -53,9 +53,20 @@ from .terminal_ui import (
     print_work_report_panel,
     print_response,
     format_status_line,
+    print_help_panel,
+    print_advanced_panel,
+    print_keys_panel,
+    print_status_panel,
+    print_command_preview,
+    print_suggestions_panel,
 )
 from rich.text import Text
 from .work_report import should_show_work_report
+from .command_registry import CommandRegistry, CommandCompleter, build_default_registry
+from .fuzzy import search_commands, suggest_commands
+
+SESSION_REGISTRY = build_default_registry()
+
 
 DEFAULT_DRY_RUN = False
 CTRL_C = "\x03"
@@ -111,7 +122,7 @@ def main() -> None:
     workspace_summary = analyze_workspace(cwd)
     StatusReporter.mark_workspace_seen(workspace_summary)
 
-    session = PromptSession()
+    session = PromptSession(completer=CommandCompleter(SESSION_REGISTRY), complete_while_typing=True)
     while True:
         try:
             with patch_stdout():
@@ -424,6 +435,11 @@ def handle_command(
     command = parts[0].lower()
     value = parts[1].strip() if len(parts) > 1 else ""
 
+    # Record usage if command is known
+    matched_meta = SESSION_REGISTRY.lookup(command)
+    if matched_meta:
+        SESSION_REGISTRY.record_usage(matched_meta.name)
+
     if command in {"/exit", "/quit", "/q", "/stop"}:
         return CommandState(
             base_cwd,
@@ -438,7 +454,18 @@ def handle_command(
             exit_requested=True,
         )
     if command == "/help":
-        print_help()
+        if value:
+            meta = SESSION_REGISTRY.lookup(value)
+            if meta:
+                print_command_preview(meta)
+            else:
+                print_help()
+        else:
+            print_help()
+    elif command == "/advanced":
+        print_advanced_panel(SESSION_REGISTRY.by_category(include_hidden=True))
+    elif command == "/keys":
+        _handle_keys_command(settings, model)
     elif command == "/dry-run":
         dry_run = True
         print_panel("Mode", "dry-run")
@@ -572,28 +599,7 @@ def handle_command(
     elif command == "/history-show":
         print_history_detail(settings, value)
     elif command == "/status":
-        print_key_values(
-            "Status",
-            [
-                ("Workspace", cwd),
-                ("Mode", "dry-run" if dry_run else "write-enabled"),
-                ("Current model", current_model_name(settings, model)),
-                ("Provider", current_provider_name(settings, model)),
-                ("Profile", profile or settings.agent_profile),
-                ("Git", git_branch(cwd) or "none"),
-                ("Approvals", permission_policy.mode.value if permission_policy else "per_action"),
-                (
-                    "Status",
-                    format_status_line(
-                        model=current_model_name(settings, model),
-                        provider=current_provider_name(settings, model),
-                        approval=permission_policy.mode.value if permission_policy else "per_action",
-                        sandbox=sandbox_enabled,
-                        git_status="branch " + git_branch(cwd) if git_branch(cwd) else "no git",
-                    ),
-                ),
-            ],
-        )
+        _handle_status_command(settings, cwd, model, profile, dry_run, stream_model, sandbox_enabled, permission_policy)
     elif command == "/approve-all":
         if permission_policy:
             permission_policy.set_mode(ApprovalMode.approve_task)
@@ -650,7 +656,8 @@ def handle_command(
         else:
             print_panel("Steering", session_state.conversation_steering or "No steering set.")
     else:
-        print_panel("Unknown Command", f"{command}\nUse /help to see available commands.", style="red")
+        suggestions = suggest_commands(command, SESSION_REGISTRY)
+        print_suggestions_panel(command, suggestions)
 
     return CommandState(
         base_cwd,
@@ -666,45 +673,82 @@ def handle_command(
 
 
 def print_help() -> None:
-    table = Table(show_header=True, header_style="bold cyan", box=None, padding=(0, 2))
-    table.add_column("Command", style="cyan", no_wrap=True)
-    table.add_column("Use", overflow="fold")
-    for command, description in [
-        ("/help", "Show this help."),
-        ("/status", "Show workspace, model, mode, and approvals."),
-        ("/model", "Show the current model and capabilities."),
-        ("/models", "Preview model presets and select one."),
-        ("/model select", "Open the model picker."),
-        ("/model <name>", "Change model and save provider/model settings."),
-        ("/profile <name>", "Change model profile: default, planner, coder, reviewer, or fast."),
-        ("/dry-run", "Inspect only; skip writes and shell commands."),
-        ("/write", "Allow writes and shell commands."),
-        ("/stream [off]", "Turn compact model streaming progress on or off."),
-        ("/cwd <path>", "Change workspace."),
-        ("/sandbox [off]", "Create and use a sandbox copy, or turn it off."),
-        ("/sandbox diff", "Show changes between the sandbox and base workspace."),
-        ("/sandbox apply", "Promote sandbox changes back to the base workspace."),
-        ("/approve-all", "Approve all actions for each task after first approval."),
-        ("/auto-read", "Auto-approve read-only operations."),
-        ("/per-action", "Require individual approval for every action."),
-        ("/history", "Show recent saved agent runs."),
-        ("/history-show <id>", "Show saved steps for one run."),
-        ("/resume <id> [msg]", "Resume a saved run with optional extra instruction."),
-        ("/restore <id|last>", "Restore verified file changes from a prior run."),
-        ("/revert <id|last>", "Alias for restore."),
-        ("/diff", "Show where to find detailed diff output."),
-        ("/report", "Show where detailed reports are saved."),
-        ("/files", "Show current workspace path."),
-        ("/settings", "Show current session settings."),
-        ("/steer <guidance>", "Steer future turns with style, focus, or constraints."),
-        ("/steer clear", "Clear conversation steering."),
-        ("/debug", "Show stack trace of the last error."),
-        ("Ctrl+C", "Stop the active model/tool turn and return to the prompt."),
-        ("Ctrl+E", "Exit the interactive agent."),
-        ("/stop", "Quit interactive mode between turns."),
-    ]:
-        table.add_row(command, description)
-    print_renderable_panel("Help", table, style="cyan")
+    """Render categorized help view using the single source of truth registry."""
+    print_help_panel(SESSION_REGISTRY.by_category(include_hidden=False))
+
+
+def _handle_keys_command(settings: Settings, model: str | None) -> None:
+    """Gather provider API key configuration state and render /keys panel."""
+    store = CredentialStore() if CredentialStore.is_available() else None
+    provider_states: list[tuple[str, bool, str]] = []
+
+    for spec in provider_specs():
+        if not spec.environment_variable and spec.name != "compatible":
+            continue
+        has_key = False
+        if store:
+            try:
+                has_key = bool(store.get_provider_key(spec.name))
+            except Exception:
+                has_key = False
+        if not has_key:
+            env_key = getattr(settings, f"{spec.name}_api_key", None)
+            has_key = bool(env_key)
+
+        provider_states.append((spec.display_name, has_key, spec.environment_variable or ""))
+
+    current_prov = current_provider_name(settings, model)
+    current_mod = current_model_name(settings, model)
+    fallback_chain = settings.fallback_model_list or [current_mod]
+
+    print_keys_panel(provider_states, current_prov, current_mod, fallback_chain)
+
+
+def _handle_status_command(
+    settings: Settings,
+    cwd: Path,
+    model: str | None,
+    profile: str | None,
+    dry_run: bool,
+    stream_model: bool,
+    sandbox_enabled: bool,
+    permission_policy: PermissionPolicy | None,
+) -> None:
+    """Gather environment, auth, model, and workspace status and render /status panel."""
+    auth_status = "✓ Signed in" if LocalSession().signed_in() else "✗ Not signed in"
+    branch = git_branch(cwd) or ""
+    
+    # Calculate API key summary
+    store = CredentialStore() if CredentialStore.is_available() else None
+    key_summary_parts: list[str] = []
+    for p_name in ["gemini", "openrouter", "openai", "anthropic", "deepseek"]:
+        has_k = False
+        if store:
+            try:
+                has_k = bool(store.get_provider_key(p_name))
+            except Exception:
+                has_k = False
+        if not has_k:
+            has_k = bool(getattr(settings, f"{p_name}_api_key", None))
+        symbol = "✓" if has_k else "✗"
+        key_summary_parts.append(f"{p_name.capitalize()} {symbol}")
+    key_summary = "  ".join(key_summary_parts)
+
+    rows: list[tuple[str, str, str]] = [
+        ("Workspace", "Path", str(cwd)),
+        ("Workspace", "Git Branch", branch),
+        ("Authentication", "Account", auth_status),
+        ("Model", "Current Model", current_model_name(settings, model)),
+        ("Model", "Provider", current_provider_name(settings, model)),
+        ("Model", "Profile", profile or settings.agent_profile),
+        ("Session", "Mode", "dry-run" if dry_run else "write-enabled"),
+        ("Session", "Approvals", permission_policy.mode.value if permission_policy else "auto_read"),
+        ("Session", "Sandbox", "enabled" if sandbox_enabled else "disabled"),
+        ("Session", "Streaming", "on" if stream_model else "off"),
+        ("API Keys", "Summary", key_summary),
+    ]
+
+    print_status_panel(rows)
 
 
 def print_history(settings: Settings) -> None:
