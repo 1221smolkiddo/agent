@@ -16,7 +16,7 @@ def test_execution_cli_create_show_trace_checkpoint_and_replay(tmp_path):
         "--token-budget", "5000", "--dollar-budget", "2.5",
     ])
     assert created.exit_code == 0, created.output
-    execution_id = created.output.strip()
+    execution_id = created.output.strip().splitlines()[-1]
     shown = runner.invoke(app, ["execution", "show", execution_id, "--db", str(db)])
     assert shown.exit_code == 0
     assert json.loads(shown.output)["goal"] == "build engine"
@@ -34,7 +34,7 @@ def test_execution_cli_create_show_trace_checkpoint_and_replay(tmp_path):
 def test_execution_cli_pause_resume_and_list(tmp_path):
     db = tmp_path / "executions.db"
     created = runner.invoke(app, ["execution", "create", "goal", "--db", str(db)])
-    execution_id = created.output.strip()
+    execution_id = created.output.strip().splitlines()[-1]
     paused = runner.invoke(app, ["execution", "pause", execution_id, "--db", str(db)])
     assert json.loads(paused.output)["status"] == "paused"
     resumed = runner.invoke(app, ["execution", "resume", execution_id, "--db", str(db)])
