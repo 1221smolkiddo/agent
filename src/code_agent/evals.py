@@ -1354,8 +1354,15 @@ def _write_fixture_files(workspace: Path, files: dict[str, str]) -> None:
 
 
 def _init_git_repo(workspace: Path) -> None:
-    cmd = "git init -q -b main && git add . && git -c user.email=eval@example.com -c user.name=Eval commit -q -m init"
-    subprocess.run(cmd, cwd=workspace, shell=True, capture_output=True, text=True, check=False)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=workspace, capture_output=True, text=True, check=False)
+    subprocess.run(["git", "add", "."], cwd=workspace, capture_output=True, text=True, check=False)
+    subprocess.run(
+        ["git", "-c", "user.email=eval@example.com", "-c", "user.name=Eval", "commit", "-q", "-m", "init"],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def file_equals(relative_path: str, expected: str) -> FixtureValidator:
