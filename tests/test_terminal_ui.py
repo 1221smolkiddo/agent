@@ -146,6 +146,55 @@ def test_interactive_mode_starts_write_enabled() -> None:
     assert DEFAULT_DRY_RUN is False
 
 
+def test_interactive_onboarding_requires_login_before_starting(monkeypatch) -> None:
+    class UnsignedSession:
+        def signed_in(self) -> bool:
+            return False
+
+    monkeypatch.setattr(interactive.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(interactive, "LocalSession", UnsignedSession)
+    monkeypatch.setattr(interactive.Prompt, "ask", lambda *_args, **_kwargs: "no")
+
+    assert interactive.require_interactive_onboarding(Settings(_env_file=None)) is interactive._ONBOARDING_BLOCKED
+
+
+def test_interactive_onboarding_runs_login_then_requires_secure_provider_key(monkeypatch) -> None:
+    class Session:
+        signed_in_count = 0
+
+        def signed_in(self) -> bool:
+            type(self).signed_in_count += 1
+            return type(self).signed_in_count > 1
+
+    class Store:
+        keys: set[str] = set()
+
+        def get_provider_key(self, provider: str) -> str | None:
+            return "secure-key" if provider in type(self).keys else None
+
+    prompts = iter(["yes", "1"])
+    login_calls: list[bool] = []
+    setup_calls: list[str] = []
+
+    monkeypatch.setattr(interactive.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(interactive, "LocalSession", Session)
+    monkeypatch.setattr(interactive, "CredentialStore", Store)
+    monkeypatch.setattr(interactive.Prompt, "ask", lambda *_args, **_kwargs: next(prompts))
+    monkeypatch.setattr(interactive, "_start_auth_login", lambda: login_calls.append(True))
+
+    def add_key(provider) -> None:
+        setup_calls.append(provider.name)
+        Store.keys.add(provider.name)
+
+    monkeypatch.setattr(interactive, "_start_key_setup", add_key)
+
+    model = interactive.require_interactive_onboarding(Settings(_env_file=None))
+
+    assert login_calls == [True]
+    assert setup_calls == ["openai"]
+    assert model == "gpt-4.1"
+
+
 def test_read_prompt_propagates_click_abort(monkeypatch) -> None:
     monkeypatch.setattr(interactive.typer, "echo", lambda *_args, **_kwargs: None)
 

@@ -241,10 +241,12 @@ uv run code-agent run --provider nvidia --model z-ai/glm-5.2 "Fix the failing te
 
 ## Local Sign-In And BYOK
 
-Agent47 is local-first: Google sign-in is optional and uses the OAuth authorization-code flow with PKCE.
-The temporary callback listener is bound to `127.0.0.1` on an available port and is shut down after login.
-OAuth tokens and API keys are stored in the operating system credential manager; only non-sensitive profile
-metadata is saved locally. Configure a Google Desktop OAuth client with `GOOGLE_CLIENT_ID`, then run:
+Agent47 is local-first. The interactive `agent47` terminal requires Google sign-in and a provider API key
+before it starts a model session. First launch greets the user and guides this setup; the OAuth flow uses the
+authorization-code flow with PKCE. The temporary callback listener is bound to `127.0.0.1` on an available
+port and is shut down after login. OAuth tokens and API keys are stored in the operating system credential
+manager; only non-sensitive profile metadata is saved locally. Configure a Google Desktop OAuth client with
+`GOOGLE_CLIENT_ID`, then run:
 
 ```bash
 agent47 login

@@ -26,6 +26,10 @@ code-agent --help
 agent47 --help
 ```
 
+Starting `agent47` with no arguments launches interactive onboarding. It requires Google sign-in first,
+then guides the user to choose a provider and save its API key in the operating system credential manager.
+No model session starts until both are complete. `code-agent` remains available for automation and CI.
+
 Use `pip install --upgrade --pre agent47` only after reading that beta update's release notes and backing up
 the project's `.code-agent/` directory.
 

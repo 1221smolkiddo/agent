@@ -23,6 +23,9 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.formatted_text import HTML
 
 from .config import Settings
+from .auth.session import LocalSession
+from .credentials.keyring import CredentialStore, KeyringUnavailableError
+from .credentials.providers import ProviderMetadata, provider_specs
 from .factory import create_agent, create_chat_client
 from .model_profiles import validate_profile_name
 from .model_presets import MODEL_PRESETS, resolve_model_preset
@@ -78,9 +81,12 @@ def main() -> None:
         app(prog_name="agent47")
         return
     settings = Settings()
+    onboarding_model = require_interactive_onboarding(settings)
+    if onboarding_model is _ONBOARDING_BLOCKED:
+        return
     base_cwd = Path.cwd().resolve()
     cwd = base_cwd
-    model: str | None = None
+    model: str | None = onboarding_model
     profile: str | None = None
     dry_run = DEFAULT_DRY_RUN
     stream_model = settings.agent_stream
@@ -242,6 +248,135 @@ def main() -> None:
                 ],
                 ["Use /debug to see the full stack trace", "Check model configurations"]
             )
+
+
+_ONBOARDING_BLOCKED = object()
+
+
+def require_interactive_onboarding(settings: Settings) -> str | None | object:
+    """Require a local OAuth session and secure BYOK key before interactive use.
+
+    The automation-oriented ``code-agent`` command remains available for scripted
+    and CI workflows.  The bare ``agent47`` terminal, however, never starts a
+    model session until both local account authentication and a provider key in
+    the OS credential store are present.
+    """
+    if not sys.stdin.isatty():
+        print_panel(
+            "Interactive Setup Required",
+            "Run 'agent47 auth login', then 'agent47 keys add <provider>', from an interactive terminal.",
+            style="yellow",
+        )
+        return _ONBOARDING_BLOCKED
+
+    try:
+        session = LocalSession()
+        signed_in = session.signed_in()
+    except KeyringUnavailableError as exc:
+        print_panel("Secure Storage Unavailable", str(exc), style="red")
+        return _ONBOARDING_BLOCKED
+
+    if not signed_in:
+        print_panel(
+            "Welcome to Agent47",
+            "Sign in with Google to use the interactive terminal. Your OAuth session is stored in your operating system credential manager.",
+            style="cyan",
+        )
+        if Prompt.ask("Sign in now?", choices=["yes", "no"], default="yes") != "yes":
+            print_panel("Sign-in Required", "Run 'agent47 auth login' when you are ready.", style="yellow")
+            return _ONBOARDING_BLOCKED
+        try:
+            _start_auth_login()
+        except typer.Exit:
+            return _ONBOARDING_BLOCKED
+        try:
+            if not LocalSession().signed_in():
+                print_panel("Sign-in Incomplete", "Login did not create a usable local session.", style="red")
+                return _ONBOARDING_BLOCKED
+        except KeyringUnavailableError as exc:
+            print_panel("Secure Storage Unavailable", str(exc), style="red")
+            return _ONBOARDING_BLOCKED
+
+    try:
+        store = CredentialStore()
+        default_provider = current_provider_name(settings, None)
+        if store.get_provider_key(default_provider):
+            return None
+        return _select_or_add_interactive_provider_key(store, default_provider)
+    except KeyringUnavailableError as exc:
+        print_panel("Secure Storage Unavailable", str(exc), style="red")
+        return _ONBOARDING_BLOCKED
+
+
+def _select_or_add_interactive_provider_key(
+    store: CredentialStore, default_provider: str
+) -> str | object:
+    """Select a secure provider key and return a compatible default model."""
+    providers = [spec for spec in provider_specs() if spec.environment_variable]
+    if not providers:
+        print_panel("API Key Setup", "No interactive key providers are available.", style="red")
+        return _ONBOARDING_BLOCKED
+
+    while True:
+        print_panel(
+            "API Key Required",
+            "Choose a model provider. Agent47 validates and stores your key only in the operating system credential manager.",
+            style="yellow",
+        )
+        for index, spec in enumerate(providers, start=1):
+            try:
+                state = "saved" if store.get_provider_key(spec.name) else "needs key"
+            except KeyringUnavailableError:
+                raise
+            preferred = " (current model)" if spec.name == default_provider else ""
+            console.print(f"  [{index}] {spec.display_name} — {state}{preferred}")
+        console.print("  [q] Exit")
+        choice = Prompt.ask(
+            "Select a provider", choices=[*(str(i) for i in range(1, len(providers) + 1)), "q"]
+        )
+        if choice == "q":
+            print_panel("API Key Required", "No model session was started.", style="yellow")
+            return _ONBOARDING_BLOCKED
+        selected = providers[int(choice) - 1]
+        if not store.get_provider_key(selected.name):
+            try:
+                _start_key_setup(selected)
+            except typer.Exit:
+                pass
+        if store.get_provider_key(selected.name):
+            model = _default_model_for_provider(selected)
+            print_panel(
+                "Provider Ready",
+                f"{selected.display_name} is configured securely. Use /model to choose another model with a saved provider key.",
+                style="green",
+            )
+            return model
+        print_panel(
+            "API Key Not Saved",
+            "Agent47 cannot start a model session until a provider key is saved. Try again or exit.",
+            style="yellow",
+        )
+
+
+def _default_model_for_provider(provider: ProviderMetadata) -> str | None:
+    for preset in MODEL_PRESETS.values():
+        if preset.provider == provider.name:
+            return preset.model
+    if provider.name == "openai":
+        return "gpt-4.1"
+    return None
+
+
+def _start_auth_login() -> None:
+    from .cli import auth_login_command
+
+    auth_login_command()
+
+
+def _start_key_setup(provider: ProviderMetadata) -> None:
+    from .cli import keys_add_command
+
+    keys_add_command(provider.name)
 
 
 class CommandState:
@@ -1001,7 +1136,8 @@ def is_persona_instruction(user_input: str) -> bool:
         f" {term} " in f" {normalized} " for term in task_terms
     )
 
-def read_prompt(
+
+def read_prompt(
     session: PromptSession,
     settings: Settings | None = None,
     cwd: Path | None = None,
