@@ -174,16 +174,25 @@ def _credential_error(exc: Exception) -> None:
 @auth_app.command("login")
 def auth_login_command() -> None:
     """Sign in locally with Google using OAuth PKCE."""
+    from rich.console import Console
+    console = Console()
+    
+    console.print("\n[bold]Agent47 Authentication[/bold]\n")
+    console.print("Opening your browser for Google Sign-In...\n")
+    
     try:
-        typer.echo("Opening browser for Google sign-in…")
-        typer.echo("Waiting for authentication…")
-        account = GoogleAuthenticator().login()
+        with console.status("[bold green]Waiting for authentication...[/bold green]", spinner="dots"):
+            account = GoogleAuthenticator().login()
     except (OAuthConfigurationError, OAuthError, KeyringUnavailableError) as exc:
-        typer.echo(f"Login failed: {exc}", err=True)
+        console.print(f"[red]Login failed: {exc}[/red]")
         raise typer.Exit(code=1) from exc
-    typer.echo("✓ Successfully authenticated")
-    typer.echo(f"Welcome back {account.name}")
-    typer.echo(account.email)
+        
+    console.print("\n[green]✓ Authentication successful[/green]\n")
+    console.print(f"Welcome back, [bold]{account.name}[/bold]\n")
+    console.print("Signed in as")
+    console.print(f"[cyan]{account.email}[/cyan]\n")
+    console.print("Credentials stored securely.\n")
+    console.print("[bold]Agent47 is ready.[/bold]")
 
 
 @auth_app.command("logout")
@@ -191,8 +200,28 @@ def auth_logout_command(
     remove_keys: bool = typer.Option(
         False, "--remove-keys", help="Also delete all saved provider API keys."
     ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Bypass confirmation prompt."
+    ),
 ) -> None:
     """Remove the local Google session and optionally saved BYOK credentials."""
+    from rich.console import Console
+    console = Console()
+    
+    account = AccountStore().load()
+    if account:
+        console.print("\nYou are currently signed in as\n")
+        console.print(f"  [bold]{account.name}[/bold]")
+        console.print(f"  [cyan]{account.email}[/cyan]\n")
+    else:
+        console.print("You are not currently signed in.")
+        return
+        
+    if not yes:
+        if not typer.confirm("Are you sure you want to sign out?", default=False):
+            console.print("\nLogout cancelled.")
+            return
+
     try:
         session = LocalSession()
         profile_deleted, tokens_deleted = session.clear()
@@ -205,12 +234,13 @@ def auth_logout_command(
     except KeyringUnavailableError as exc:
         _credential_error(exc)
         return
-    if profile_deleted or tokens_deleted:
-        typer.echo("Signed out.  Local Google session credentials were removed.")
-    else:
-        typer.echo("You are not currently signed in.")
+        
+    console.print("\n[green]✓ Successfully signed out[/green]\n")
+    console.print("Google credentials were removed from the secure credential store.\n")
+    console.print("You're now using Agent47 anonymously.")
+    console.print('Run "agent47 login" to sign in again.')
     if removed:
-        typer.echo("Removed API keys: " + ", ".join(removed))
+        console.print("\nRemoved API keys: " + ", ".join(removed))
 
 
 @auth_app.command("status")

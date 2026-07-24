@@ -76,6 +76,12 @@ class FakeCallbackServer:
 
     def wait(self, _timeout):
         return self._callback
+        
+    def send_error(self, title, message):
+        pass
+
+    def send_success(self, name, email):
+        pass
 
 
 # ======================================================================
@@ -177,6 +183,7 @@ class TestCallbackServer:
 
     def test_receives_one_callback(self) -> None:
         with LocalCallbackServer() as server:
+            server.send_success("Test", "t@t.com")
             with urlopen(  # noqa: S310
                 server.redirect_uri + "?code=authorization-code&state=trusted",
                 timeout=5,
@@ -200,6 +207,7 @@ class TestCallbackServer:
     def test_rejects_repeated_callbacks(self) -> None:
         """Second callback must be rejected with 409 to prevent replay."""
         with LocalCallbackServer() as server:
+            server.send_success("Test", "t@t.com")
             # First request — accepted.
             with urlopen(  # noqa: S310
                 server.redirect_uri + "?code=first&state=s", timeout=5
@@ -241,12 +249,75 @@ class TestCallbackServer:
     def test_malformed_callback_query(self) -> None:
         """Missing code and state should still produce a valid OAuthCallback."""
         with LocalCallbackServer() as server:
+            server.send_success("Test", "t@t.com")
             with urlopen(server.redirect_uri + "?random=garbage", timeout=5) as resp:  # noqa: S310
                 assert resp.status == 200
             callback = server.wait(1)
         assert callback is not None
         assert callback.code is None
         assert callback.state is None
+
+    def test_synchronization_event_blocks_and_delivers_success(self) -> None:
+        """Verify the callback handler blocks until the main thread signals success."""
+        import concurrent.futures
+        import time
+
+        with LocalCallbackServer() as server:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                # 1. Start the HTTP request in a background thread.
+                future = executor.submit(
+                    urlopen, server.redirect_uri + "?code=sync&state=trusted", timeout=5
+                )
+                
+                # 2. Main thread waits for the code to be extracted.
+                callback = server.wait(2)
+                assert callback is not None
+                assert callback.code == "sync"
+                
+                # 3. Verify the HTTP request is STILL blocked waiting for response event.
+                time.sleep(0.1)
+                assert not future.done()
+                
+                # 4. Signal success to unblock the HTTP request.
+                server.send_success("Sync Test", "sync@test.com")
+                
+                # 5. Verify the HTTP request now completes successfully.
+                response = future.result(timeout=2)
+                assert response.status == 200
+                html = response.read().decode("utf-8")
+                assert "Sync Test" in html
+                assert "sync@test.com" in html
+
+    def test_synchronization_event_blocks_and_delivers_error(self) -> None:
+        """Verify the callback handler can also block and deliver an error page."""
+        import concurrent.futures
+        import time
+        from urllib.error import HTTPError
+
+        with LocalCallbackServer() as server:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    urlopen, server.redirect_uri + "?code=err&state=trusted", timeout=5
+                )
+                
+                callback = server.wait(2)
+                assert callback is not None
+                
+                time.sleep(0.1)
+                assert not future.done()
+                
+                server.send_error("Test Failure", "Invalid state detected.")
+                
+                # The HTTPError is raised because urlopen treats 400 as an error.
+                # Let's catch it and verify the HTML body.
+                try:
+                    future.result(timeout=2)
+                    pytest.fail("Expected HTTPError 400")
+                except HTTPError as exc:
+                    assert exc.code == 400
+                    html = exc.read().decode("utf-8")
+                    assert "Test Failure" in html
+                    assert "Invalid state detected." in html
 
 
 # ======================================================================
@@ -269,6 +340,12 @@ class TestStateValidation:
 
             def wait(self, _timeout):
                 return OAuthCallback("code", callback_state, None, None)
+
+            def send_error(self, title, message):
+                pass
+
+            def send_success(self, name, email):
+                pass
 
         credentials = FakeCredentials()
         session = LocalSession(accounts=AccountStore(tmp_path), credentials=credentials)
@@ -317,6 +394,12 @@ class TestBrowserFailure:
 
             def wait(self, _timeout):
                 return OAuthCallback("code", "expected-state", None, None)
+                
+            def send_error(self, title, message):
+                pass
+
+            def send_success(self, name, email):
+                pass
 
         credentials = FakeCredentials()
         session = LocalSession(

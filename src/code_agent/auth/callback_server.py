@@ -9,11 +9,12 @@ Security invariants
 * Rejects non-GET HTTP methods with *405 Method Not Allowed*.
 * Suppresses all request logging so that authorization codes and state
   parameters never appear in debug output.
-* Shuts down immediately after the callback is received.
+* Shuts down immediately after the callback is received and the response is sent.
 """
 
 from __future__ import annotations
 
+import importlib.resources
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Event, Thread
@@ -29,6 +30,36 @@ class OAuthCallback:
     state: str | None
     error: str | None
     error_description: str | None
+
+
+def _load_asset(filename: str) -> str:
+    # We use importlib.resources to read the files packaged in the auth/assets directory
+    try:
+        # For Python 3.9+ we use files()
+        return importlib.resources.files("code_agent.auth.assets").joinpath(filename).read_text(encoding="utf-8")
+    except Exception:
+        # Fallback if package is not installed normally, try relative path
+        from pathlib import Path
+        path = Path(__file__).parent / "assets" / filename
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+        return ""
+
+
+def _render_page(html_file: str, css_file: str, js_file: str | None, context: dict[str, str]) -> str:
+    html = _load_asset(html_file)
+    css = _load_asset(css_file)
+    
+    html = html.replace("/* CSS_INJECTION_PLACEHOLDER */", css)
+    
+    if js_file:
+        js = _load_asset(js_file)
+        html = html.replace("/* JS_INJECTION_PLACEHOLDER */", js)
+        
+    for key, value in context.items():
+        html = html.replace(f"{{{{{key}}}}}", value)
+        
+    return html
 
 
 class _CallbackHandler(BaseHTTPRequestHandler):
@@ -53,12 +84,29 @@ class _CallbackHandler(BaseHTTPRequestHandler):
             error=_first(query, "error"),
             error_description=_first(query, "error_description"),
         )
+        # Notify the main thread that we received the callback
         self.server.received.set()
-        self._send_simple(
-            200,
-            "<html><body><h2>Agent47 authentication complete</h2>"
-            "<p>You can return to the terminal and close this tab.</p></body></html>",
-        )
+        
+        # Wait for the main thread to fetch tokens and profile
+        # We give it a generous timeout (e.g. 15 seconds) to complete network requests
+        if self.server.response_event.wait(timeout=15.0):
+            if self.server.success_data:
+                name, email = self.server.success_data
+                body_html = _render_page("success.html", "success.css", "success.js", {"name": name, "email": email})
+                self._send_simple(200, body_html)
+            elif self.server.error_data:
+                title, message = self.server.error_data
+                body_html = _render_page("error.html", "error.css", None, {"title": title, "message": message})
+                self._send_simple(400, body_html)
+            else:
+                self._send_simple(500, "Internal Server Error")
+        else:
+            # If the main thread timed out or crashed
+            body_html = _render_page("error.html", "error.css", None, {
+                "title": "Authentication Timeout",
+                "message": "The local server took too long to exchange the authentication token. Please try signing in again."
+            })
+            self._send_simple(504, body_html)
 
     # Block every other HTTP method so the listener cannot be probed.
     def do_POST(self) -> None:  # noqa: N802
@@ -101,6 +149,9 @@ class _CallbackHandler(BaseHTTPRequestHandler):
 class CallbackHTTPServer(HTTPServer):
     callback: OAuthCallback | None
     received: Event
+    response_event: Event
+    success_data: tuple[str, str] | None
+    error_data: tuple[str, str] | None
 
 
 def _first(query: dict[str, list[str]], name: str) -> str | None:
@@ -124,6 +175,9 @@ class LocalCallbackServer:
             ) from exc
         self._server.callback = None
         self._server.received = Event()
+        self._server.response_event = Event()
+        self._server.success_data = None
+        self._server.error_data = None
         self._thread = Thread(target=self._server.serve_forever, daemon=True)
 
     @property
@@ -138,7 +192,21 @@ class LocalCallbackServer:
             return None
         return self._server.callback
 
+    def send_success(self, name: str, email: str) -> None:
+        """Signal the callback handler to send the success page."""
+        self._server.success_data = (name, email)
+        self._server.response_event.set()
+
+    def send_error(self, title: str, message: str) -> None:
+        """Signal the callback handler to send the error page."""
+        self._server.error_data = (title, message)
+        self._server.response_event.set()
+
     def close(self) -> None:
+        # If the response hasn't been sent yet (e.g. error before wait), unblock it
+        if not self._server.response_event.is_set():
+            self._server.response_event.set()
+            
         self._server.shutdown()
         self._server.server_close()
         if self._thread.is_alive():

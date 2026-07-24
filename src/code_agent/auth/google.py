@@ -65,7 +65,6 @@ class GoogleAuthenticator:
         """
         verifier = generate_code_verifier()
         state = generate_state()
-
         with LocalCallbackServer() as callback_server:
             url = authorization_url(
                 client_id=self.config.client_id,
@@ -86,49 +85,56 @@ class GoogleAuthenticator:
             callback = callback_server.wait(self.config.timeout_seconds)
             redirect_uri = callback_server.redirect_uri
 
-        # Server is stopped before any network token exchange.
+            if callback is None:
+                raise OAuthError(
+                    "Google sign-in timed out.  "
+                    "Close the browser tab and run 'agent47 login' to try again."
+                )
 
-        if callback is None:
-            raise OAuthError(
-                "Google sign-in timed out.  "
-                "Close the browser tab and run 'agent47 login' to try again."
-            )
+            try:
+                # Timing-safe state comparison to prevent CSRF.
+                if not callback.state or not secrets.compare_digest(callback.state, state):
+                    raise OAuthError(
+                        "Google sign-in was rejected because its security state did not match.  "
+                        "This may indicate a CSRF attempt.  Please try again."
+                    )
 
-        # Timing-safe state comparison to prevent CSRF.
-        if not callback.state or not secrets.compare_digest(callback.state, state):
-            raise OAuthError(
-                "Google sign-in was rejected because its security state did not match.  "
-                "This may indicate a CSRF attempt.  Please try again."
-            )
+                if callback.error:
+                    if callback.error == "access_denied":
+                        raise OAuthError("Google sign-in was cancelled by the user.")
+                    desc = f"  ({callback.error_description})" if callback.error_description else ""
+                    raise OAuthError(
+                        f"Google sign-in did not complete.{desc}  Please try again."
+                    )
 
-        if callback.error:
-            if callback.error == "access_denied":
-                raise OAuthError("Google sign-in was cancelled by the user.")
-            desc = f"  ({callback.error_description})" if callback.error_description else ""
-            raise OAuthError(
-                f"Google sign-in did not complete.{desc}  Please try again."
-            )
+                if not callback.code:
+                    raise OAuthError(
+                        "Google returned an incomplete sign-in response.  Please try again."
+                    )
 
-        if not callback.code:
-            raise OAuthError(
-                "Google returned an incomplete sign-in response.  Please try again."
-            )
+                tokens = exchange_code(
+                    client_id=self.config.client_id,
+                    client_secret=self.config.client_secret,
+                    code=callback.code,
+                    redirect_uri=redirect_uri,
+                    verifier=verifier,
+                )
 
-        tokens = exchange_code(
-            client_id=self.config.client_id,
-            client_secret=self.config.client_secret,
-            code=callback.code,
-            redirect_uri=redirect_uri,
-            verifier=verifier,
-        )
+                access_token = tokens.get("access_token")
+                if not isinstance(access_token, str) or not access_token:
+                    raise OAuthError("Google did not return an access token.  Please try again.")
 
-        access_token = tokens.get("access_token")
-        if not isinstance(access_token, str) or not access_token:
-            raise OAuthError("Google did not return an access token.  Please try again.")
+                tokens["issued_at"] = datetime.now(UTC).timestamp()
+                profile = fetch_profile(access_token)
 
-        tokens["issued_at"] = datetime.now(UTC).timestamp()
-        profile = fetch_profile(access_token)
+                # Signal the local server to render the success page
+                callback_server.send_success(profile.get("name", "Unknown"), profile.get("email", "Unknown"))
+            except OAuthError as exc:
+                # Signal the local server to render the error page
+                callback_server.send_error("Authentication Failed", str(exc))
+                raise
 
+        # Server is stopped before we persist credentials locally.
         previous = self.session.account()
         account = Account.from_google_profile(
             profile, created_at=previous.created_at if previous else None
