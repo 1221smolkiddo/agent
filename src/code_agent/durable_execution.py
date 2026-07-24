@@ -13,7 +13,10 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .execution_profiles import TaskIntent
 
 
 ENGINE_VERSION = "1.0.0"
@@ -1757,7 +1760,6 @@ class DurableExecutionRuntime:
             ComplexityAssessor,
             ExecutionPolicySelector,
             ProfileEscalator,
-            TaskIntent,
         )
         self.complexity_assessor = ComplexityAssessor()
         self.policy_selector = ExecutionPolicySelector(assessor=self.complexity_assessor)

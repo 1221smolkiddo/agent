@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import re
 from dataclasses import asdict, dataclass, field
 from enum import Enum
