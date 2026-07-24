@@ -67,7 +67,10 @@ def default_smoke_commands(*, include_build: bool = True) -> list[SmokeCommand]:
     commands = [
         SmokeCommand("unit-tests", ("uv", "run", "pytest")),
         SmokeCommand("lint", ("uv", "run", "ruff", "check", "src", "tests")),
-        SmokeCommand("doctor-strict", ("uv", "run", "code-agent", "doctor", "--strict")),
+        # A release artifact must install and diagnose cleanly without inheriting
+        # a maintainer's optional BYOK credentials, OAuth session, or container
+        # runtime. Plain doctor still fails on actual broken configuration.
+        SmokeCommand("doctor", ("uv", "run", "code-agent", "doctor")),
         SmokeCommand("offline-evals", ("uv", "run", "code-agent", "evals")),
     ]
     if include_build:

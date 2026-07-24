@@ -8,7 +8,20 @@ from typer.testing import CliRunner
 
 import code_agent.cli as cli_module
 from code_agent.cli import app
-from code_agent.release_smoke import SmokeCheck, SmokeCommand, SmokeReport, run_release_smoke
+from code_agent.release_smoke import (
+    SmokeCheck,
+    SmokeCommand,
+    SmokeReport,
+    default_smoke_commands,
+    run_release_smoke,
+)
+
+
+def test_default_release_smoke_does_not_require_optional_byok_configuration() -> None:
+    doctor = next(command for command in default_smoke_commands() if command.name == "doctor")
+
+    assert doctor.command == ("uv", "run", "code-agent", "doctor")
+    assert "--strict" not in doctor.command
 
 
 def test_run_release_smoke_runs_commands_until_failure(monkeypatch, tmp_path: Path) -> None:
