@@ -13,7 +13,6 @@ import pytest
 from typer.testing import CliRunner
 
 from code_agent.cli import app
-from code_agent.credentials.keyring import CredentialStore
 from code_agent.local_server import LocalBrowserServer, FormSubmissionHandler
 
 

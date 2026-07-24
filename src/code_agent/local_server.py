@@ -18,7 +18,7 @@ from __future__ import annotations
 import importlib.resources
 import secrets
 from dataclasses import dataclass
-from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Event, Lock, Thread
 from typing import Any, Generic, Protocol, TypeVar
 from urllib.parse import parse_qs, urlparse
