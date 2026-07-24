@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 
 from ..account.profile import AccountStore
 from ..credentials.keyring import CredentialStore
-from .callback_server import LocalCallbackServer
+from ..local_server import LocalBrowserServer, OAuthHandler
 from .config import GoogleOAuthConfig
 from .models import Account
 from .oauth import (
@@ -65,7 +65,7 @@ class GoogleAuthenticator:
         """
         verifier = generate_code_verifier()
         state = generate_state()
-        with LocalCallbackServer() as callback_server:
+        with LocalBrowserServer(handler=OAuthHandler()) as callback_server:
             url = authorization_url(
                 client_id=self.config.client_id,
                 redirect_uri=callback_server.redirect_uri,

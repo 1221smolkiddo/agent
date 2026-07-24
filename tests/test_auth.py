@@ -25,7 +25,7 @@ from urllib.request import Request, urlopen
 import pytest
 
 from code_agent.account.profile import AccountStore
-from code_agent.auth.callback_server import LocalCallbackServer, OAuthCallback
+from code_agent.local_server import LocalBrowserServer, OAuthHandler, OAuthCallback
 from code_agent.auth.config import GoogleOAuthConfig, OAuthConfigurationError
 from code_agent.auth.google import GoogleAuthenticator
 from code_agent.auth.models import Account
@@ -171,18 +171,18 @@ class TestAuthorizationURL:
 
 class TestCallbackServer:
     def test_binds_loopback_only(self) -> None:
-        with LocalCallbackServer() as server:
+        with LocalBrowserServer(handler=OAuthHandler()) as server:
             assert server.redirect_uri.startswith("http://127.0.0.1:")
             assert "0.0.0.0" not in server.redirect_uri
 
     def test_uses_dynamic_port(self) -> None:
         """Port must be >0 (auto-allocated)."""
-        with LocalCallbackServer() as server:
+        with LocalBrowserServer(handler=OAuthHandler()) as server:
             port = int(server.redirect_uri.split(":")[2].split("/")[0])
             assert port > 0
 
     def test_receives_one_callback(self) -> None:
-        with LocalCallbackServer() as server:
+        with LocalBrowserServer(handler=OAuthHandler()) as server:
             server.send_success("Test", "t@t.com")
             with urlopen(  # noqa: S310
                 server.redirect_uri + "?code=authorization-code&state=trusted",
@@ -193,7 +193,7 @@ class TestCallbackServer:
         assert callback == OAuthCallback("authorization-code", "trusted", None, None)
 
     def test_rejects_non_callback_path(self) -> None:
-        with LocalCallbackServer() as server:
+        with LocalBrowserServer(handler=OAuthHandler()) as server:
             base = server.redirect_uri.replace("/callback", "")
             try:
                 from urllib.error import HTTPError
@@ -206,7 +206,7 @@ class TestCallbackServer:
 
     def test_rejects_repeated_callbacks(self) -> None:
         """Second callback must be rejected with 409 to prevent replay."""
-        with LocalCallbackServer() as server:
+        with LocalBrowserServer(handler=OAuthHandler()) as server:
             server.send_success("Test", "t@t.com")
             # First request — accepted.
             with urlopen(  # noqa: S310
@@ -226,12 +226,12 @@ class TestCallbackServer:
                 assert exc.code == 409
 
     def test_timeout_returns_none(self) -> None:
-        with LocalCallbackServer() as server:
+        with LocalBrowserServer(handler=OAuthHandler()) as server:
             result = server.wait(0.01)
         assert result is None
 
     def test_rejects_post_method(self) -> None:
-        with LocalCallbackServer() as server:
+        with LocalBrowserServer(handler=OAuthHandler()) as server:
             try:
                 from urllib.error import HTTPError
 
@@ -248,7 +248,7 @@ class TestCallbackServer:
 
     def test_malformed_callback_query(self) -> None:
         """Missing code and state should still produce a valid OAuthCallback."""
-        with LocalCallbackServer() as server:
+        with LocalBrowserServer(handler=OAuthHandler()) as server:
             server.send_success("Test", "t@t.com")
             with urlopen(server.redirect_uri + "?random=garbage", timeout=5) as resp:  # noqa: S310
                 assert resp.status == 200
@@ -262,7 +262,7 @@ class TestCallbackServer:
         import concurrent.futures
         import time
 
-        with LocalCallbackServer() as server:
+        with LocalBrowserServer(handler=OAuthHandler()) as server:
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 # 1. Start the HTTP request in a background thread.
                 future = executor.submit(
@@ -294,7 +294,7 @@ class TestCallbackServer:
         import time
         from urllib.error import HTTPError
 
-        with LocalCallbackServer() as server:
+        with LocalBrowserServer(handler=OAuthHandler()) as server:
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(
                     urlopen, server.redirect_uri + "?code=err&state=trusted", timeout=5
@@ -332,6 +332,9 @@ class TestStateValidation:
         class TestCallbackServer:
             redirect_uri = "http://127.0.0.1:9999/callback"
 
+            def __init__(self, handler=None):
+                pass
+
             def __enter__(self):
                 return self
 
@@ -349,7 +352,7 @@ class TestStateValidation:
 
         credentials = FakeCredentials()
         session = LocalSession(accounts=AccountStore(tmp_path), credentials=credentials)
-        monkeypatch.setattr("code_agent.auth.google.LocalCallbackServer", TestCallbackServer)
+        monkeypatch.setattr("code_agent.auth.google.LocalBrowserServer", TestCallbackServer)
         monkeypatch.setattr(
             "code_agent.auth.google.generate_state", lambda: expected_state
         )
@@ -386,6 +389,9 @@ class TestBrowserFailure:
         class NoopServer:
             redirect_uri = "http://127.0.0.1:9999/callback"
 
+            def __init__(self, handler=None):
+                pass
+
             def __enter__(self):
                 return self
 
@@ -405,7 +411,7 @@ class TestBrowserFailure:
         session = LocalSession(
             accounts=AccountStore(tmp_path), credentials=credentials
         )
-        monkeypatch.setattr("code_agent.auth.google.LocalCallbackServer", NoopServer)
+        monkeypatch.setattr("code_agent.auth.google.LocalBrowserServer", NoopServer)
         monkeypatch.setattr(
             "code_agent.auth.google.generate_state", lambda: "expected-state"
         )
@@ -444,8 +450,8 @@ class TestGoogleAuthenticator:
             accounts=AccountStore(tmp_path), credentials=credentials
         )
         monkeypatch.setattr(
-            "code_agent.auth.google.LocalCallbackServer",
-            lambda: FakeCallbackServer(
+            "code_agent.auth.google.LocalBrowserServer",
+            lambda handler=None: FakeCallbackServer(
                 OAuthCallback("code", "expected-state", None, None)
             ),
         )

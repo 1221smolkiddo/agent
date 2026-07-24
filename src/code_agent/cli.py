@@ -25,6 +25,7 @@ from .account.profile import AccountStore
 from .auth.config import OAuthConfigurationError
 from .auth.google import GoogleAuthenticator
 from .auth.oauth import OAuthError
+from .local_server import LocalBrowserServer, FormSubmissionHandler
 from .auth.session import LocalSession
 from .credentials.keyring import CredentialStore, KeyringUnavailableError
 from .credentials.providers import provider_spec, provider_specs, validate_provider_key
@@ -399,6 +400,36 @@ def keys_list_command() -> None:
         _credential_error(exc)
 
 
+def _build_key_setup_handler(display_name: str) -> "FormSubmissionHandler":
+    """Build a FormSubmissionHandler for provider API key setup.
+
+    Keeps HTML out of the CLI command function body.
+    """
+    fields_html = (
+        '<div class="field-group">'
+        f'<label for="api_key">{display_name} API Key</label>'
+        '<input type="password" id="api_key" name="api_key" '
+        'placeholder="Enter your key here..." required autocomplete="off">'
+        '<button class="password-toggle" data-target="api_key">Show</button>'
+        '</div>'
+    )
+    description = (
+        "<ul>"
+        "<li>Your API key is sent directly to this local process.</li>"
+        "<li>Agent47 never uploads your keys.</li>"
+        "<li>Stored securely using your operating system's Credential Manager.</li>"
+        "<li>Your API key is never written to disk outside the secure credential store.</li>"
+        "</ul>"
+    )
+    return FormSubmissionHandler(
+        title=f"{display_name} Setup",
+        subtitle="Secure Local Configuration",
+        description=description,
+        fields_html=fields_html,
+        submit_text="Save API Key",
+    )
+
+
 @keys_app.command("add")
 def keys_add_command(
     provider: str = typer.Argument(...),
@@ -415,27 +446,85 @@ def keys_add_command(
     except ValueError as exc:
         _credential_error(exc)
         return
-    key = typer.prompt(
-        f"{spec.display_name} API key", hide_input=True, confirmation_prompt=True
-    )
-    if not key.strip():
-        typer.echo("API key must not be blank.", err=True)
-        raise typer.Exit(code=1)
-    # Validate the key against the provider before storing.
-    if not skip_validation:
-        typer.echo(f"Validating {spec.display_name} key…")
-        valid, message = validate_provider_key(spec.name, key.strip(), base_url=base_url)
-        if not valid:
-            typer.echo(f"Validation failed: {message}", err=True)
-            typer.echo("Use --skip-validation to store the key anyway.", err=True)
-            raise typer.Exit(code=1)
-        typer.echo(f"  ✓ {message}")
-    try:
-        CredentialStore().set_provider_key(spec.name, key)
-    except KeyringUnavailableError as exc:
-        _credential_error(exc)
+
+    from rich.console import Console
+    from rich.prompt import Prompt
+    import webbrowser
+
+    console = Console()
+    console.print(f"\nHow would you like to add your {spec.display_name} API key?")
+    console.print("  [1] Open secure browser setup (Recommended)")
+    console.print("  [2] Paste in terminal")
+    console.print("  [3] Cancel\n")
+
+    choice = Prompt.ask("Select an option", choices=["1", "2", "3"], default="1")
+
+    if choice == "3":
+        typer.echo("Setup cancelled.")
         return
-    typer.echo(f"Saved {spec.display_name} API key to secure local storage.")
+
+    key = ""
+
+    if choice == "1":
+        handler = _build_key_setup_handler(spec.display_name)
+
+        with LocalBrowserServer(handler=handler) as server:
+            console.print("\nOpening your browser for secure setup...")
+            webbrowser.open(server.server_url + "/setup")
+
+            with console.status("[bold green]Waiting for you to submit the form...[/bold green]", spinner="dots"):
+                submission = server.wait(timeout_seconds=300.0)
+
+            if submission is None:
+                console.print("[red]Setup timed out or failed.[/red]")
+                raise typer.Exit(code=1)
+
+            key = submission.fields.get("api_key", "").strip()
+            if not key:
+                server.send_error("Validation Failed", "API key cannot be blank.")
+                console.print("[red]API key cannot be blank.[/red]")
+                raise typer.Exit(code=1)
+
+            if not skip_validation:
+                valid, message = validate_provider_key(spec.name, key, base_url=base_url)
+                if not valid:
+                    server.send_error("Validation Failed", message)
+                    console.print(f"[red]Validation failed: {message}[/red]")
+                    raise typer.Exit(code=1)
+
+            # Store FIRST, then tell the browser.  The browser must never
+            # show "success" unless the key has actually been persisted.
+            try:
+                CredentialStore().set_provider_key(spec.name, key)
+            except KeyringUnavailableError as exc:
+                server.send_error("Storage Failed", f"Could not save credential: {exc}")
+                _credential_error(exc)
+                return
+
+            server.send_success("Setup Complete", f"Your {spec.display_name} API key was successfully verified and saved.")
+            console.print(f"\n[green]✓ Saved {spec.display_name} API key to secure local storage.[/green]")
+    else:
+        key = typer.prompt(
+            f"{spec.display_name} API key", hide_input=True, confirmation_prompt=True
+        ).strip()
+        if not key:
+            typer.echo("API key must not be blank.", err=True)
+            raise typer.Exit(code=1)
+        if not skip_validation:
+            typer.echo(f"Validating {spec.display_name} key…")
+            valid, message = validate_provider_key(spec.name, key, base_url=base_url)
+            if not valid:
+                typer.echo(f"Validation failed: {message}", err=True)
+                typer.echo("Use --skip-validation to store the key anyway.", err=True)
+                raise typer.Exit(code=1)
+            typer.echo(f"  ✓ {message}")
+
+        try:
+            CredentialStore().set_provider_key(spec.name, key)
+        except KeyringUnavailableError as exc:
+            _credential_error(exc)
+            return
+        console.print(f"\n[green]✓ Saved {spec.display_name} API key to secure local storage.[/green]")
 
 
 @keys_app.command("remove")

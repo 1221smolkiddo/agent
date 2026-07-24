@@ -6,30 +6,32 @@ from urllib.request import Request, urlopen
 
 
 @dataclass(frozen=True)
-class ProviderSpec:
+class ProviderMetadata:
     name: str
     display_name: str
     environment_variable: str | None
+    ui_logo: str = ""
+    help_url: str = ""
 
 
 _PROVIDERS = (
-    ProviderSpec("openai", "OpenAI", "OPENAI_API_KEY"),
-    ProviderSpec("anthropic", "Anthropic", "ANTHROPIC_API_KEY"),
-    ProviderSpec("gemini", "Google Gemini", "GEMINI_API_KEY"),
-    ProviderSpec("openrouter", "OpenRouter", "OPENROUTER_API_KEY"),
-    ProviderSpec("groq", "Groq", "GROQ_API_KEY"),
-    ProviderSpec("deepseek", "DeepSeek", "DEEPSEEK_API_KEY"),
-    ProviderSpec("nvidia", "NVIDIA NIM", "NVIDIA_API_KEY"),
-    ProviderSpec("compatible", "OpenAI-Compatible", None),
+    ProviderMetadata("openai", "OpenAI", "OPENAI_API_KEY", ui_logo="openai.svg", help_url="https://platform.openai.com/api-keys"),
+    ProviderMetadata("anthropic", "Anthropic", "ANTHROPIC_API_KEY", ui_logo="anthropic.svg", help_url="https://console.anthropic.com/settings/keys"),
+    ProviderMetadata("gemini", "Google Gemini", "GEMINI_API_KEY", ui_logo="gemini.svg", help_url="https://aistudio.google.com/app/apikey"),
+    ProviderMetadata("openrouter", "OpenRouter", "OPENROUTER_API_KEY", ui_logo="openrouter.svg", help_url="https://openrouter.ai/keys"),
+    ProviderMetadata("groq", "Groq", "GROQ_API_KEY", ui_logo="groq.svg", help_url="https://console.groq.com/keys"),
+    ProviderMetadata("deepseek", "DeepSeek", "DEEPSEEK_API_KEY", ui_logo="deepseek.svg", help_url="https://platform.deepseek.com/api_keys"),
+    ProviderMetadata("nvidia", "NVIDIA NIM", "NVIDIA_API_KEY", ui_logo="nvidia.svg", help_url="https://build.nvidia.com/explore/discover"),
+    ProviderMetadata("compatible", "OpenAI-Compatible", None, ui_logo="compatible.svg", help_url=""),
 )
 _ALIASES = {"google": "gemini", "google-gemini": "gemini", "openai-compatible": "compatible"}
 
 
-def provider_specs() -> tuple[ProviderSpec, ...]:
+def provider_specs() -> tuple[ProviderMetadata, ...]:
     return _PROVIDERS
 
 
-def provider_spec(name: str) -> ProviderSpec:
+def provider_spec(name: str) -> ProviderMetadata:
     normalized = _ALIASES.get(name.strip().lower(), name.strip().lower())
     for spec in _PROVIDERS:
         if spec.name == normalized:
