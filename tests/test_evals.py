@@ -123,7 +123,24 @@ def test_live_eval_fails_closed_when_agent_run_is_blocked() -> None:
     )
 
 
-def test_cli_evals_command_runs_builtin_evals() -> None:
+def _mock_builtin_eval_result() -> EvalSuiteResult:
+    results = [
+        EvalResult(name="create_file", ok=True, detail="ok", category="fixture"),
+        *[EvalResult(name=f"fixture_case_{i}", ok=True, detail="ok", category="fixture") for i in range(19)],
+        *[EvalResult(name=f"safety_case_{i}", ok=True, detail="ok", category="safety") for i in range(7)],
+    ]
+    return EvalSuiteResult(
+        results=results,
+        metadata={
+            "mode": "offline",
+            "benchmark_version": "2026.07-v1",
+            "case_count": 27,
+        },
+    )
+
+
+def test_cli_evals_command_runs_builtin_evals(monkeypatch) -> None:
+    monkeypatch.setattr(evals_module, "run_builtin_evals", _mock_builtin_eval_result)
     runner = CliRunner()
 
     result = runner.invoke(app, ["evals"])
@@ -133,7 +150,8 @@ def test_cli_evals_command_runs_builtin_evals() -> None:
     assert "fixture/create_file" in result.output
 
 
-def test_cli_evals_command_outputs_json() -> None:
+def test_cli_evals_command_outputs_json(monkeypatch) -> None:
+    monkeypatch.setattr(evals_module, "run_builtin_evals", _mock_builtin_eval_result)
     runner = CliRunner()
 
     result = runner.invoke(app, ["evals", "--json"])
@@ -213,7 +231,8 @@ def test_run_live_evals_repeats_trials_and_versions_benchmark(monkeypatch) -> No
     assert result.metadata["run_count"] == 3
 
 
-def test_cli_evals_save_report_writes_report(tmp_path) -> None:
+def test_cli_evals_save_report_writes_report(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(evals_module, "run_builtin_evals", _mock_builtin_eval_result)
     runner = CliRunner()
 
     result = runner.invoke(app, ["evals", "--save-report", "--report-dir", str(tmp_path)])
