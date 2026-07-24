@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-import pytest
 from prompt_toolkit.document import Document
 
 from code_agent.command_registry import (
@@ -13,7 +11,6 @@ from code_agent.command_registry import (
 from code_agent.fuzzy import search_commands, suggest_commands, levenshtein
 from code_agent.interactive import (
     handle_command,
-    SESSION_REGISTRY,
 )
 from code_agent.config import Settings
 

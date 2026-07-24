@@ -52,7 +52,6 @@ from .terminal_ui import (
     print_startup_header,
     print_work_report_panel,
     print_response,
-    format_status_line,
     print_help_panel,
     print_advanced_panel,
     print_keys_panel,
@@ -62,8 +61,8 @@ from .terminal_ui import (
 )
 from rich.text import Text
 from .work_report import should_show_work_report
-from .command_registry import CommandRegistry, CommandCompleter, build_default_registry
-from .fuzzy import search_commands, suggest_commands
+from .command_registry import CommandCompleter, build_default_registry
+from .fuzzy import suggest_commands
 
 SESSION_REGISTRY = build_default_registry()
 
