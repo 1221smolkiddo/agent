@@ -61,6 +61,15 @@ acceptance.
 
 Agent47 requires Python 3.11 or newer. `uv` is the recommended environment manager.
 
+For the published beta, install the explicitly pre-release package:
+
+```bash
+pip install --pre agent47
+```
+
+The package provides both `code-agent` (the automation CLI) and `agent47` (the interactive terminal).
+For a source checkout or contributor environment, use the following setup instead:
+
 ```bash
 uv sync --extra dev --extra parsing
 cp .env.example .env
@@ -318,4 +327,4 @@ Keep changes small, preserve user data, add focused tests, and run the relevant 
 review. The execution runtime has compatibility and replay guarantees; changes to events, task lifecycle,
 effect lifecycle, evidence, or authority boundaries require durable fixtures and migration coverage.
 
-Agent47 is a capable alpha engineering collaborator, not an infallible autonomous authority.
+Agent47 is a capable beta engineering collaborator, not an infallible autonomous authority.

@@ -1,7 +1,33 @@
 # Install
 
 Agent47 supports Python 3.11 and newer on Windows, macOS, and Linux. CI currently exercises Python
-3.11-3.13 on Linux and Python 3.12 on Windows and macOS.
+3.11-3.13 on Linux and Python 3.12 on Windows and macOS. The first published closed-beta package is
+`agent47==0.1.0b1`.
+
+## Install The Closed Beta
+
+Install the pre-release explicitly:
+
+```bash
+pip install --pre agent47
+```
+
+To pin the reviewed beta build instead of accepting later beta updates:
+
+```bash
+pip install agent47==0.1.0b1
+```
+
+The distribution installs two commands: `code-agent` for the automation CLI and `agent47` for the
+interactive terminal. Confirm the installed build before configuring a provider:
+
+```bash
+code-agent --help
+agent47 --help
+```
+
+Use `pip install --upgrade --pre agent47` only after reading that beta update's release notes and backing up
+the project's `.code-agent/` directory.
 
 ## Recommended Installation
 
@@ -75,6 +101,13 @@ macOS and Linux:
 ```
 
 ## pipx
+
+For the published beta:
+
+```bash
+pipx install --pip-args="--pre" agent47
+code-agent doctor
+```
 
 From a local checkout:
 

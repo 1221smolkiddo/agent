@@ -3,6 +3,46 @@ revision = 3
 requires-python = ">=3.11"
 
 [[package]]
+name = "agent47"
+version = "0.1.0b1"
+source = { editable = "." }
+dependencies = [
+    { name = "keyring" },
+    { name = "openai" },
+    { name = "prompt-toolkit" },
+    { name = "pydantic-settings" },
+    { name = "python-dotenv" },
+    { name = "rich" },
+    { name = "typer" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "ruff" },
+]
+parsing = [
+    { name = "tree-sitter" },
+    { name = "tree-sitter-language-pack" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "keyring", specifier = ">=25.0.0" },
+    { name = "openai", specifier = ">=1.84.0" },
+    { name = "prompt-toolkit", specifier = ">=3.0.0" },
+    { name = "pydantic-settings", specifier = ">=2.8.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.0" },
+    { name = "python-dotenv", specifier = ">=1.0.1" },
+    { name = "rich", specifier = ">=15.0.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.11.0" },
+    { name = "tree-sitter", marker = "extra == 'parsing'", specifier = ">=0.24.0" },
+    { name = "tree-sitter-language-pack", marker = "extra == 'parsing'", specifier = ">=0.7.0" },
+    { name = "typer", specifier = ">=0.15.0" },
+]
+provides-extras = ["dev", "parsing"]
+
+[[package]]
 name = "annotated-doc"
 version = "0.0.4"
 source = { registry = "https://pypi.org/simple" }
@@ -113,46 +153,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/b9/65/b434abc97ce7cecc2c640fde160507c0ecc7e21544b483ba3325d2e2ea17/cffi-2.1.0-cp315-cp315t-musllinux_1_2_aarch64.whl", hash = "sha256:86cf8755a791f72c85dc287128cc62d4f24d392e3f1e15837245623f4a33cccc", size = 226773, upload-time = "2026-07-06T21:34:19.05Z" },
     { url = "https://files.pythonhosted.org/packages/b5/9f/d4dc66ca651eb1145a133314cda721abf13cfac3d28c4a0402263ae6ad75/cffi-2.1.0-cp315-cp315t-musllinux_1_2_x86_64.whl", hash = "sha256:ba00f661f8ba35d075c937174e27c2c421cec3942fd2e0ea3e66996757c0fdd9", size = 225719, upload-time = "2026-07-06T21:34:20.576Z" },
 ]
-
-[[package]]
-name = "code-agent"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "keyring" },
-    { name = "openai" },
-    { name = "prompt-toolkit" },
-    { name = "pydantic-settings" },
-    { name = "python-dotenv" },
-    { name = "rich" },
-    { name = "typer" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "ruff" },
-]
-parsing = [
-    { name = "tree-sitter" },
-    { name = "tree-sitter-language-pack" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "keyring", specifier = ">=25.0.0" },
-    { name = "openai", specifier = ">=1.84.0" },
-    { name = "prompt-toolkit", specifier = ">=3.0.0" },
-    { name = "pydantic-settings", specifier = ">=2.8.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.0" },
-    { name = "python-dotenv", specifier = ">=1.0.1" },
-    { name = "rich", specifier = ">=15.0.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.11.0" },
-    { name = "tree-sitter", marker = "extra == 'parsing'", specifier = ">=0.24.0" },
-    { name = "tree-sitter-language-pack", marker = "extra == 'parsing'", specifier = ">=0.7.0" },
-    { name = "typer", specifier = ">=0.15.0" },
-]
-provides-extras = ["dev", "parsing"]
 
 [[package]]
 name = "colorama"

@@ -14,6 +14,7 @@ def test_only_canonical_public_docs_exist() -> None:
     for path in [
         "README.md",
         "docs/ARCHITECTURE.md",
+        "docs/BETA.md",
         "docs/INSTALL.md",
         "docs/KNOWN_LIMITATIONS.md",
     ]:
@@ -24,7 +25,7 @@ def test_readme_covers_security_data_and_release_workflow() -> None:
     content = read("README.md")
 
     for phrase in [
-        "alpha",
+        "closed beta",
         "workspace",
         "permissions and safety",
         "security reports",
@@ -64,11 +65,11 @@ def test_install_covers_supported_setup_and_runtime_controls() -> None:
         assert phrase in content
 
 
-def test_known_limitations_are_honest_about_alpha_status() -> None:
+def test_known_limitations_are_honest_about_beta_status() -> None:
     content = read("docs/KNOWN_LIMITATIONS.md")
 
     for phrase in [
-        "capable alpha",
+        "closed-beta coding agent",
         "model reliability",
         "not os-level isolation",
         "context budgeting",

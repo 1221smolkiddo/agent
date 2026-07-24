@@ -1,18 +1,19 @@
 # Closed Beta
 
-Agent47 is ready for supervised closed-beta use on real projects. This beta validates the durable execution
-runtime under representative workloads; it is not an authorization for unattended, unrestricted, or
-security-critical production use.
+Agent47 is ready for supervised closed-beta use on real projects. The first package release is
+`agent47==0.1.0b1`. This beta validates the durable execution runtime under representative workloads; it is
+not an authorization for unattended, unrestricted, or security-critical production use.
 
 ## Before enrolling a project
 
 1. Pin the tested release commit and record it with every report.
-2. Back up `.code-agent/` before the first run and before upgrading Agent47.
-3. Run `code-agent doctor --strict` successfully in the intended environment.
-4. Begin with `code-agent run --dry-run` on a low-risk repository.
-5. Use a Docker or Podman sandbox for unfamiliar code, and keep networking disabled unless it is needed.
-6. Set conservative token, cost, time, and tool-call budgets; retain approval gates for external effects.
-7. Keep human review of diffs, commands, approvals, and verification reports mandatory.
+2. Pin the tested package version (`agent47==0.1.0b1`) and record it with every report.
+3. Back up `.code-agent/` before the first run and before upgrading Agent47.
+4. Run `code-agent doctor --strict` successfully in the intended environment.
+5. Begin with `code-agent run --dry-run` on a low-risk repository.
+6. Use a Docker or Podman sandbox for unfamiliar code, and keep networking disabled unless it is needed.
+7. Set conservative token, cost, time, and tool-call budgets; retain approval gates for external effects.
+8. Keep human review of diffs, commands, approvals, and verification reports mandatory.
 
 ## What to test
 
