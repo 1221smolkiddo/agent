@@ -733,6 +733,8 @@ class ProjectionBuilder:
             state.status = ExecutionStatus.FAILED
         elif kind == "ExecutionCancelled":
             state.status = ExecutionStatus.CANCELLED
+        else:
+            raise InvariantError(f"Unknown execution event type: {kind}")
 
     def validate(self, state: ExecutionProjection) -> None:
         _validate_dag(state.tasks)
@@ -762,32 +764,44 @@ class ExecutionEngine:
 
     def state(self, execution_id: str, *, use_snapshot: bool = True) -> ExecutionProjection:
         with self._lock:
-            if execution_id in self._cache:
-                return self._cache[execution_id]
-            base = None
-            after = 0
-            if use_snapshot:
-                snapshot = self.store.latest_snapshot(execution_id)
-                if snapshot:
-                    after, raw = snapshot
-                    base = projection_from_dict(raw)
-            events = self.store.load(execution_id, after=after)
-            state = self.projector.replay(execution_id, events, base)
-            self._cache[execution_id] = state
-            return state
+            return _clone_projection(self._state(execution_id, use_snapshot=use_snapshot))
+
+    def _state(self, execution_id: str, *, use_snapshot: bool = True) -> ExecutionProjection:
+        """Return the engine-owned projection; callers must not mutate it."""
+        if execution_id in self._cache:
+            return self._cache[execution_id]
+        base = None
+        after = 0
+        if use_snapshot:
+            snapshot = self.store.latest_snapshot(execution_id)
+            if snapshot:
+                after, raw = snapshot
+                base = projection_from_dict(raw)
+        events = self.store.load(execution_id, after=after)
+        state = self.projector.replay(execution_id, events, base)
+        self._cache[execution_id] = state
+        return state
 
     def dispatch(self, command: Command) -> list[ExecutionEvent]:
         with self._lock:
             prior = self.store.command_events(command.execution_id, command.command_id)
             if prior:
                 self._cache.pop(command.execution_id, None)
-                self.state(command.execution_id)
+                self._state(command.execution_id)
                 return prior
-            state = self.state(command.execution_id)
+            state = self._state(command.execution_id)
             expected = command.expected_sequence if command.expected_sequence is not None else state.sequence
             facts = self._decide(state, command)
-            events = self.store.append(command.execution_id, expected, facts, command)
+            try:
+                events = self.store.append(command.execution_id, expected, facts, command)
+            except ConcurrencyError:
+                # A separate runtime committed first.  Never retain a stale
+                # projection after an optimistic-concurrency failure: callers
+                # must be able to reload and safely retry their command.
+                self._cache.pop(command.execution_id, None)
+                raise
             if events and events[0].sequence <= state.sequence:
+                self._cache.pop(command.execution_id, None)
                 return events
             self.projector.replay(command.execution_id, events, state)
             if self.snapshot_interval and state.sequence % self.snapshot_interval == 0:
@@ -820,6 +834,8 @@ class ExecutionEngine:
         t = command.type
         if command.actor.startswith("worker") and t in WORKER_FORBIDDEN_COMMANDS:
             raise PermissionError(f"Worker authority cannot issue {t}.")
+        if p.get("recovery") and command.actor != "runtime-recovery":
+            raise PermissionError("Only runtime recovery may suppress a task retry.")
         if t == "CreateExecution":
             if state.sequence:
                 raise InvariantError("Execution already exists.")
@@ -1018,7 +1034,11 @@ class ExecutionEngine:
         if target == TaskState.BLOCKED:
             if blocked_reason not in {item.value for item in BlockedReason}:
                 raise InvariantError("Blocked tasks require a typed blocked_reason.")
-        retry = task.state in {TaskState.DIAGNOSING, TaskState.REPLANNING} and target == TaskState.READY
+        retry = (
+            task.state in {TaskState.DIAGNOSING, TaskState.REPLANNING}
+            and target == TaskState.READY
+            and not bool(p.get("recovery", False))
+        )
         if retry and task.retries >= task.retry_limit:
             raise InvariantError("Task retry budget is exhausted.")
         return [("TaskTransitioned", {
@@ -1211,29 +1231,44 @@ class ExecutionEngine:
         return [("BudgetReserved", dict(p))]
 
     def _consume_budget(self, state: ExecutionProjection, p: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+        self._validate_budget_amount(p)
         if not p.get("from_reservation"):
             self._check_budget(state, p)
-        elif state.budgets[p["scope"]].reserved.get(p["kind"], 0) < float(p["amount"]):
+        elif state.budgets.get(str(p["scope"]), BudgetProjection(str(p["scope"]))).reserved.get(
+            p["kind"], 0
+        ) < float(p["amount"]):
             raise InvariantError("Budget reservation is insufficient.")
         return [("BudgetConsumed", dict(p))]
 
     @staticmethod
     def _release_budget(state: ExecutionProjection, p: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
-        if state.budgets[p["scope"]].reserved.get(p["kind"], 0) < float(p["amount"]):
+        ExecutionEngine._validate_budget_amount(p)
+        if state.budgets.get(str(p["scope"]), BudgetProjection(str(p["scope"]))).reserved.get(
+            p["kind"], 0
+        ) < float(p["amount"]):
             raise InvariantError("Cannot release more than reserved.")
         return [("BudgetReleased", dict(p))]
 
     @staticmethod
     def _check_budget(state: ExecutionProjection, p: dict[str, Any]) -> None:
-        kind = p["kind"]
+        ExecutionEngine._validate_budget_amount(p)
+        kind = str(p["kind"])
         amount = float(p["amount"])
-        if kind not in BUDGET_KINDS or amount < 0:
-            raise InvariantError("Invalid budget consumption.")
         scopes = _scope_lineage(str(p["scope"]))
         for scope in scopes:
             budget = state.budgets.get(scope)
             if budget and budget.available(kind) < amount:
                 raise InvariantError(f"Budget exhausted at {scope}/{kind}.")
+
+    @staticmethod
+    def _validate_budget_amount(p: dict[str, Any]) -> None:
+        try:
+            kind = str(p["kind"])
+            amount = float(p["amount"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise InvariantError("Invalid budget consumption.") from exc
+        if kind not in BUDGET_KINDS or amount < 0:
+            raise InvariantError("Invalid budget consumption.")
 
     @staticmethod
     def _model_route(_state: ExecutionProjection, p: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
@@ -1851,12 +1886,20 @@ class DurableExecutionRuntime:
         self.engine.dispatch(Command("RecordExecutionStats", execution_id, {"stats": stats}))
 
     def recover(
-        self, execution_id: str, *, reconcile_orphaned_effects: bool = True
+        self,
+        execution_id: str,
+        *,
+        reconcile_orphaned_effects: bool = True,
+        resume_interrupted_tasks: bool = False,
     ) -> ExecutionProjection:
+        self.engine._cache.pop(execution_id, None)
         full = self.engine.replay(execution_id)
         accelerated = self.engine.state(execution_id, use_snapshot=True)
         if full.canonical() != accelerated.canonical():
             raise InvariantError("Snapshot recovery diverged from full event replay.")
+        if resume_interrupted_tasks and full.status == ExecutionStatus.ACTIVE:
+            self._recover_interrupted_tasks(execution_id, full)
+            full = self.engine.replay(execution_id)
         if reconcile_orphaned_effects and full.status == ExecutionStatus.ACTIVE:
             for effect in list(full.effects.values()):
                 if effect.state in {EffectState.DISPATCHED, EffectState.RUNNING}:
@@ -1867,6 +1910,40 @@ class DurableExecutionRuntime:
                     }))
             full = self.engine.replay(execution_id)
         return full
+
+    def _recover_interrupted_tasks(
+        self, execution_id: str, state: ExecutionProjection
+    ) -> None:
+        """Return states owned by a lost worker to the scheduler after restart.
+
+        These transitions are intentionally journaled rather than mutating the
+        projection, so replay remains authoritative.  Recovery is not a failed
+        work attempt and therefore must not consume a task retry.
+        """
+        for task in state.tasks.values():
+            if task.state == TaskState.RUNNING:
+                self.engine.dispatch(Command("TransitionTask", execution_id, {
+                    "task_id": task.id, "to": "waiting",
+                    "reason": "Worker interrupted; recovering durable execution.",
+                }))
+                self.engine.dispatch(Command("TransitionTask", execution_id, {
+                    "task_id": task.id, "to": "ready",
+                    "reason": "Recovered interrupted worker task.", "recovery": True,
+                }, actor="runtime-recovery"))
+            elif task.state == TaskState.VERIFYING:
+                self.engine.dispatch(Command("TransitionTask", execution_id, {
+                    "task_id": task.id, "to": "diagnosing",
+                    "reason": "Verification interrupted; recovering durable execution.",
+                }))
+                self.engine.dispatch(Command("TransitionTask", execution_id, {
+                    "task_id": task.id, "to": "ready",
+                    "reason": "Recovered interrupted verification.", "recovery": True,
+                }, actor="runtime-recovery"))
+            elif task.state in {TaskState.DIAGNOSING, TaskState.REPLANNING}:
+                self.engine.dispatch(Command("TransitionTask", execution_id, {
+                    "task_id": task.id, "to": "ready",
+                    "reason": "Recovered interrupted planning step.", "recovery": True,
+                }, actor="runtime-recovery"))
 
 
 class AgentExecutionAdapter:
@@ -2156,7 +2233,7 @@ def projection_from_dict(raw: dict[str, Any]) -> ExecutionProjection:
     state.memory_records = list(raw.get("memory_records", []))
     state.critiques = list(raw.get("critiques", []))
     state.active_profile = raw.get("active_profile")
-    state.execution_stats = raw.get("execution_stats")
+    state.stats = raw.get("stats")
     return state
 
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import random
+import subprocess
+import sys
 import threading
 
 import pytest
@@ -13,6 +15,7 @@ from code_agent.durable_execution import (
     CriticalPathPolicy,
     DurableExecutionRuntime,
     EffectState,
+    ExecutionEvent,
     ExecutionEngine,
     ExecutionStatus,
     HierarchicalPlanner,
@@ -53,6 +56,62 @@ def test_event_log_is_canonical_and_command_is_idempotent(tmp_path):
     assert [event.event_id for event in first] == [event.event_id for event in second]
     assert runtime.engine.replay(execution_id).canonical() == runtime.engine.state(execution_id).canonical()
     assert [event.sequence for event in runtime.store.load(execution_id)] == [1, 2, 3]
+
+
+def test_engine_state_is_an_isolated_projection(tmp_path):
+    runtime = _runtime(tmp_path)
+    execution_id, _ = _one_task(runtime)
+
+    leaked = runtime.engine.state(execution_id)
+    leaked.tasks["build"].state = TaskState.COMPLETE
+    leaked.tasks["build"].metadata["corrupted"] = True
+
+    persisted = runtime.engine.state(execution_id)
+    assert persisted.tasks["build"].state == TaskState.QUEUED
+    assert "corrupted" not in persisted.tasks["build"].metadata
+
+
+def test_engine_refreshes_stale_cache_after_concurrent_writer_conflict(tmp_path):
+    store = SQLiteEventStore(tmp_path / "execution.db")
+    first = ExecutionEngine(store)
+    second = ExecutionEngine(store)
+    execution_id = first.create("goal")
+    second.state(execution_id)
+
+    first.dispatch(Command("AddTasks", execution_id, {
+        "tasks": [{"id": "first", "title": "First", "criteria": ["done"]}],
+    }))
+    with pytest.raises(ConcurrencyError):
+        second.dispatch(Command("AddTasks", execution_id, {
+            "tasks": [{"id": "stale", "title": "Stale", "criteria": ["done"]}],
+        }))
+
+    second.dispatch(Command("AddTasks", execution_id, {
+        "tasks": [{"id": "retry", "title": "Retry", "criteria": ["done"]}],
+    }))
+    assert set(second.state(execution_id).tasks) == {"first", "retry"}
+
+
+def test_replay_rejects_unknown_event_types(tmp_path):
+    runtime = _runtime(tmp_path)
+    execution_id, _ = _one_task(runtime)
+    state = runtime.engine.replay(execution_id)
+    unknown = ExecutionEvent(
+        execution_id=execution_id,
+        sequence=state.sequence + 1,
+        type="FutureEvent",
+        payload={},
+        event_id="future-event",
+        command_id="future-command",
+        causation_id=None,
+        correlation_id="future-command",
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+
+    with pytest.raises(InvariantError, match="Unknown execution event type"):
+        runtime.engine.projector.replay(
+            execution_id, [*runtime.store.load(execution_id), unknown]
+        )
 
 
 def test_task_lifecycle_requires_dependencies_evidence_and_verification(tmp_path):
@@ -161,6 +220,49 @@ def test_recovery_marks_ambiguous_running_effect_unknown(tmp_path):
     assert state.effects[effect_id].state == EffectState.UNKNOWN
 
 
+def test_recovery_requeues_interrupted_lifecycle_states_without_consuming_retry(tmp_path):
+    runtime = _runtime(tmp_path)
+    execution_id, _ = _one_task(runtime)
+    engine = runtime.engine
+    for target in ("ready", "running", "verifying"):
+        engine.dispatch(Command("TransitionTask", execution_id, {"task_id": "build", "to": target}))
+
+    recovered = runtime.recover(execution_id, resume_interrupted_tasks=True)
+
+    assert recovered.tasks["build"].state == TaskState.READY
+    assert recovered.tasks["build"].retries == 0
+
+
+def test_recovery_after_real_process_restart_requeues_lost_worker(tmp_path):
+    db_path = tmp_path / "restart.db"
+    script = """
+import sys
+from pathlib import Path
+from code_agent.durable_execution import Command, DurableExecutionRuntime
+runtime = DurableExecutionRuntime(Path(sys.argv[1]))
+execution_id = runtime.create_planned('restart goal', tasks=[{
+    'id': 'build', 'title': 'Build', 'criteria': ['done'],
+}])
+runtime.engine.dispatch(Command('TransitionTask', execution_id, {'task_id': 'build', 'to': 'ready'}))
+runtime.engine.dispatch(Command('TransitionTask', execution_id, {'task_id': 'build', 'to': 'running'}))
+print(execution_id)
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(db_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    restarted = DurableExecutionRuntime(db_path)
+    recovered = restarted.recover(
+        completed.stdout.strip(), resume_interrupted_tasks=True
+    )
+
+    assert recovered.tasks["build"].state == TaskState.READY
+    assert recovered.tasks["build"].retries == 0
+
+
 def test_approvals_and_hierarchical_budgets_are_resources(tmp_path):
     runtime = _runtime(tmp_path)
     execution_id, _ = _one_task(runtime)
@@ -175,6 +277,42 @@ def test_approvals_and_hierarchical_budgets_are_resources(tmp_path):
     engine.dispatch(Command("ConsumeBudget", execution_id, {"scope": "execution/build", "kind": "tokens", "amount": 60, "from_reservation": True}))
     with pytest.raises(InvariantError, match="exhausted"):
         engine.dispatch(Command("ReserveBudget", execution_id, {"scope": "execution/build", "kind": "tokens", "amount": 41}))
+
+
+def test_budget_reservation_paths_reject_negative_amounts(tmp_path):
+    runtime = _runtime(tmp_path)
+    execution_id, _ = _one_task(runtime)
+    engine = runtime.engine
+    engine.dispatch(Command("ConfigureBudget", execution_id, {
+        "scope": "execution/build", "limits": {"tokens": 100},
+    }))
+    engine.dispatch(Command("ReserveBudget", execution_id, {
+        "scope": "execution/build", "kind": "tokens", "amount": 20,
+    }))
+
+    for command in ("ConsumeBudget", "ReleaseBudget"):
+        with pytest.raises(InvariantError, match="Invalid budget consumption"):
+            engine.dispatch(Command(command, execution_id, {
+                "scope": "execution/build", "kind": "tokens", "amount": -1,
+                "from_reservation": command == "ConsumeBudget",
+            }))
+
+    budget = engine.state(execution_id).budgets["execution/build"]
+    assert budget.reserved["tokens"] == 20
+    assert budget.consumed.get("tokens", 0) == 0
+
+
+def test_only_runtime_recovery_can_bypass_retry_accounting(tmp_path):
+    runtime = _runtime(tmp_path)
+    execution_id, _ = _one_task(runtime)
+    engine = runtime.engine
+    for target in ("ready", "running", "verifying", "diagnosing"):
+        engine.dispatch(Command("TransitionTask", execution_id, {"task_id": "build", "to": target}))
+
+    with pytest.raises(PermissionError, match="Only runtime recovery"):
+        engine.dispatch(Command("TransitionTask", execution_id, {
+            "task_id": "build", "to": "ready", "recovery": True,
+        }))
 
 
 def test_child_budget_consumption_is_accounted_against_execution_limit(tmp_path):

@@ -276,7 +276,7 @@ class ExecutionRuntimeHost:
         execution_id: str | None = None,
     ) -> AgentExecutionAdapter:
         if execution_id:
-            state = self.runtime.recover(execution_id)
+            state = self.runtime.recover(execution_id, resume_interrupted_tasks=True)
             if state.status != ExecutionStatus.ACTIVE:
                 raise RuntimeError(
                     f"Execution {execution_id} cannot resume from {state.status.value}."
@@ -629,7 +629,7 @@ class ExecutionRuntimeHost:
             state = self.runtime.engine.state(execution_id)
             if state.status != ExecutionStatus.ACTIVE:
                 continue
-            restored = self.runtime.recover(execution_id)
+            restored = self.runtime.recover(execution_id, resume_interrupted_tasks=True)
             reconciled: list[str] = []
             if self.engine_owns("recovery"):
                 reconciled = self._reconcile_unknown_effects(execution_id, restored)
