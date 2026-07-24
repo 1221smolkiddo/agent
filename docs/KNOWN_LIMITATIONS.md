@@ -1,7 +1,7 @@
 # Known Limitations
 
-Agent47 is a capable alpha coding agent, not a complete replacement for an experienced engineer or a
-hard security sandbox. These limitations are part of the operating contract.
+Agent47 is a closed-beta coding agent, not a complete replacement for an experienced engineer or a hard
+security sandbox. These limitations are part of the operating contract.
 
 ## Model Reliability
 
@@ -53,8 +53,9 @@ hard security sandbox. These limitations are part of the operating contract.
 - Managed local shutdown signals the process group/tree and escalates after a grace period, but local mode does
   not use Windows Job Objects, Linux namespaces, seccomp/AppArmor, or macOS seatbelt profiles. A hostile process
   can still escape best-effort local lifecycle control; use container isolation for untrusted project code.
-- Durable workers survive Agent47 CLI exit, not host reboot. After reboot, stale active records reconcile as
-  orphaned and require an explicit new start; Agent47 does not silently relaunch project code at login.
+- Durable workers survive Agent47 CLI exit, not host reboot. On explicit runtime recovery after reboot, the
+  journal is replayed and interrupted task control states are returned to the scheduler; Agent47 does not
+  silently relaunch project code at login. Ambiguous external effects remain blocked for reconciliation.
 - POSIX systems support native PTYs. Windows interactive pipe control is supported, but PTY requests fail closed
   until a native ConPTY transport is implemented.
 - Readiness monitoring currently proves localhost TCP acceptance, not application-level HTTP correctness.
@@ -149,7 +150,8 @@ hard security sandbox. These limitations are part of the operating contract.
 - Agent47 remains CLI-first; there is no maintained VS Code extension or remote multi-user service.
 - There is no organization control plane, SSO, centralized policy distribution, or tamper-proof audit service.
 - Package publishing, artifact signing, SBOM generation, and release provenance are not fully automated.
-- The package metadata still identifies the project as alpha and version `0.1.0` until an explicit release is cut.
+- This is a controlled closed beta. Package versioning, artifact signing, SBOM generation, and release
+  provenance remain release-engineering work to complete before an unrestricted public production release.
 - Cross-platform CI cannot represent every shell, filesystem, locale, terminal, and container environment.
 
 ## Recommended Operating Modes
@@ -166,7 +168,7 @@ hard security sandbox. These limitations are part of the operating contract.
 
 Before publishing a release candidate:
 
-1. Update the version and retained documentation.
+1. Update the version, beta notes, and retained documentation.
 2. Run `uv run code-agent release-smoke`.
 3. Run live evals repeatedly with the intended release model and save the reports.
 4. Review prompt-injection, secret, path, permission, sandbox, approval, mutation, and revert tests.

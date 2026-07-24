@@ -5,8 +5,9 @@ repository-aware coding tools, transactional workspace editing, model routing, v
 execution, skills, MCP, and multi-agent workers with an event-sourced runtime that records what happened
 and why.
 
-It is alpha software. Agent47 has meaningful safety and recovery controls, but a human must review
-generated changes and every approval before using it on important repositories. Read
+Agent47 is available for a controlled closed beta. It has meaningful safety and recovery controls, but
+a human must review generated changes and every approval before using it on important repositories. Start
+with bounded, low-risk projects and read [Closed Beta](docs/BETA.md) and
 [Known Limitations](docs/KNOWN_LIMITATIONS.md) before use.
 
 ## Why Agent47
@@ -88,6 +89,14 @@ uv run code-agent run --dry-run "Inspect this repository and identify the highes
 
 For full setup, provider configuration, containers, language servers, and Windows/macOS/Linux notes, see
 [Install](docs/INSTALL.md).
+
+## Closed Beta
+
+The beta is suitable for supervised project testing, not unrestricted autonomous production use. Before
+enrolling a project, back up its `.code-agent/` data, use bounded execution budgets, retain approval gates
+for external effects, and configure error/crash reporting. Start with `--dry-run` or sandboxed work, then
+review every generated diff and final verification report. See [Closed Beta](docs/BETA.md) for enrollment,
+monitoring, incident reporting, and update guidance.
 
 ## Everyday Use
 

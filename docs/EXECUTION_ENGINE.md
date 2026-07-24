@@ -81,11 +81,13 @@ ancestors, so parallel task scopes cannot collectively exceed an execution limit
 closed before planning promotion and for later authority stages that this host has not adopted.
 `engine_only` remains disabled until all authority stages are qualified.
 
-On startup the host replays active executions and changes orphaned `running` effects to `unknown`.
-Resuming with `--execution-id` requires the same goal and never repeats an ambiguous effect; its adapter
-must reconcile it or an operator must resolve it. Every legacy run stores a durable execution link in
-the run history, so `code-agent resume RUN_ID` restores the same execution automatically and injects a
-compressed graph, budget, diagnosis, model-route, and ambiguity summary into the recovered worker.
+On recovery, the host replays active executions and changes orphaned `running` effects to `unknown`.
+When the host resumes an execution, interrupted task lifecycle states are journaled back to a scheduler-owned
+ready state without consuming a retry. Resuming with `--execution-id` requires the same goal and never repeats
+an ambiguous effect; its adapter must reconcile it or an operator must resolve it. Every legacy run stores a
+durable execution link in the run history, so `code-agent resume RUN_ID` restores the same execution
+automatically and injects a compressed graph, budget, diagnosis, model-route, and ambiguity summary into the
+recovered worker.
 
 ## Versioned graphs and replanning
 

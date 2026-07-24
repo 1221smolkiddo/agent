@@ -30,6 +30,13 @@ uv build
 
 Use `uv run code-agent release-smoke` for release candidates.
 
+## Closed-Beta Reports
+
+For a beta failure, include the Agent47 version/commit, operating system, command, execution or run ID,
+redacted trace, expected result, actual result, and whether the process or host restarted. Never attach
+`.env`, credentials, unredacted provider responses, or the complete `.code-agent/` database. A reproducible
+failure must receive a regression test before a corrective beta update is released.
+
 ## Engineering Rules
 
 - Preserve unrelated user changes and dirty worktrees.

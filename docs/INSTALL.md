@@ -37,6 +37,21 @@ uv run code-agent models
 uv run code-agent run --dry-run "Inspect this repository"
 ```
 
+## Closed Beta Setup
+
+The closed beta is for supervised testing on real projects. It does not authorize unattended or
+unrestricted execution. Before the first non-dry-run task:
+
+1. Back up the project's `.code-agent/` directory, including its SQLite database.
+2. Run `uv run code-agent doctor --strict` and resolve failures.
+3. Begin with a read-only `--dry-run` task.
+4. Use `--sandbox` for work that executes unfamiliar project code when a healthy Docker or Podman backend
+   is available.
+5. Keep approval gates enabled for external effects and set conservative execution budgets.
+6. Retain the execution ID and trace for every beta task so a failure can be investigated or recovered.
+
+For operating limits, incident reports, and beta update policy, see [Closed Beta](BETA.md).
+
 ## Editable pip Installation
 
 Create and activate a virtual environment, then install development and parsing extras:
@@ -173,6 +188,23 @@ uv run code-agent transactions recover
 
 Omitting `--path` from `transactions restore` restores the complete recorded workspace checkpoint and can
 remove files created after that checkpoint. Agent47 always shows the affected paths and diff before approval.
+
+## Durable Execution Recovery
+
+The execution journal is stored locally in SQLite under `.code-agent/` by default. Do not place it on a
+network filesystem. If the Agent47 process or host restarts while an execution is active, resume it with its
+execution ID (or the linked run ID). The runtime replays the journal, returns interrupted task lifecycle
+states to the scheduler, and marks ambiguous external effects `unknown` for reconciliation; it never blindly
+repeats an ambiguous effect.
+
+```bash
+uv run code-agent run "Continue the interrupted task" --execution-id <execution-id>
+uv run code-agent execution recover <execution-id>
+uv run code-agent execution trace <execution-id>
+```
+
+Keep database backups until a beta task is accepted. Recovery restores Agent47 control state, not arbitrary
+in-memory state inside external tools, services, or providers.
 
 ## Platform Notes
 
