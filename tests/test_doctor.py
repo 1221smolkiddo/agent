@@ -197,7 +197,11 @@ def test_doctor_includes_auth_checks(tmp_path: Path) -> None:
     assert "container-runtime" in names
 
 
-def test_doctor_authentication_not_signed_in(tmp_path: Path) -> None:
+def test_doctor_authentication_not_signed_in(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "code_agent.account.profile.agent47_config_dir",
+        lambda: tmp_path / "config",
+    )
     settings = Settings(
         openrouter_api_key="test-key",
         agent_db_path=tmp_path / ".agent.db",
