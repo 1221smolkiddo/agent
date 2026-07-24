@@ -125,16 +125,15 @@ def test_live_eval_fails_closed_when_agent_run_is_blocked() -> None:
 
 def _mock_builtin_eval_result() -> EvalSuiteResult:
     results = [
-        EvalResult(name="create_file", ok=True, detail="ok", category="fixture"),
-        *[EvalResult(name=f"fixture_case_{i}", ok=True, detail="ok", category="fixture") for i in range(19)],
-        *[EvalResult(name=f"safety_case_{i}", ok=True, detail="ok", category="safety") for i in range(7)],
+        *[EvalResult(name=case.name, ok=True, detail="ok", category="safety") for case in builtin_eval_cases()],
+        *[EvalResult(name=case.name, ok=True, detail="ok", category="fixture") for case in builtin_fixture_eval_cases()],
     ]
     return EvalSuiteResult(
         results=results,
         metadata={
             "mode": "offline",
-            "benchmark_version": "2026.07-v1",
-            "case_count": 27,
+            "benchmark_version": evals_module.BENCHMARK_VERSION,
+            "case_count": len(results),
         },
     )
 
@@ -145,8 +144,9 @@ def test_cli_evals_command_runs_builtin_evals(monkeypatch) -> None:
 
     result = runner.invoke(app, ["evals"])
 
+    total = len(builtin_eval_cases()) + len(builtin_fixture_eval_cases())
     assert result.exit_code == 0, result.output
-    assert "Agent47 local evals: 27 passed, 0 failed" in result.output
+    assert f"Agent47 local evals: {total} passed, 0 failed" in result.output
     assert "fixture/create_file" in result.output
 
 
@@ -159,8 +159,8 @@ def test_cli_evals_command_outputs_json(monkeypatch) -> None:
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["ok"] is True
-    assert payload["metrics"]["passed"] == 27
-    assert payload["metrics"]["categories"]["fixture"]["total"] == 20
+    assert payload["metrics"]["passed"] == len(builtin_eval_cases()) + len(builtin_fixture_eval_cases())
+    assert payload["metrics"]["categories"]["fixture"]["total"] == len(builtin_fixture_eval_cases())
 
 
 def test_cli_evals_command_exits_nonzero_when_any_eval_fails(monkeypatch) -> None:
