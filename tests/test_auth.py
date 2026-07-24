@@ -18,6 +18,7 @@ import hashlib
 import base64
 import re
 import time
+import threading
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
@@ -25,7 +26,7 @@ from urllib.request import Request, urlopen
 import pytest
 
 from code_agent.account.profile import AccountStore
-from code_agent.local_server import LocalBrowserServer, OAuthHandler, OAuthCallback
+from code_agent.local_server import LocalBrowserServer, OAuthHandler, OAuthCallback, _render_page
 from code_agent.auth.config import GoogleOAuthConfig, OAuthConfigurationError
 from code_agent.auth.google import GoogleAuthenticator
 from code_agent.auth.models import Account
@@ -231,6 +232,27 @@ class TestCallbackServer:
             result = server.wait(0.01)
         assert result is None
 
+    def test_close_before_start_is_safe(self) -> None:
+        server = LocalBrowserServer(handler=OAuthHandler())
+        server.close()
+
+    def test_close_is_idempotent(self) -> None:
+        server = LocalBrowserServer(handler=OAuthHandler())
+        server.start()
+        server.close()
+        server.close()
+
+    def test_close_after_failed_start_is_safe(self, monkeypatch) -> None:
+        server = LocalBrowserServer(handler=OAuthHandler())
+
+        def fail_start() -> None:
+            raise RuntimeError("thread could not start")
+
+        monkeypatch.setattr(server._thread, "start", fail_start)
+        with pytest.raises(RuntimeError, match="thread could not start"):
+            server.start()
+        server.close()
+
     def test_rejects_post_method(self) -> None:
         with LocalBrowserServer(handler=OAuthHandler()) as server:
             try:
@@ -261,14 +283,18 @@ class TestCallbackServer:
     def test_synchronization_event_blocks_and_delivers_success(self) -> None:
         """Verify the callback handler blocks until the main thread signals success."""
         import concurrent.futures
-        import time
 
         with LocalBrowserServer(handler=OAuthHandler()) as server:
             with concurrent.futures.ThreadPoolExecutor() as executor:
+                request_started = threading.Event()
+
+                def make_request():
+                    request_started.set()
+                    return urlopen(server.redirect_uri + "?code=sync&state=trusted", timeout=5)
+
                 # 1. Start the HTTP request in a background thread.
-                future = executor.submit(
-                    urlopen, server.redirect_uri + "?code=sync&state=trusted", timeout=5
-                )
+                future = executor.submit(make_request)
+                assert request_started.wait(timeout=2)
                 
                 # 2. Main thread waits for the code to be extracted.
                 callback = server.wait(2)
@@ -276,7 +302,6 @@ class TestCallbackServer:
                 assert callback.code == "sync"
                 
                 # 3. Verify the HTTP request is STILL blocked waiting for response event.
-                time.sleep(0.1)
                 assert not future.done()
                 
                 # 4. Signal success to unblock the HTTP request.
@@ -292,19 +317,22 @@ class TestCallbackServer:
     def test_synchronization_event_blocks_and_delivers_error(self) -> None:
         """Verify the callback handler can also block and deliver an error page."""
         import concurrent.futures
-        import time
         from urllib.error import HTTPError
 
         with LocalBrowserServer(handler=OAuthHandler()) as server:
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(
-                    urlopen, server.redirect_uri + "?code=err&state=trusted", timeout=5
-                )
+                request_started = threading.Event()
+
+                def make_request():
+                    request_started.set()
+                    return urlopen(server.redirect_uri + "?code=err&state=trusted", timeout=5)
+
+                future = executor.submit(make_request)
+                assert request_started.wait(timeout=2)
                 
                 callback = server.wait(2)
                 assert callback is not None
                 
-                time.sleep(0.1)
                 assert not future.done()
                 
                 server.send_error("Test Failure", "Invalid state detected.")
@@ -517,7 +545,20 @@ class TestGoogleAuthenticator:
         server = TrackingCallbackServer(
             OAuthCallback("code", "expected-state", None, None)
         )
-        credentials = FakeCredentials()
+        events: list[str] = []
+
+        class OrderedCredentials(FakeCredentials):
+            def set_oauth_tokens(self, tokens):
+                events.append("save")
+                super().set_oauth_tokens(tokens)
+
+        class OrderedServer(TrackingCallbackServer):
+            def send_success(self, name, email):
+                events.append("success")
+                super().send_success(name, email)
+
+        server = OrderedServer(OAuthCallback("code", "expected-state", None, None))
+        credentials = OrderedCredentials()
         session = LocalSession(
             accounts=AccountStore(tmp_path), credentials=credentials
         )
@@ -537,6 +578,7 @@ class TestGoogleAuthenticator:
         assert credentials.tokens and credentials.tokens["access_token"] == "tok"
         assert server.success_calls == [("User Name", "user@example.com")]
         assert server.error_calls == []
+        assert events == ["save", "success"]
 
     def test_login_storage_failure_sends_browser_error_and_reraises(
         self, monkeypatch, tmp_path: Path
@@ -571,6 +613,35 @@ class TestGoogleAuthenticator:
         assert len(server.error_calls) == 1
         assert server.error_calls[0][0] == "Storage Failed"
         assert "Keyring is locked by OS" in server.error_calls[0][1]
+
+    def test_login_account_save_failure_rolls_back_tokens_and_sends_browser_error(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        server = TrackingCallbackServer(OAuthCallback("code", "expected-state", None, None))
+
+        class FailingAccountStore(AccountStore):
+            def save(self, account):
+                raise OSError("disk is read-only")
+
+        credentials = FakeCredentials()
+        session = LocalSession(accounts=FailingAccountStore(tmp_path), credentials=credentials)
+        monkeypatch.setattr("code_agent.auth.google.LocalBrowserServer", lambda handler=None: server)
+        monkeypatch.setattr("code_agent.auth.google.generate_state", lambda: "expected-state")
+        monkeypatch.setattr("code_agent.auth.google.generate_code_verifier", lambda: "verifier")
+        monkeypatch.setattr("code_agent.auth.google.exchange_code", lambda **_kw: {"access_token": "tok"})
+        monkeypatch.setattr(
+            "code_agent.auth.google.fetch_profile",
+            lambda _t: {"sub": "id", "email": "user@example.com", "name": "User Name"},
+        )
+
+        with pytest.raises(OSError, match="disk is read-only"):
+            GoogleAuthenticator(GoogleOAuthConfig("client-id", None), session=session).login(
+                browser_open=lambda _url: True
+            )
+
+        assert credentials.tokens is None
+        assert server.success_calls == []
+        assert server.error_calls == [("Storage Failed", "Could not save credentials: disk is read-only")]
 
     def test_login_oauth_failure_sends_browser_error_and_reraises(
         self, monkeypatch, tmp_path: Path
@@ -626,6 +697,20 @@ class TestLogoutCleanup:
         assert tokens_deleted
         assert session.account() is None
         assert credentials.tokens is None
+
+
+class TestTemplateEscaping:
+    def test_dynamic_values_are_rendered_as_text(self) -> None:
+        rendered = _render_page(
+            "success.html",
+            "success.css",
+            None,
+            {"name": '<script>alert("x")</script>', "email": 'a"b@example.com'},
+        )
+
+        assert "<script>alert" not in rendered
+        assert "&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;" in rendered
+        assert "a&quot;b@example.com" in rendered
 
 
 # ======================================================================

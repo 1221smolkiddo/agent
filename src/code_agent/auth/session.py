@@ -22,7 +22,19 @@ class LocalSession:
 
     def save(self, account: Account, tokens: dict[str, object]) -> None:
         self.credentials.set_oauth_tokens(tokens)
-        self.accounts.save(account)
+        try:
+            self.accounts.save(account)
+        except Exception as save_error:
+            # The keyring write has already succeeded.  Do not leave a usable
+            # OAuth session behind when its corresponding account metadata
+            # could not be persisted.
+            try:
+                self.credentials.delete_oauth_tokens()
+            except Exception as cleanup_error:
+                # Account persistence is the operation that failed; retain it
+                # as the raised exception while preserving cleanup context.
+                raise save_error from cleanup_error
+            raise
 
     def clear(self) -> tuple[bool, bool]:
         return self.accounts.delete(), self.credentials.delete_oauth_tokens()

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import concurrent.futures
+import socket
 import threading
-import time
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
@@ -12,7 +12,7 @@ from urllib.error import HTTPError
 import pytest
 from typer.testing import CliRunner
 
-from code_agent.cli import app
+from code_agent.cli import _build_key_setup_handler, app
 from code_agent.local_server import LocalBrowserServer, FormSubmissionHandler
 
 
@@ -79,6 +79,16 @@ def test_form_submission_handler_csrf_protection():
             assert b"Invalid CSRF token" in exc.read()
 
 
+def test_browser_form_escapes_provider_display_name():
+    handler = _build_key_setup_handler('Provider <script>"x"</script>')
+    with LocalBrowserServer(handler=handler) as server:
+        with urlopen(server.server_url + "/setup", timeout=5) as response:
+            page = response.read().decode("utf-8")
+
+    assert 'Provider &lt;script&gt;&quot;x&quot;&lt;/script&gt; API Key' in page
+    assert 'Provider <script>' not in page
+
+
 def test_form_submission_handler_payload_size():
     """Verify max payload size is enforced."""
     handler = FormSubmissionHandler("Test", "Sub", "Desc", "<input>", "Submit")
@@ -90,6 +100,32 @@ def test_form_submission_handler_payload_size():
             pytest.fail("Expected 413 Payload Too Large")
         except HTTPError as exc:
             assert exc.code == 413
+
+
+@pytest.mark.parametrize(
+    ("content_length", "expected_body"),
+    [
+        (None, b"Missing Content-Length"),
+        ("not-a-number", b"Invalid Content-Length"),
+        ("-1", b"Invalid Content-Length"),
+    ],
+)
+def test_form_submission_handler_rejects_invalid_content_length(content_length, expected_body):
+    handler = FormSubmissionHandler("Test", "Sub", "Desc", "<input>", "Submit")
+    with LocalBrowserServer(handler=handler) as server:
+        host_port = server.server_url.removeprefix("http://")
+        headers = "Content-Type: application/x-www-form-urlencoded\r\n"
+        if content_length is not None:
+            headers += f"Content-Length: {content_length}\r\n"
+        request = (
+            f"POST /setup HTTP/1.1\r\nHost: {host_port}\r\n{headers}Connection: close\r\n\r\n"
+        ).encode("ascii")
+        with socket.create_connection(("127.0.0.1", server._server.server_port), timeout=5) as client:
+            client.sendall(request)
+            response = client.makefile("rb").read()
+
+    assert response.startswith(b"HTTP/1.0 400")
+    assert expected_body in response
 
 
 def test_form_submission_handler_rejects_duplicate_post():
@@ -186,26 +222,31 @@ def test_cli_keys_add_browser_flow(monkeypatch, fake_keyring, mock_validation):
     # We need to simulate the browser POSTing the form data to the server
     # We will intercept webbrowser.open to start a background thread that POSTs.
     
+    submitted = threading.Event()
+    errors: list[BaseException] = []
+
     def mock_browser_open(url):
         def submit_form():
-            time.sleep(0.5) # Wait for server to start serving
-            
-            # 1. GET to extract CSRF token
-            with urlopen(url, timeout=5) as resp:
-                html = resp.read().decode("utf-8")
-                csrf_token = _extract_csrf(html)
-                
-            # 2. POST with API key
-            data = urlencode({"api_key": "browser-key-123", "csrf_token": csrf_token}).encode("utf-8")
-            req = Request(url, data=data, method="POST")
-            with urlopen(req, timeout=5) as resp:
-                assert resp.status == 200
-                
+            try:
+                # The server is started before webbrowser.open is called.
+                with urlopen(url, timeout=5) as resp:
+                    html = resp.read().decode("utf-8")
+                    csrf_token = _extract_csrf(html)
+                data = urlencode({"api_key": "browser-key-123", "csrf_token": csrf_token}).encode("utf-8")
+                with urlopen(Request(url, data=data, method="POST"), timeout=5) as resp:
+                    assert resp.status == 200
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                submitted.set()
+
         threading.Thread(target=submit_form, daemon=True).start()
 
     monkeypatch.setattr("webbrowser.open", mock_browser_open)
     
     result = runner.invoke(app, ["keys", "add", "gemini"])
+    assert submitted.wait(timeout=2)
+    assert errors == []
     assert result.exit_code == 0
     assert "Saved Google Gemini API key to secure local storage." in result.output
     assert fake_keyring.keys["gemini"] == "browser-key-123"

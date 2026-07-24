@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import html
 import os
 from pathlib import Path
 import sys
@@ -210,13 +211,21 @@ def auth_logout_command(
     console = Console()
     
     account = AccountStore().load()
+    try:
+        session = LocalSession()
+        has_tokens = session.credentials.get_oauth_tokens() is not None
+    except KeyringUnavailableError as exc:
+        _credential_error(exc)
+        return
     if account:
         console.print("\nYou are currently signed in as\n")
         console.print(f"  [bold]{account.name}[/bold]")
         console.print(f"  [cyan]{account.email}[/cyan]\n")
-    else:
+    elif not has_tokens:
         console.print("You are not currently signed in.")
         return
+    else:
+        console.print("Account metadata is missing; removing orphaned Google credentials.")
         
     if not yes:
         if not typer.confirm("Are you sure you want to sign out?", default=False):
@@ -224,7 +233,6 @@ def auth_logout_command(
             return
 
     try:
-        session = LocalSession()
         profile_deleted, tokens_deleted = session.clear()
         removed: list[str] = []
         if remove_keys:
@@ -335,9 +343,12 @@ def logout_command(
     remove_keys: bool = typer.Option(
         False, "--remove-keys", help="Also delete all saved provider API keys."
     ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Bypass confirmation prompt."
+    ),
 ) -> None:
     """Sign out (alias for 'auth logout')."""
-    auth_logout_command(remove_keys=remove_keys)
+    auth_logout_command(remove_keys=remove_keys, yes=yes)
 
 
 @app.command("account")
@@ -405,9 +416,10 @@ def _build_key_setup_handler(display_name: str) -> "FormSubmissionHandler":
 
     Keeps HTML out of the CLI command function body.
     """
+    escaped_display_name = html.escape(display_name, quote=True)
     fields_html = (
         '<div class="field-group">'
-        f'<label for="api_key">{display_name} API Key</label>'
+        f'<label for="api_key">{escaped_display_name} API Key</label>'
         '<input type="password" id="api_key" name="api_key" '
         'placeholder="Enter your key here..." required autocomplete="off">'
         '<button class="password-toggle" data-target="api_key">Show</button>'

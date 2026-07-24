@@ -16,6 +16,7 @@ Security invariants
 from __future__ import annotations
 
 import importlib.resources
+import html
 import secrets
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -53,7 +54,14 @@ def _load_asset(filename: str) -> str:
         return ""
 
 
-def _render_page(html_file: str, css_file: str, js_file: str | None, context: dict[str, str]) -> str:
+def _render_page(
+    html_file: str,
+    css_file: str,
+    js_file: str | None,
+    context: dict[str, str],
+    *,
+    raw_html_keys: frozenset[str] = frozenset(),
+) -> str:
     html = _load_asset(html_file)
     css = _load_asset(css_file)
     
@@ -64,9 +72,15 @@ def _render_page(html_file: str, css_file: str, js_file: str | None, context: di
         html = html.replace("/* JS_INJECTION_PLACEHOLDER */", js)
         
     for key, value in context.items():
-        html = html.replace(f"{{{{{key}}}}}", value)
+        rendered_value = value if key in raw_html_keys else html_escape(value)
+        html = html.replace(f"{{{{{key}}}}}", rendered_value)
         
     return html
+
+
+def html_escape(value: str) -> str:
+    """Escape text inserted into browser templates, including quotes."""
+    return html.escape(value, quote=True)
 
 
 # ------------------------------------------------------------------
@@ -159,14 +173,22 @@ class FormSubmissionHandler(_BasePageRenderer):
             request.send_error(404)
             return None
             
-        body_html = _render_page("browser_form.html", "browser_form.css", "browser_form.js", {
-            "title": self.title,
-            "subtitle": self.subtitle,
-            "description": self.description,
-            "csrf_token": self.csrf_token,
-            "fields_html": self.fields_html,
-            "submit_text": self.submit_text,
-        })
+        body_html = _render_page(
+            "browser_form.html",
+            "browser_form.css",
+            "browser_form.js",
+            {
+                "title": self.title,
+                "subtitle": self.subtitle,
+                # These fragments are owned by the local CLI, not request or
+                # OAuth input. They intentionally contain form markup.
+                "description": self.description,
+                "csrf_token": self.csrf_token,
+                "fields_html": self.fields_html,
+                "submit_text": self.submit_text,
+            },
+            raw_html_keys=frozenset({"description", "fields_html"}),
+        )
         request._send_simple(200, body_html)
         return None
 
@@ -181,7 +203,18 @@ class FormSubmissionHandler(_BasePageRenderer):
                 request._send_simple(409, "Form already submitted.")
                 return None
 
-        content_length = int(request.headers.get("Content-Length", 0))
+        raw_content_length = request.headers.get("Content-Length")
+        if raw_content_length is None:
+            request._send_simple(400, "Missing Content-Length")
+            return None
+        try:
+            content_length = int(raw_content_length)
+        except ValueError:
+            request._send_simple(400, "Invalid Content-Length")
+            return None
+        if content_length < 0:
+            request._send_simple(400, "Invalid Content-Length")
+            return None
         if content_length > 16 * 1024:
             # Drain the body so the client receives the response cleanly.
             remaining = content_length
@@ -320,6 +353,9 @@ class LocalBrowserServer(Generic[T]):
         self._server.response_data = None
         self._server.response_timeout = response_timeout
         self._thread = Thread(target=self._server.serve_forever, daemon=True)
+        self._lifecycle_lock = Lock()
+        self._started = False
+        self._closed = False
 
     @property
     def server_url(self) -> str:
@@ -331,7 +367,13 @@ class LocalBrowserServer(Generic[T]):
         return f"{self.server_url}/callback"
 
     def start(self) -> None:
-        self._thread.start()
+        with self._lifecycle_lock:
+            if self._closed:
+                raise RuntimeError("Local browser server is already closed.")
+            if self._started:
+                return
+            self._thread.start()
+            self._started = True
 
     def wait(self, timeout_seconds: float) -> T | None:
         if not self._server.received.wait(timeout_seconds):
@@ -354,11 +396,18 @@ class LocalBrowserServer(Generic[T]):
         self._server.response_event.set()
 
     def close(self) -> None:
+        with self._lifecycle_lock:
+            if self._closed:
+                return
+            self._closed = True
+            started = self._started
+
         if not self._server.response_event.is_set():
             self._server.response_event.set()
-        self._server.shutdown()
+        if started:
+            self._server.shutdown()
         self._server.server_close()
-        if self._thread.is_alive():
+        if started and self._thread.is_alive():
             self._thread.join(timeout=2)
 
     def __enter__(self) -> "LocalBrowserServer[T]":
