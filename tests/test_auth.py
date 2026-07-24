@@ -38,6 +38,7 @@ from code_agent.auth.pkce import (
 )
 from code_agent.auth.session import LocalSession
 from code_agent.credentials.providers import provider_spec, validate_provider_key
+from code_agent.credentials.keyring import KeyringUnavailableError
 from code_agent.config import Settings
 
 
@@ -441,6 +442,30 @@ class TestBrowserFailure:
 # ======================================================================
 
 
+class TrackingCallbackServer:
+    redirect_uri = "http://127.0.0.1:9999/callback"
+
+    def __init__(self, callback=None):
+        self._callback = callback
+        self.success_calls = []
+        self.error_calls = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def wait(self, _timeout):
+        return self._callback
+
+    def send_error(self, title, message):
+        self.error_calls.append((title, message))
+
+    def send_success(self, name, email):
+        self.success_calls.append((name, email))
+
+
 class TestGoogleAuthenticator:
     def test_saves_tokens_only_in_credential_store(
         self, monkeypatch, tmp_path: Path
@@ -484,6 +509,92 @@ class TestGoogleAuthenticator:
         assert "secret-token" not in (tmp_path / "account.json").read_text(
             encoding="utf-8"
         )
+
+    def test_login_successful_persists_before_send_success(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """Verify successful login stores credentials and calls send_success."""
+        server = TrackingCallbackServer(
+            OAuthCallback("code", "expected-state", None, None)
+        )
+        credentials = FakeCredentials()
+        session = LocalSession(
+            accounts=AccountStore(tmp_path), credentials=credentials
+        )
+        monkeypatch.setattr("code_agent.auth.google.LocalBrowserServer", lambda handler=None: server)
+        monkeypatch.setattr("code_agent.auth.google.generate_state", lambda: "expected-state")
+        monkeypatch.setattr("code_agent.auth.google.generate_code_verifier", lambda: "verifier")
+        monkeypatch.setattr("code_agent.auth.google.exchange_code", lambda **_kw: {"access_token": "tok"})
+        monkeypatch.setattr(
+            "code_agent.auth.google.fetch_profile",
+            lambda _t: {"sub": "id", "email": "user@example.com", "name": "User Name"},
+        )
+        auth = GoogleAuthenticator(GoogleOAuthConfig("client-id", None), session=session)
+
+        account = auth.login(browser_open=lambda url: True)
+
+        assert account.email == "user@example.com"
+        assert credentials.tokens and credentials.tokens["access_token"] == "tok"
+        assert server.success_calls == [("User Name", "user@example.com")]
+        assert server.error_calls == []
+
+    def test_login_storage_failure_sends_browser_error_and_reraises(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """Verify storage failure calls send_error, does not call send_success, and re-raises exception."""
+        server = TrackingCallbackServer(
+            OAuthCallback("code", "expected-state", None, None)
+        )
+
+        class FailingCredentials(FakeCredentials):
+            def set_oauth_tokens(self, tokens):
+                raise KeyringUnavailableError("Keyring is locked by OS")
+
+        credentials = FailingCredentials()
+        session = LocalSession(
+            accounts=AccountStore(tmp_path), credentials=credentials
+        )
+        monkeypatch.setattr("code_agent.auth.google.LocalBrowserServer", lambda handler=None: server)
+        monkeypatch.setattr("code_agent.auth.google.generate_state", lambda: "expected-state")
+        monkeypatch.setattr("code_agent.auth.google.generate_code_verifier", lambda: "verifier")
+        monkeypatch.setattr("code_agent.auth.google.exchange_code", lambda **_kw: {"access_token": "tok"})
+        monkeypatch.setattr(
+            "code_agent.auth.google.fetch_profile",
+            lambda _t: {"sub": "id", "email": "user@example.com", "name": "User Name"},
+        )
+        auth = GoogleAuthenticator(GoogleOAuthConfig("client-id", None), session=session)
+
+        with pytest.raises(KeyringUnavailableError, match="Keyring is locked by OS"):
+            auth.login(browser_open=lambda url: True)
+
+        assert server.success_calls == []
+        assert len(server.error_calls) == 1
+        assert server.error_calls[0][0] == "Storage Failed"
+        assert "Keyring is locked by OS" in server.error_calls[0][1]
+
+    def test_login_oauth_failure_sends_browser_error_and_reraises(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """Verify OAuth failure (e.g. state mismatch) calls send_error and re-raises OAuthError."""
+        server = TrackingCallbackServer(
+            OAuthCallback("code", "wrong-state", None, None)
+        )
+        credentials = FakeCredentials()
+        session = LocalSession(
+            accounts=AccountStore(tmp_path), credentials=credentials
+        )
+        monkeypatch.setattr("code_agent.auth.google.LocalBrowserServer", lambda handler=None: server)
+        monkeypatch.setattr("code_agent.auth.google.generate_state", lambda: "expected-state")
+        monkeypatch.setattr("code_agent.auth.google.generate_code_verifier", lambda: "verifier")
+        auth = GoogleAuthenticator(GoogleOAuthConfig("client-id", None), session=session)
+
+        with pytest.raises(OAuthError, match="security state did not match"):
+            auth.login(browser_open=lambda url: True)
+
+        assert server.success_calls == []
+        assert len(server.error_calls) == 1
+        assert server.error_calls[0][0] == "Authentication Failed"
+        assert "security state did not match" in server.error_calls[0][1]
 
 
 # ======================================================================

@@ -13,7 +13,7 @@ import webbrowser
 from datetime import UTC, datetime
 
 from ..account.profile import AccountStore
-from ..credentials.keyring import CredentialStore
+from ..credentials.keyring import CredentialStore, KeyringUnavailableError
 from ..local_server import LocalBrowserServer, OAuthHandler
 from .config import GoogleOAuthConfig
 from .models import Account
@@ -127,20 +127,28 @@ class GoogleAuthenticator:
                 tokens["issued_at"] = datetime.now(UTC).timestamp()
                 profile = fetch_profile(access_token)
 
-                # Signal the local server to render the success page
-                callback_server.send_success(profile.get("name", "Unknown"), profile.get("email", "Unknown"))
+                previous = self.session.account()
+                account = Account.from_google_profile(
+                    profile, created_at=previous.created_at if previous else None
+                )
+
+                try:
+                    self.session.save(account, tokens)
+                except (KeyringUnavailableError, OSError) as exc:
+                    callback_server.send_error(
+                        "Storage Failed", f"Could not save credentials: {exc}"
+                    )
+                    raise
+
+                # Signal the local server to render the success page AFTER credentials are saved.
+                callback_server.send_success(
+                    profile.get("name", "Unknown"), profile.get("email", "Unknown")
+                )
+                return account
             except OAuthError as exc:
                 # Signal the local server to render the error page
                 callback_server.send_error("Authentication Failed", str(exc))
                 raise
-
-        # Server is stopped before we persist credentials locally.
-        previous = self.session.account()
-        account = Account.from_google_profile(
-            profile, created_at=previous.created_at if previous else None
-        )
-        self.session.save(account, tokens)
-        return account
 
     # ------------------------------------------------------------------
     # Token management
