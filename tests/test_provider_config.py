@@ -165,14 +165,15 @@ def test_create_agent_uses_preset_provider_and_model(tmp_path) -> None:
         agent_db_path=tmp_path / "agent.db",
     )
 
-    agent = create_agent(
-        settings=settings,
-        cwd=tmp_path,
-        model=None,
-        profile=None,
-        dry_run=True,
-        max_steps=1,
-    )
+    with pytest.warns(RuntimeWarning, match="no fallback model configured"):
+        agent = create_agent(
+            settings=settings,
+            cwd=tmp_path,
+            model=None,
+            profile=None,
+            dry_run=True,
+            max_steps=1,
+        )
 
     assert agent.model_client.model == "z-ai/glm-5.2"
     assert agent.model_client.include_stream_usage is False
@@ -234,14 +235,15 @@ def test_registered_agent_model_infers_provider_over_agent_provider(tmp_path) ->
         agent_db_path=tmp_path / "agent.db",
     )
 
-    agent = create_agent(
-        settings=settings,
-        cwd=tmp_path,
-        model=None,
-        profile=None,
-        dry_run=True,
-        max_steps=1,
-    )
+    with pytest.warns(RuntimeWarning, match="no fallback model configured"):
+        agent = create_agent(
+            settings=settings,
+            cwd=tmp_path,
+            model=None,
+            profile=None,
+            dry_run=True,
+            max_steps=1,
+        )
 
     assert agent.model_client.model == "qwen/qwen3-coder"
     assert agent.model_client.provider_name == "openrouter"

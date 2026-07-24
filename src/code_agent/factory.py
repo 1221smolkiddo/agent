@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from collections.abc import Callable
-import logging
+import warnings
 
 from .agent import CodingAgent
 from .execution_host import ExecutionRuntimeHost, ModelPlanProvider
@@ -29,8 +29,6 @@ from .status import StatusReporter
 from .tools import ToolRegistry
 from .sandbox_security import resolve_sandbox_policy
 
-logger = logging.getLogger(__name__)
-
 
 def create_agent(
     settings: Settings,
@@ -55,9 +53,11 @@ def create_agent(
     durable_goal: str | None = None,
 ) -> CodingAgent:
     if not settings.fallback_model_list:
-        logger.info(
+        warnings.warn(
             "Agent47 has no fallback model configured. A transient provider failure will stop "
-            "the run. Set AGENT_FALLBACK_MODELS to enable provider handoff."
+            "the run. Set AGENT_FALLBACK_MODELS to enable provider handoff.",
+            RuntimeWarning,
+            stacklevel=2,
         )
     workspace = cwd.resolve()
     configured_preset = None if model or provider else settings.agent_model_preset
