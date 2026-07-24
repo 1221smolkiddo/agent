@@ -1,4 +1,5 @@
 from pathlib import Path
+import shutil
 from code_agent.evals import builtin_fixture_eval_cases, _make_fixture_agent, _write_fixture_files, ScriptedModel
 from code_agent.tools import ToolRegistry
 
@@ -7,7 +8,6 @@ case = next(c for c in builtin_fixture_eval_cases() if c.name == 'recover_after_
 # Create workspace dir
 workspace = Path('debug_workspace')
 if workspace.exists():
-    import shutil
     shutil.rmtree(workspace)
 workspace.mkdir()
 
@@ -37,5 +37,4 @@ print('\nmathlib.py content:\n')
 print((workspace / 'mathlib.py').read_text())
 
 # cleanup
-import shutil
 shutil.rmtree(workspace)
