@@ -38,7 +38,10 @@ def test_openai_fallback_still_works_when_openrouter_key_is_missing() -> None:
     assert settings.model_headers == {}
 
 
-def test_gemini_provider_uses_openai_compatible_endpoint() -> None:
+def test_gemini_provider_uses_openai_compatible_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "code_agent.credentials.keyring.CredentialStore.get_provider_key", lambda self, p: None
+    )
     settings = Settings(_env_file=None, agent_provider="gemini", gemini_api_key="gemini-key")
 
     assert settings.provider_name == "gemini"
@@ -65,7 +68,10 @@ def test_nvidia_provider_uses_nim_openai_compatible_endpoint() -> None:
     assert settings.model_headers == {}
 
 
-def test_missing_provider_key_has_targeted_error() -> None:
+def test_missing_provider_key_has_targeted_error(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "code_agent.credentials.keyring.CredentialStore.get_provider_key", lambda self, p: None
+    )
     settings = Settings(_env_file=None, agent_provider="gemini", gemini_api_key=None)
 
     with pytest.raises(RuntimeError, match="GEMINI_API_KEY is required"):
@@ -267,6 +273,9 @@ def test_registered_chat_model_infers_provider_over_agent_provider() -> None:
 
 def test_preset_missing_key_has_targeted_error(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "code_agent.credentials.keyring.CredentialStore.get_provider_key", lambda self, p: None
+    )
     settings = Settings(
         _env_file=None,
         openrouter_api_key="router-key",
