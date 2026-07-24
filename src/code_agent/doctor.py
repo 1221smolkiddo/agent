@@ -81,7 +81,18 @@ class DoctorReport:
             "",
             "Checks:",
         ]
-        status_icons = {"pass": "✓", "warn": "⚠", "fail": "✗"}
+        use_unicode = True
+        try:
+            encoding = getattr(sys.stdout, "encoding", None) or "ascii"
+            "✓".encode(encoding)
+        except (UnicodeEncodeError, LookupError):
+            use_unicode = False
+
+        status_icons = (
+            {"pass": "✓", "warn": "⚠", "fail": "✗"}
+            if use_unicode
+            else {"pass": "[OK]", "warn": "[!]", "fail": "[X]"}
+        )
         for check in self.checks:
             icon = status_icons.get(check.status, "?")
             suffix = f"  Hint: {check.hint}" if check.hint else ""
@@ -89,7 +100,11 @@ class DoctorReport:
         return "\n".join(lines)
 
 
-def run_doctor(cwd: Path | None = None, settings: Settings | None = None) -> DoctorReport:
+def run_doctor(
+    cwd: Path | None = None,
+    settings: Settings | None = None,
+    include_performance: bool = False,
+) -> DoctorReport:
     workspace = (cwd or Path.cwd()).resolve()
     config = settings or Settings()
     checks = [
@@ -124,6 +139,8 @@ def run_doctor(cwd: Path | None = None, settings: Settings | None = None) -> Doc
         _check_internet(),
         _check_provider_reachability(config),
     ]
+    if include_performance:
+        checks.extend(_check_performance_metrics(workspace, config))
     return DoctorReport(
         platform=f"{platform.system()} {platform.release()}",
         python=sys.version.split()[0],
@@ -591,3 +608,39 @@ def _check_provider_reachability(settings: Settings) -> DoctorCheck:
             f"could not reach {host}:443",
             "Check your network or firewall settings.",
         )
+
+
+def _check_performance_metrics(workspace: Path, config: Settings) -> list[DoctorCheck]:
+    import subprocess
+    import time
+    checks = []
+
+    # 1. Storage Connection & Init Latency
+    t0 = time.perf_counter()
+    try:
+        _ = AgentStorage(config.agent_db_path)
+        dur = (time.perf_counter() - t0) * 1000
+        checks.append(DoctorCheck("perf-storage", "pass" if dur < 150 else "warn", f"Storage connection/init: {dur:.2f}ms"))
+    except Exception as exc:
+        checks.append(DoctorCheck("perf-storage", "warn", f"Storage performance check failed: {exc}"))
+
+    # 2. Repo Indexing Speed
+    t0 = time.perf_counter()
+    try:
+        from .repo_index import index_repo
+        files = index_repo(workspace)
+        dur = (time.perf_counter() - t0) * 1000
+        checks.append(DoctorCheck("perf-repo-index", "pass" if dur < 1000 else "warn", f"Indexed {len(files)} files in {dur:.2f}ms"))
+    except Exception as exc:
+        checks.append(DoctorCheck("perf-repo-index", "warn", f"Repo index performance check failed: {exc}"))
+
+    # 3. Process Spawn Overhead
+    t0 = time.perf_counter()
+    try:
+        subprocess.run(["git", "--version"], capture_output=True, text=True, check=False)
+        dur = (time.perf_counter() - t0) * 1000
+        checks.append(DoctorCheck("perf-process-spawn", "pass" if dur < 250 else "warn", f"Subprocess spawn latency: {dur:.2f}ms"))
+    except Exception as exc:
+        checks.append(DoctorCheck("perf-process-spawn", "warn", f"Process spawn check failed: {exc}"))
+
+    return checks

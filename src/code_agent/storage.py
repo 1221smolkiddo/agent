@@ -234,11 +234,16 @@ class AgentStorage:
         conn.row_factory = sqlite3.Row
         conn.execute("pragma foreign_keys = on")
         conn.execute("pragma busy_timeout = 30000")
+        if str(self.db_path) == ":memory:" or self.db_path.name == "eval.db":
+            conn.execute("pragma synchronous = OFF")
         return conn
 
     def _init_db(self) -> None:
         with self._connect() as conn:
-            conn.execute("pragma journal_mode = wal")
+            if str(self.db_path) == ":memory:" or self.db_path.name == "eval.db":
+                conn.execute("pragma journal_mode = MEMORY")
+            else:
+                conn.execute("pragma journal_mode = wal")
             self._migrate(conn)
 
     def _restrict_database_permissions(self) -> None:

@@ -1145,9 +1145,11 @@ def doctor_command(
     cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Workspace directory to check."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
     strict: bool = typer.Option(False, "--strict", help="Exit nonzero on warnings as well as failures."),
+    performance: bool = typer.Option(False, "--performance", help="Run runtime performance profiling diagnostics."),
 ) -> None:
-    """Check local install, platform, tools, and configuration."""
-    report = run_doctor(cwd=cwd)
+    """Check local install, platform, tools, configuration, and performance."""
+    kwargs = {"include_performance": True} if performance else {}
+    report = run_doctor(cwd=cwd, **kwargs)
     typer.echo(report.to_json() if json_output else report.format_text())
     if not report.ok or (strict and report.has_warnings):
         raise typer.Exit(code=1)
