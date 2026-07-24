@@ -319,6 +319,8 @@ class ExecutionProjection:
     model_decisions: list[dict[str, Any]] = field(default_factory=list)
     memory_records: list[dict[str, Any]] = field(default_factory=list)
     critiques: list[dict[str, Any]] = field(default_factory=list)
+    active_profile: dict[str, Any] | None = None
+    stats: dict[str, Any] | None = None
     created_at: str = ""
     updated_at: str = ""
 
@@ -710,6 +712,12 @@ class ProjectionBuilder:
             state.memory_records.append(dict(p))
         elif kind == "CritiqueRecorded":
             state.critiques.append(dict(p))
+        elif kind == "ProfileConfigured":
+            state.active_profile = dict(p.get("profile", p))
+        elif kind == "ProfileEscalated":
+            state.active_profile = dict(p.get("profile", p))
+        elif kind == "ExecutionStatsRecorded":
+            state.stats = dict(p.get("stats", p))
         elif kind == "CheckpointCreated":
             state.checkpoints.append(dict(p))
         elif kind == "ExecutionPaused":
@@ -847,6 +855,9 @@ class ExecutionEngine:
             "ReleaseBudget": self._release_budget, "RecordModelRoute": self._model_route,
             "RecordMemory": self._record_memory,
             "RecordCritique": self._record_critique,
+            "ConfigureProfile": self._configure_profile,
+            "EscalateProfile": self._escalate_profile,
+            "RecordExecutionStats": self._record_execution_stats,
         }
         if t in handlers:
             return handlers[t](state, p)
@@ -1232,6 +1243,26 @@ class ExecutionEngine:
     @staticmethod
     def _record_critique(_state: ExecutionProjection, p: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
         return [("CritiqueRecorded", {**p, "critique_id": p.get("critique_id") or _id("critique")})]
+
+    @staticmethod
+    def _configure_profile(_state: ExecutionProjection, p: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+        if "profile" not in p or not isinstance(p["profile"], dict):
+            raise InvariantError("ConfigureProfile requires a profile dict.")
+        return [("ProfileConfigured", dict(p))]
+
+    @staticmethod
+    def _escalate_profile(state: ExecutionProjection, p: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+        if "profile" not in p or not isinstance(p["profile"], dict):
+            raise InvariantError("EscalateProfile requires a profile dict.")
+        if state.active_profile is None:
+            raise InvariantError("Cannot escalate before a profile is configured.")
+        return [("ProfileEscalated", {**p, "previous_complexity": state.active_profile.get("complexity", "unknown")})]
+
+    @staticmethod
+    def _record_execution_stats(_state: ExecutionProjection, p: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+        if "stats" not in p or not isinstance(p["stats"], dict):
+            raise InvariantError("RecordExecutionStats requires a stats dict.")
+        return [("ExecutionStatsRecorded", dict(p))]
 
 
 class SchedulingPolicy:
@@ -1721,21 +1752,101 @@ class DurableExecutionRuntime:
         self.compressor = ContextCompressor()
         self.critic = SelfCritic()
         self.trace = ExecutionTrace(self.store)
+        # Adaptive execution profile components
+        from .execution_profiles import (
+            ComplexityAssessor,
+            ExecutionPolicySelector,
+            ProfileEscalator,
+            TaskIntent,
+        )
+        self.complexity_assessor = ComplexityAssessor()
+        self.policy_selector = ExecutionPolicySelector(assessor=self.complexity_assessor)
+        self.profile_escalator = ProfileEscalator()
 
     def create_planned(
         self, goal: str, *, tasks: list[dict[str, Any]] | None = None,
         budgets: dict[str, float] | None = None,
         compatibility_version: str = CURRENT_COMPATIBILITY_VERSION,
+        intent: "TaskIntent | None" = None,
+        profile_overrides: dict[str, Any] | None = None,
     ) -> str:
+        from .execution_profiles import TaskIntent as _TaskIntent
+
+        task_intent = intent or _TaskIntent(goal=goal)
+
+        # Run complexity assessment and select profile inside the runtime
+        profile, signals = self.policy_selector.select(task_intent, overrides=profile_overrides)
+
+        # Use profile budgets unless caller provided explicit overrides
+        effective_budgets = budgets if budgets else profile.budgets.to_engine_budgets()
+
         execution_id = self.engine.create(
-            goal, budgets=budgets, compatibility_version=compatibility_version
+            goal, budgets=effective_budgets, compatibility_version=compatibility_version
         )
+
+        # Record the selected profile as a durable event
+        self.engine.dispatch(Command("ConfigureProfile", execution_id, {
+            "profile": profile.as_dict(),
+            "signals": {"composite": signals.composite, "prompt": signals.prompt,
+                        "symbols": signals.symbols, "dependency_radius": signals.dependency_radius,
+                        "tools": signals.tools, "verification": signals.verification},
+        }))
+
         plan = self.planner.decompose(goal, tasks)
         self.engine.dispatch(Command("MutateGraph", execution_id, {
             "base_version": 0, "operation": "insert", "tasks": plan,
             "rationale": "goal decomposition", "affected_subtree": None,
         }))
         return execution_id
+
+    def escalate_profile(
+        self, execution_id: str, *,
+        affected_files: int = 0,
+        test_failures: int = 0,
+        graph_size: int = 0,
+        budget_utilization: float = 0.0,
+    ) -> bool:
+        """Evaluate and apply profile escalation, returning True if escalated."""
+        from .execution_profiles import ExecutionComplexity
+
+        state = self.engine.state(execution_id)
+        if state.active_profile is None:
+            return False
+
+        current = ExecutionComplexity(state.active_profile.get("complexity", "medium"))
+        target, trigger = self.profile_escalator.evaluate(
+            current,
+            affected_files=affected_files,
+            test_failures=test_failures,
+            graph_size=graph_size,
+            budget_utilization=budget_utilization,
+        )
+        if target is None or trigger is None:
+            return False
+
+        new_profile = self.policy_selector.for_complexity(target)
+
+        # Expand budgets to match the new profile
+        for kind, limit in new_profile.budgets.to_engine_budgets().items():
+            current_budget = state.budgets.get("execution")
+            if current_budget and current_budget.limits.get(kind, 0) < limit:
+                self.engine.dispatch(Command("ConfigureBudget", execution_id, {
+                    "scope": "execution", "limits": {kind: limit},
+                }))
+
+        self.engine.dispatch(Command("EscalateProfile", execution_id, {
+            "profile": new_profile.as_dict(),
+            "trigger": {"reason": trigger.reason, "affected_files": trigger.affected_files,
+                        "test_failures": trigger.test_failures, "graph_growth": trigger.graph_growth,
+                        "budget_pressure": trigger.budget_pressure},
+        }))
+        return True
+
+    def record_execution_stats(
+        self, execution_id: str, stats: dict[str, Any]
+    ) -> None:
+        """Record final execution statistics for future complexity feedback."""
+        self.engine.dispatch(Command("RecordExecutionStats", execution_id, {"stats": stats}))
 
     def recover(
         self, execution_id: str, *, reconcile_orphaned_effects: bool = True
@@ -2042,6 +2153,8 @@ def projection_from_dict(raw: dict[str, Any]) -> ExecutionProjection:
     state.model_decisions = list(raw.get("model_decisions", []))
     state.memory_records = list(raw.get("memory_records", []))
     state.critiques = list(raw.get("critiques", []))
+    state.active_profile = raw.get("active_profile")
+    state.execution_stats = raw.get("execution_stats")
     return state
 
 

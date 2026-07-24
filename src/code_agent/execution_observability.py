@@ -22,7 +22,7 @@ class ExecutionInspector:
         self.trace = ExecutionTrace(store)
 
     def explain(self, state: ExecutionProjection) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "execution": self.summary(state),
             "blocked": self.blockers(state),
             "unsatisfied_criteria": self.unsatisfied_criteria(state),
@@ -31,6 +31,13 @@ class ExecutionInspector:
             "recent_replans": self.replans(state.id)[-10:],
             "model_decisions": state.model_decisions[-20:],
         }
+        if state.active_profile:
+            result["active_profile"] = state.active_profile
+            result["execution_profile"] = state.active_profile
+        if state.stats:
+            result["stats"] = state.stats
+            result["execution_stats"] = state.stats
+        return result
 
     @staticmethod
     def summary(state: ExecutionProjection) -> dict[str, Any]:

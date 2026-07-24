@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from .durable_execution import Command, ExecutionEngine, ExecutionProjection, InvariantError
+from .execution_profiles import PlanningPolicy
 
 
 MutationOperation = Literal[
@@ -55,18 +56,31 @@ class MutationOnlyPlanner:
         "insert", "delete", "split", "merge", "update", "change_dependencies",
     })
 
-    def initial(self, goal: str, tasks: list[dict[str, Any]]) -> GraphMutationProposal:
+    def initial(
+        self, goal: str, tasks: list[dict[str, Any]],
+        policy: PlanningPolicy | None = None,
+    ) -> GraphMutationProposal:
         if not tasks:
             tasks = [{"id": "task-root", "title": goal, "criteria": [f"Goal achieved: {goal}"]}]
+        effective_policy = policy or PlanningPolicy()
+        # Enforce planner depth (0 = unlimited)
+        if effective_policy.depth > 0:
+            tasks = tasks[: effective_policy.max_graph_size]
         return GraphMutationProposal(
             "insert", "initial goal decomposition", None,
             tasks=tuple(self._validate_tasks(tasks)),
         )
 
-    def parse(self, raw: dict[str, Any], state: ExecutionProjection) -> GraphMutationProposal:
+    def parse(
+        self, raw: dict[str, Any], state: ExecutionProjection,
+        policy: PlanningPolicy | None = None,
+    ) -> GraphMutationProposal:
+        effective_policy = policy or PlanningPolicy()
         operation = str(raw.get("operation", ""))
         if operation not in self.OPERATIONS:
             raise ValueError("Planner output must be a supported graph mutation, not a full graph.")
+        if effective_policy.replanning_mode == "disabled" and state.graph_version:
+            raise ValueError("Replanning is disabled by the current planning policy.")
         proposal = GraphMutationProposal(
             operation=operation,  # type: ignore[arg-type]
             rationale=str(raw.get("rationale") or "planner mutation"),
@@ -101,11 +115,18 @@ class MutationOnlyPlanner:
 
 
 class PlanningService:
-    def __init__(self, engine: ExecutionEngine, planner: MutationOnlyPlanner | None = None) -> None:
+    def __init__(
+        self, engine: ExecutionEngine, planner: MutationOnlyPlanner | None = None,
+        policy: PlanningPolicy | None = None,
+    ) -> None:
         self.engine = engine
         self.planner = planner or MutationOnlyPlanner()
+        self.policy = policy
 
-    def apply(self, execution_id: str, proposal: GraphMutationProposal) -> int:
+    def apply(
+        self, execution_id: str, proposal: GraphMutationProposal,
+        policy: PlanningPolicy | None = None,
+    ) -> int:
         state = self.engine.state(execution_id)
         events = self.engine.dispatch(Command(
             "MutateGraph", execution_id, proposal.command_payload(state.graph_version),

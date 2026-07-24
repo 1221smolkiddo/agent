@@ -103,6 +103,8 @@ class StatusReporter:
         # for the model, a single Thinking spinner is calmer and avoids noise.
         if self._stages and not self._is_generating:
             prog = Text()
+            if hasattr(self, "_active_profile") and self._active_profile:
+                prog.append(f"[{self._active_profile.upper()}] ", style="bold magenta")
             prog.append("Progress:\n", style="muted")
             for stage, status in self._stages[-8:]:
                 if status == "done":
@@ -117,6 +119,10 @@ class StatusReporter:
             lines.append(prog)
 
         return Group(*lines)
+
+    def set_profile(self, profile: str) -> None:
+        self._active_profile = profile
+        self._update()
 
     def _update(self) -> None:
         if self._stopped or self._paused:

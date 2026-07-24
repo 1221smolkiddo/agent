@@ -642,12 +642,31 @@ def execution_create_command(
     db: Optional[Path] = typer.Option(None, "--db", help="Execution event database."),
     token_budget: int = typer.Option(100_000, "--token-budget", min=1),
     dollar_budget: float = typer.Option(25.0, "--dollar-budget", min=0),
+    profile: str = typer.Option("auto", "--profile", help="Execution profile: auto, simple, medium, complex."),
 ) -> None:
     """Create an event-sourced execution with an initial root task."""
+    from .execution_profiles import ExecutionComplexity, TaskIntent
+
     runtime = _execution_runtime(db)
-    execution_id = runtime.create_planned(
-        goal, budgets={"tokens": token_budget, "dollars": dollar_budget}
-    )
+
+    explicit_complexity: ExecutionComplexity | None = None
+    if profile.lower() != "auto":
+        explicit_complexity = ExecutionComplexity(profile.lower())
+
+    intent = TaskIntent(goal=goal, explicit_complexity=explicit_complexity)
+
+    # When explicit budgets are given, pass them through; otherwise let the profile decide
+    budgets: dict[str, float] | None = None
+    if token_budget != 100_000 or dollar_budget != 25.0:
+        budgets = {"tokens": token_budget, "dollars": dollar_budget}
+
+    execution_id = runtime.create_planned(goal, budgets=budgets, intent=intent)
+
+    state = runtime.engine.state(execution_id)
+    if state.active_profile:
+        complexity = state.active_profile.get("complexity", "unknown").upper()
+        typer.echo(f"Execution Profile: {complexity}")
+
     typer.echo(execution_id)
 
 
