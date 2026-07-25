@@ -58,7 +58,7 @@ class PlatformRuntime:
         )
         if trust_workspace_extensions:
             runtime._discover_plugins()
-            runtime._configure_mcp()
+            runtime.configure_mcp()
             runtime.mcp.start_enabled()
         runtime.hooks.emit("agent.startup", {"workspace": str(root)})
         return runtime
@@ -113,7 +113,7 @@ class PlatformRuntime:
         for path in manifests:
             self.plugins.load(path)
 
-    def _configure_mcp(self) -> None:
+    def configure_mcp(self) -> None:
         path = self.workspace / ".agents" / "mcp.json"
         if not path.exists():
             return

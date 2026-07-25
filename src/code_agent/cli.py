@@ -120,6 +120,7 @@ platform_app = typer.Typer(help="Inspect dynamic tools, skills, agents, plugins,
 execution_app = typer.Typer(help="Create, inspect, control, checkpoint, and replay durable executions.")
 keys_app = typer.Typer(help="Manage API keys in the operating system credential store.", invoke_without_command=True)
 auth_app = typer.Typer(help="Sign in, sign out, and manage Google OAuth authentication.")
+mcp_app = typer.Typer(help="Inspect Model Context Protocol (MCP) servers and tools.")
 app.add_typer(history_app, name="history")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(collab_app, name="collab")
@@ -130,6 +131,7 @@ app.add_typer(platform_app, name="platform")
 app.add_typer(execution_app, name="execution")
 app.add_typer(keys_app, name="keys")
 app.add_typer(auth_app, name="auth")
+app.add_typer(mcp_app, name="mcp")
 
 
 def validate_profile_option(value: Optional[str]) -> Optional[str]:
@@ -2161,6 +2163,128 @@ def history_prune(
         raise typer.Exit(code=1)
     deleted = AgentStorage(Settings().agent_db_path).prune_runs(keep_last)
     typer.echo(f"Deleted {deleted} old run(s); retained the newest {keep_last}.")
+
+
+@mcp_app.command("list")
+def mcp_list() -> None:
+    """List configured MCP servers."""
+    import json
+    from pathlib import Path
+    from rich.console import Console
+
+    console = Console()
+    path = Path(".agents/mcp.json")
+    if not path.exists():
+        console.print("No MCP configuration found at [bold].agents/mcp.json[/bold].")
+        return
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        console.print(f"[red]Failed to parse .agents/mcp.json: {exc}[/red]")
+        return
+
+    servers = payload.get("servers", {})
+    if not isinstance(servers, dict) or not servers:
+        console.print("No servers configured in [bold].agents/mcp.json[/bold].")
+        return
+
+    console.print("\n[bold]Configured Servers[/bold]\n")
+    for name, config in servers.items():
+        if not isinstance(config, dict):
+            continue
+        enabled = config.get("enabled", True)
+        status_icon = "[green]✓[/green]" if enabled else "[red]✗[/red]"
+        console.print(f"{status_icon} [bold]{name}[/bold]")
+
+        command = config.get("command", [])
+        if command:
+            cmd_str = " ".join(str(c) for c in command)
+            console.print(f"    Command:\n        {cmd_str}")
+
+        console.print(f"\n    Enabled:\n        {'Yes' if enabled else 'No'}")
+        console.print(f"\n    Working Directory:\n        {Path.cwd().resolve()}\n")
+
+    console.print("Configuration File:\n    .agents/mcp.json\n")
+
+
+@mcp_app.command("status")
+def mcp_status() -> None:
+    """Display runtime information for every configured server."""
+    from pathlib import Path
+    from rich.console import Console
+    from rich.table import Table
+    from .platform_runtime import PlatformRuntime
+
+    console = Console()
+    runtime = PlatformRuntime.create(Path.cwd(), trust_workspace_extensions=False)
+    try:
+        runtime.configure_mcp()
+
+        status_info = runtime.mcp.status()
+        if not status_info:
+            console.print("No servers configured.")
+            return
+
+        table = Table(title="MCP Server Status")
+        table.add_column("Server", style="bold")
+        table.add_column("Enabled")
+        table.add_column("Connected")
+        table.add_column("Status")
+
+        for info in status_info:
+            name = info.get("name", "Unknown")
+            client = runtime.mcp.clients.get(name)
+            enabled_str = "Yes" if (client and client.config.enabled) else "No"
+            connected = info.get("connected")
+            connected_str = "Yes" if connected else "No"
+
+            if not connected:
+                health = "Not running"
+            else:
+                health_data = info.get("health")
+                if isinstance(health_data, tuple) and len(health_data) == 2:
+                    health = health_data[1]
+                else:
+                    health = str(health_data) if health_data is not None else "Not running"
+
+            table.add_row(name, enabled_str, connected_str, health)
+
+        console.print(table)
+    finally:
+        runtime.close()
+
+
+@mcp_app.command("tools")
+def mcp_tools() -> None:
+    """List every currently registered MCP tool."""
+    from pathlib import Path
+    from rich.console import Console
+    from .platform_runtime import PlatformRuntime
+
+    console = Console()
+    runtime = PlatformRuntime.create(Path.cwd(), trust_workspace_extensions=False)
+    try:
+        runtime.configure_mcp()
+
+        tools = [t for t in runtime.tools.discover() if t.get("namespace", "").startswith("mcp-")]
+
+        if not tools:
+            console.print("No MCP tools currently registered.\nStart the server to discover tools.")
+            return
+
+        console.print("\n[bold]Registered MCP Tools[/bold]\n")
+        grouped = {}
+        for t in tools:
+            grouped.setdefault(t["namespace"], []).append(t)
+
+        for namespace, namespace_tools in sorted(grouped.items()):
+            console.print(f"[cyan]{namespace}[/cyan]")
+            for t in namespace_tools:
+                console.print(f"    [bold]{t['name']}[/bold]: {t.get('description', '')}")
+            console.print("")
+    finally:
+        runtime.close()
 
 
 def main() -> None:
