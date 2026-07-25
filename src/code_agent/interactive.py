@@ -484,7 +484,8 @@ def handle_command(
             info = (
                 f"Current Mode\n  • {current_str}\n\n"
                 "Available Modes\n  • unified\n  • side-by-side\n\n"
-                "Usage\n  /diff-mode unified\n  /diff-mode side-by-side"
+                "Usage\n  /diff-mode unified\n  /diff-mode side-by-side\n\n"
+                "Tip\n  Press TAB while viewing a diff to switch modes temporarily."
             )
             print_panel("Diff Viewer", info)
         else:

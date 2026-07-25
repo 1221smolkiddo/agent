@@ -325,49 +325,87 @@ def render_line_row(row: LineRow) -> Text:
     return rendered
 
 
+@dataclass(frozen=True)
+class SideBySideRow:
+    """Aligned pair of left (old) and right (new) columns for side-by-side view."""
+
+    left_number: int | None
+    left_text: str
+    left_kind: str  # "context", "removed", "empty"
+    right_number: int | None
+    right_text: str
+    right_kind: str  # "context", "added", "empty"
+    source_row: LineRow
+
+    @classmethod
+    def from_line_row(cls, row: LineRow) -> SideBySideRow:
+        if row.line_kind == "context":
+            return cls(
+                left_number=row.old_line_number,
+                left_text=row.text,
+                left_kind="context",
+                right_number=row.new_line_number,
+                right_text=row.text,
+                right_kind="context",
+                source_row=row,
+            )
+        elif row.line_kind == "removed":
+            return cls(
+                left_number=row.old_line_number,
+                left_text=row.text,
+                left_kind="removed",
+                right_number=None,
+                right_text="",
+                right_kind="empty",
+                source_row=row,
+            )
+        else:
+            return cls(
+                left_number=None,
+                left_text="",
+                left_kind="empty",
+                right_number=row.new_line_number,
+                right_text=row.text,
+                right_kind="added",
+                source_row=row,
+            )
+
+
 def render_side_by_side_line_row(
-    row: LineRow,
+    sbs_row: SideBySideRow,
     column_width: int,
 ) -> Text:
-    """Render one LineRow in side-by-side format (old file left, new file right)."""
+    """Render one SideBySideRow in side-by-side format (old file left, new file right)."""
     rendered = Text()
-    code_width = max(1, column_width - 7)  # 4 line num + 1 space + 2 sign = 7
+    code_width = max(1, column_width - 7)  # 4 digits + 1 space + 2 sign/space = 7
 
-    if row.line_kind == "context":
-        old_num = f"{row.old_line_number:>4}" if row.old_line_number is not None else "    "
-        new_num = f"{row.new_line_number:>4}" if row.new_line_number is not None else "    "
-        old_txt = _truncate_text(row.text, code_width)
-        new_txt = _truncate_text(row.text, code_width)
+    left = Text()
+    if sbs_row.left_kind == "empty":
+        left.append(" " * column_width)
+    else:
+        old_num = f"{sbs_row.left_number:>4}" if sbs_row.left_number is not None else "    "
+        old_txt = _truncate_text(sbs_row.left_text, code_width)
+        if sbs_row.left_kind == "removed":
+            left.append(f"{old_num} ", style="bright_black")
+            left.append("- ", style="bold red")
+            left.append(old_txt.ljust(code_width), style="red")
+        else:
+            left.append(f"{old_num}   ", style="bright_black")
+            left.append(old_txt.ljust(code_width), style="dim")
 
-        left = Text()
-        left.append(f"{old_num}   ", style="bright_black")
-        left.append(old_txt.ljust(code_width), style="dim")
-
-        right = Text()
-        right.append(f"{new_num}   ", style="bright_black")
-        right.append(new_txt.ljust(code_width), style="dim")
-
-    elif row.line_kind == "removed":
-        old_num = f"{row.old_line_number:>4}" if row.old_line_number is not None else "    "
-        old_txt = _truncate_text(row.text, code_width)
-
-        left = Text()
-        left.append(f"{old_num} ", style="bright_black")
-        left.append("- ", style="bold red")
-        left.append(old_txt.ljust(code_width), style="red")
-
-        right = Text(" " * column_width)
-
-    elif row.line_kind == "added":
-        new_num = f"{row.new_line_number:>4}" if row.new_line_number is not None else "    "
-        new_txt = _truncate_text(row.text, code_width)
-
-        left = Text(" " * column_width)
-
-        right = Text()
-        right.append(f"{new_num} ", style="bright_black")
-        right.append("+ ", style="bold green")
-        right.append(new_txt.ljust(code_width), style="green")
+    right = Text()
+    if sbs_row.right_kind == "empty":
+        right.append(" " * column_width)
+    else:
+        new_num = f"{sbs_row.right_number:>4}" if sbs_row.right_number is not None else "    "
+        new_txt = _truncate_text(sbs_row.right_text, code_width)
+        if sbs_row.right_kind == "added":
+            right.append(f"{new_num} ", style="bright_black")
+            right.append("+ ", style="bold green")
+            right.append(new_txt.ljust(code_width), style="green")
+        else:
+            right.append(f"{new_num}   ", style="bright_black")
+            right.append(new_txt.ljust(code_width), style="dim")
 
     rendered.append_text(left)
     rendered.append(" │ ", style="bright_black")
@@ -407,7 +445,7 @@ def render_sticky_header(
         "Side-by-Side" if state.view_mode == DiffViewMode.SIDE_BY_SIDE else "Unified"
     )
     if is_narrow:
-        mode_label += " (Narrow terminal fallback)"
+        mode_label += " (fallback: width < 70)"
 
     body = Text()
     body.append("Agent47 Diff Viewer", style="bold")
@@ -417,7 +455,9 @@ def render_sticky_header(
     )
     body.append(f"File: {filename}\n", style="cyan")
     body.append(f"Hunk: {current_hunk} / {total_hunks}\n", style="yellow")
-    body.append(f"Rows: {model.row_count}\n", style="bright_black")
+    body.append(
+        f"Rows: {state.cursor_row + 1} / {model.row_count}\n", style="bright_black"
+    )
     body.append("Press TAB to toggle mode  |  Press q to exit", style="dim")
     return Panel(body, border_style="bright_black", padding=(0, 1))
 
@@ -454,7 +494,8 @@ def render_side_by_side_viewport(
         row = model.rows[index]
         is_highlight = index == state.cursor_row
         if isinstance(row, LineRow):
-            rendered = render_side_by_side_line_row(row, col_width)
+            sbs_row = SideBySideRow.from_line_row(row)
+            rendered = render_side_by_side_line_row(sbs_row, col_width)
             if is_highlight:
                 rendered.stylize("reverse")
             lines.append(rendered)

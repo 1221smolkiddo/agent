@@ -313,7 +313,8 @@ def test_render_sticky_header_contains_status_fields() -> None:
     assert "Agent47 Diff Viewer" in text
     assert "File:" in text
     assert "Hunk:" in text
-    assert f"Rows: {model.row_count}" in text
+    assert "Rows:" in text
+    assert f"{model.row_count}" in text
     assert "Press q to exit" in text
 
 
@@ -454,4 +455,5 @@ def test_terminal_width_fallback_when_narrow() -> None:
         narrow_console.print(render_screen(model, state, console=narrow_console))
 
     text = capture.get()
-    assert "Narrow" in text and "fallback" in text
+    assert "fallback" in text
+    assert state.view_mode == DiffViewMode.SIDE_BY_SIDE
