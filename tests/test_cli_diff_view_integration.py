@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
 from rich.console import Console
 
 from code_agent.command_registry import build_default_registry
@@ -233,3 +236,39 @@ def test_diff_mode_command_handling() -> None:
         session_state=session,
     )
     assert session.preferred_diff_mode == DiffViewMode.SIDE_BY_SIDE
+
+
+@pytest.mark.parametrize("preferred_mode", ["side-by-side", "unified"])
+def test_diff_view_command_forwards_session_preferred_mode(monkeypatch, preferred_mode) -> None:
+    from code_agent.diff_types import DiffViewMode
+
+    session = SessionState()
+    session.set_preferred_diff_mode(preferred_mode)
+    session.set_last_diff(SAMPLE_PATCH_A)
+
+    calls: list[dict[str, object]] = []
+
+    def fake_launch_diff_viewer(diff_text, *, mode=None, console=None, read_key=None):
+        calls.append({"diff_text": diff_text, "mode": mode, "console": console})
+        return SimpleNamespace(success=True)
+
+    monkeypatch.setattr("code_agent.interactive.launch_diff_viewer", fake_launch_diff_viewer)
+
+    handle_command(
+        "/diff-view",
+        settings=None,  # type: ignore[arg-type]
+        base_cwd=None,  # type: ignore[arg-type]
+        cwd=None,  # type: ignore[arg-type]
+        model=None,
+        profile=None,
+        dry_run=False,
+        stream_model=False,
+        sandbox_enabled=False,
+        max_steps=10,
+        max_failures=None,
+        session_state=session,
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["diff_text"] == SAMPLE_PATCH_A
+    assert calls[0]["mode"] == DiffViewMode.normalize(preferred_mode)
