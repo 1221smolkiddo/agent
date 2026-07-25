@@ -42,8 +42,8 @@ def reconstruct_selected_patch(diff_text: str, review: DiffReviewResult) -> str:
         if line.startswith("diff --git "):
             line_idx += 1
             while line_idx < len(clean_lines):
-                l = clean_lines[line_idx]
-                if l.startswith("@@ ") or l.startswith("--- ") or l.startswith("diff --git "):
+                line = clean_lines[line_idx]
+                if line.startswith("@@ ") or line.startswith("--- ") or line.startswith("diff --git "):
                     break
                 line_idx += 1
 
@@ -52,8 +52,8 @@ def reconstruct_selected_patch(diff_text: str, review: DiffReviewResult) -> str:
                 if line_idx < len(clean_lines) and clean_lines[line_idx].startswith("+++ "):
                     line_idx += 1
                 while line_idx < len(clean_lines):
-                    l = clean_lines[line_idx]
-                    if l.startswith("@@ ") or l.startswith("--- ") or l.startswith("diff --git "):
+                    line = clean_lines[line_idx]
+                    if line.startswith("@@ ") or line.startswith("--- ") or line.startswith("diff --git "):
                         break
                     line_idx += 1
         elif line.startswith("--- "):
@@ -61,8 +61,8 @@ def reconstruct_selected_patch(diff_text: str, review: DiffReviewResult) -> str:
             if line_idx < len(clean_lines) and clean_lines[line_idx].startswith("+++ "):
                 line_idx += 1
             while line_idx < len(clean_lines):
-                l = clean_lines[line_idx]
-                if l.startswith("@@ ") or l.startswith("--- ") or l.startswith("diff --git "):
+                line = clean_lines[line_idx]
+                if line.startswith("@@ ") or line.startswith("--- ") or line.startswith("diff --git "):
                     break
                 line_idx += 1
 
@@ -89,10 +89,10 @@ def reconstruct_selected_patch(diff_text: str, review: DiffReviewResult) -> str:
 
             # Hunk lines
             while line_idx < len(clean_lines):
-                l = clean_lines[line_idx]
-                if not l:
+                line = clean_lines[line_idx]
+                if not line:
                     break
-                if l[0] in {" ", "+", "-", "\\"}:
+                if line[0] in {" ", "+", "-", "\\"}:
                     if is_accepted:
                         output.append(raw_lines[line_idx])
                     line_idx += 1
