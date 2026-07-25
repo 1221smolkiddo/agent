@@ -124,3 +124,23 @@ def test_mcp_tools_listing_offline(workspace: Path) -> None:
     assert result.exit_code == 0
     assert "No MCP tools currently registered." in result.stdout
     assert "Start the server to discover tools." in result.stdout
+
+def test_mcp_start_unknown_server(workspace: Path) -> None:
+    result = runner.invoke(app, ["mcp", "start", "unknown_server"])
+    assert result.exit_code == 1
+    assert 'Unknown MCP server "unknown_server".' in result.stdout
+    assert "Starting" not in result.stdout
+
+def test_mcp_stop_unknown_server(workspace: Path) -> None:
+    result = runner.invoke(app, ["mcp", "stop", "unknown_server"])
+    assert result.exit_code == 1
+    assert 'Unknown MCP server "unknown_server".' in result.stdout
+    assert "Stopping" not in result.stdout
+
+def test_mcp_restart_unknown_server(workspace: Path) -> None:
+    result = runner.invoke(app, ["mcp", "restart", "unknown_server"])
+    assert result.exit_code == 1
+    assert 'Unknown MCP server "unknown_server".' in result.stdout
+    assert "Restarting" not in result.stdout
+    assert "Stopping" not in result.stdout
+    assert "Starting" not in result.stdout

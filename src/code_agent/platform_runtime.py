@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .extensions import DynamicToolRegistry, LifecycleHooks, ToolMetadata
-from .mcp import McpManager, McpServerConfig
+from .mcp import McpManager, McpServerConfig, ReloadResult
 from .orchestration import AgentCatalog
 from .plugins import PluginManager
 from .skills import InstructionResolver, SkillCatalog
@@ -113,14 +113,16 @@ class PlatformRuntime:
         for path in manifests:
             self.plugins.load(path)
 
-    def configure_mcp(self) -> None:
+    def _parse_mcp_config(self) -> dict[str, McpServerConfig]:
         path = self.workspace / ".agents" / "mcp.json"
         if not path.exists():
-            return
+            return {}
         payload = json.loads(path.read_text(encoding="utf-8"))
         servers = payload.get("servers", {}) if isinstance(payload, dict) else {}
         if not isinstance(servers, dict):
             raise ValueError(".agents/mcp.json servers must be an object.")
+        
+        configs: dict[str, McpServerConfig] = {}
         for name, raw in servers.items():
             if not isinstance(raw, dict):
                 continue
@@ -133,16 +135,33 @@ class PlatformRuntime:
             for key in ["PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "HOME", "USERPROFILE", "TEMP", "TMP"]:
                 if key in os.environ:
                     env[key] = os.environ[key]
-            self.mcp.add(
-                McpServerConfig(
-                    name=str(name),
-                    command=tuple(str(item) for item in raw.get("command", [])),
-                    cwd=self.workspace,
-                    env=env,
-                    enabled=bool(raw.get("enabled", True)),
-                    timeout_seconds=float(raw.get("timeout_seconds", 30)),
-                    reconnect_attempts=int(raw.get("reconnect_attempts", 2)),
-                    auth_env_keys=auth_keys,
-                    allowed_tools=tuple(str(item) for item in raw.get("allowed_tools", [])),
-                )
+            configs[str(name)] = McpServerConfig(
+                name=str(name),
+                command=tuple(str(item) for item in raw.get("command", [])),
+                cwd=self.workspace,
+                env=env,
+                enabled=bool(raw.get("enabled", True)),
+                timeout_seconds=float(raw.get("timeout_seconds", 30)),
+                reconnect_attempts=int(raw.get("reconnect_attempts", 2)),
+                auth_env_keys=auth_keys,
+                allowed_tools=tuple(str(item) for item in raw.get("allowed_tools", [])),
             )
+        return configs
+
+    def configure_mcp(self) -> None:
+        configs = self._parse_mcp_config()
+        for config in configs.values():
+            self.mcp.add(config)
+
+    def start_mcp(self, name: str) -> dict[str, Any]:
+        return self.mcp.start(name)
+
+    def stop_mcp(self, name: str) -> bool:
+        return self.mcp.stop(name)
+
+    def restart_mcp(self, name: str) -> dict[str, Any]:
+        return self.mcp.restart(name)
+
+    def reload_mcp(self) -> ReloadResult:
+        configs = self._parse_mcp_config()
+        return self.mcp.reconcile(configs)

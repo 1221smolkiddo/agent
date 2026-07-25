@@ -14,6 +14,14 @@ from .schema import ToolResult
 
 
 @dataclass(frozen=True)
+class ReloadResult:
+    added: list[str]
+    removed: list[str]
+    modified: list[str]
+    unchanged: list[str]
+
+
+@dataclass(frozen=True)
 class McpServerConfig:
     name: str
     command: tuple[str, ...]
@@ -245,7 +253,11 @@ class McpManager:
         return client
 
     def start(self, name: str) -> dict[str, Any]:
+        if name not in self.clients:
+            raise KeyError(f"Unknown MCP server {name!r}.")
         client = self.clients[name]
+        if client.connected:
+            raise ValueError(f"Server {name!r} is already running.")
         handshake = client.connect()
         tools = client.register_tools(self.registry)
         return {"server": name, "handshake": handshake, "tools": tools}
@@ -253,15 +265,73 @@ class McpManager:
     def start_enabled(self) -> list[dict[str, Any]]:
         started: list[dict[str, Any]] = []
         for name, client in sorted(self.clients.items()):
-            if client.config.enabled:
+            if client.config.enabled and not client.connected:
                 started.append(self.start(name))
         return started
 
-    def stop(self, name: str) -> None:
+    def stop(self, name: str) -> bool:
+        if name not in self.clients:
+            raise KeyError(f"Unknown MCP server {name!r}.")
         client = self.clients[name]
+        was_connected = client.connected
         for item in list(self.registry.discover(namespace=f"mcp-{_safe_name(name)}")):
             self.registry.unregister(str(item["name"]))
         client.close()
+        return was_connected
+
+    def restart(self, name: str) -> dict[str, Any]:
+        self.stop(name)
+        return self.start(name)
+
+    def reconcile(self, configs: dict[str, McpServerConfig]) -> ReloadResult:
+        added: list[str] = []
+        removed: list[str] = []
+        modified: list[str] = []
+        unchanged: list[str] = []
+
+        current_names = set(self.clients.keys())
+        new_names = set(configs.keys())
+
+        # Determine changes
+        for name in current_names - new_names:
+            removed.append(name)
+        for name in new_names - current_names:
+            added.append(name)
+        for name in current_names & new_names:
+            if self.clients[name].config != configs[name]:
+                modified.append(name)
+            else:
+                unchanged.append(name)
+
+        # Snapshot current state for rollback
+        previous_clients = dict(self.clients)
+        
+        try:
+            # Apply removals
+            for name in removed:
+                self.stop(name)
+                del self.clients[name]
+            
+            # Apply additions
+            for name in added:
+                self.add(configs[name])
+                
+            # Apply modifications
+            for name in modified:
+                self.stop(name)
+                self.clients[name] = McpStdioClient(configs[name])
+                
+            return ReloadResult(
+                added=sorted(added),
+                removed=sorted(removed),
+                modified=sorted(modified),
+                unchanged=sorted(unchanged),
+            )
+        except Exception:
+            # Atomic rollback on any failure
+            self.clients.clear()
+            self.clients.update(previous_clients)
+            raise
 
     def close(self) -> None:
         for name in list(self.clients):

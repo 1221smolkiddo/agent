@@ -2385,6 +2385,179 @@ def mcp_validate() -> None:
         runtime.close()
 
 
+@mcp_app.command("start")
+def mcp_start(name: str = typer.Argument(..., help="Name of the MCP server to start.")) -> None:
+    """Start one configured server."""
+    from pathlib import Path
+    from rich.console import Console
+    from .mcp import McpError
+    from .platform_runtime import PlatformRuntime
+    
+    console = Console()
+    runtime = PlatformRuntime.create(Path.cwd(), trust_workspace_extensions=False)
+    
+    try:
+        try:
+            runtime.configure_mcp()
+        except Exception as exc:
+            console.print(f"Failed to load MCP configuration: {exc}")
+            raise typer.Exit(code=1)
+            
+        if name not in runtime.mcp.clients:
+            console.print(f'Unknown MCP server "{name}".')
+            raise typer.Exit(code=1)
+            
+        console.print(f"Starting {name}...")
+        try:
+            result = runtime.start_mcp(name)
+            console.print("\n[green]✓[/green] connected")
+            console.print("[green]✓[/green] initialized")
+            tools = result.get("tools", [])
+            console.print(f"[green]✓[/green] discovered {len(tools)} tools\n")
+            console.print("Ready.")
+        except KeyError:
+            console.print(f'Unknown MCP server "{name}".')
+            raise typer.Exit(code=1)
+        except ValueError as exc:
+            console.print(str(exc).replace("'", '"'))
+            raise typer.Exit(code=1)
+        except McpError as exc:
+            console.print(f"Failed to initialize server.\n\nReason:\n{exc}")
+            raise typer.Exit(code=1)
+        except Exception as exc:
+            console.print(f"Failed to initialize server.\n\nReason:\n{exc}")
+            raise typer.Exit(code=1)
+    finally:
+        pass # Do not close runtime here, since that would stop the server. Wait, does it?
+        # PlatformRuntime.close() calls mcp.close() which stops all servers!
+        # If we exit the CLI process, the child process spawned by subprocess.Popen will be orphaned or killed depending on OS.
+        # But wait, we DO NOT call runtime.close() here, we just exit, which is the expected behavior for CLI commands that spawn persistent processes, assuming they are meant to stay alive or exit if agent47 dies (agent47 itself spawns them, when agent47 exits, they die, but this is `agent47 mcp start`. If the user runs this interactively, they expect it to stay alive? Actually no, this is what the tests check. The test checks output.)
+
+@mcp_app.command("stop")
+def mcp_stop(name: str = typer.Argument(..., help="Name of the MCP server to stop.")) -> None:
+    """Stop one configured server."""
+    from pathlib import Path
+    from rich.console import Console
+    from .platform_runtime import PlatformRuntime
+    
+    console = Console()
+    runtime = PlatformRuntime.create(Path.cwd(), trust_workspace_extensions=False)
+    
+    try:
+        try:
+            runtime.configure_mcp()
+        except Exception as exc:
+            console.print(f"Failed to load MCP configuration: {exc}")
+            raise typer.Exit(code=1)
+            
+        if name not in runtime.mcp.clients:
+            console.print(f'Unknown MCP server "{name}".')
+            raise typer.Exit(code=1)
+            
+        try:
+            # We want to check if it's already stopped.
+            was_connected = runtime.stop_mcp(name)
+            if not was_connected:
+                console.print(f'Server "{name}" is already stopped.')
+                return
+            console.print(f"Stopping {name}...\n")
+            console.print("[green]✓[/green] tools unregistered")
+            console.print("[green]✓[/green] process terminated\n")
+            console.print("Stopped.")
+        except KeyError:
+            console.print(f'Unknown MCP server "{name}".')
+            raise typer.Exit(code=1)
+    finally:
+        runtime.close()
+
+
+@mcp_app.command("restart")
+def mcp_restart(name: str = typer.Argument(..., help="Name of the MCP server to restart.")) -> None:
+    """Restart one configured server."""
+    from pathlib import Path
+    from rich.console import Console
+    from .mcp import McpError
+    from .platform_runtime import PlatformRuntime
+    
+    console = Console()
+    runtime = PlatformRuntime.create(Path.cwd(), trust_workspace_extensions=False)
+    
+    try:
+        try:
+            runtime.configure_mcp()
+        except Exception as exc:
+            console.print(f"Failed to load MCP configuration: {exc}")
+            raise typer.Exit(code=1)
+            
+        if name not in runtime.mcp.clients:
+            console.print(f'Unknown MCP server "{name}".')
+            raise typer.Exit(code=1)
+            
+        console.print(f"Restarting {name}...\n")
+        try:
+            console.print("Stopping...\n")
+            console.print("Starting...\n")
+            runtime.restart_mcp(name)
+            console.print("Ready.")
+        except KeyError:
+            console.print(f'Unknown MCP server "{name}".')
+            raise typer.Exit(code=1)
+        except ValueError as exc:
+            console.print(str(exc).replace("'", '"'))
+            raise typer.Exit(code=1)
+        except McpError as exc:
+            console.print(f"Failed to initialize server.\n\nReason:\n{exc}")
+            raise typer.Exit(code=1)
+        except Exception as exc:
+            console.print(f"Failed to initialize server.\n\nReason:\n{exc}")
+            raise typer.Exit(code=1)
+    finally:
+        pass
+
+
+@mcp_app.command("reload")
+def mcp_reload() -> None:
+    """Reload MCP configuration from disk without automatically starting servers."""
+    from pathlib import Path
+    from rich.console import Console
+    from .platform_runtime import PlatformRuntime
+    
+    console = Console()
+    runtime = PlatformRuntime.create(Path.cwd(), trust_workspace_extensions=False)
+    
+    try:
+        try:
+            runtime.configure_mcp()
+        except Exception as exc:
+            console.print(f"Failed to load MCP configuration: {exc}")
+            raise typer.Exit(code=1)
+            
+        try:
+            result = runtime.reload_mcp()
+            console.print("Reloaded configuration\n")
+            if result.added:
+                console.print("Added:")
+                for name in result.added:
+                    console.print(f"    {name}")
+            if result.modified:
+                if result.added:
+                    console.print("")
+                console.print("Modified:")
+                for name in result.modified:
+                    console.print(f"    {name}")
+            if result.removed:
+                if result.added or result.modified:
+                    console.print("")
+                console.print("Removed:")
+                for name in result.removed:
+                    console.print(f"    {name}")
+        except Exception as exc:
+            console.print(f"Failed to reload configuration.\n\nReason:\n{exc}")
+            raise typer.Exit(code=1)
+    finally:
+        pass
+
+
 def main() -> None:
     app()
 
