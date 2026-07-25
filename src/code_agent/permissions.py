@@ -207,7 +207,10 @@ def confirm_permission(
         if response == "v":
             diff_text = extracted_diff or (getattr(session_state, "last_diff", None) if session_state else None)
             if diff_text:
-                res = launch_diff_viewer(diff_text, console=console, read_key=read_key)
+                mode = getattr(session_state, "preferred_diff_mode", None)
+                res = launch_diff_viewer(
+                    diff_text, mode=mode, console=console, read_key=read_key
+                )
                 if not res.success and res.message:
                     console.print(
                         Panel(

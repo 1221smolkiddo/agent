@@ -308,6 +308,16 @@ def build_default_registry() -> CommandRegistry:
             keywords=("diff", "view", "patch", "changes", "viewer"),
             rank=105,
         ),
+        CommandMeta(
+            name="/diff-mode",
+            category="Workspace",
+            description="Set preferred interactive diff viewer mode (unified or side-by-side)",
+            subcommands=("unified", "side-by-side"),
+            usage="/diff-mode\n/diff-mode unified\n/diff-mode side-by-side",
+            examples=("/diff-mode", "/diff-mode side-by-side", "/diff-mode unified"),
+            keywords=("diff-mode", "mode", "side-by-side", "unified", "view"),
+            rank=106,
+        ),
         # History
         CommandMeta(
             name="/history",

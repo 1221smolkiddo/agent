@@ -176,3 +176,60 @@ def test_confirm_permission_view_option_then_deny(monkeypatch) -> None:
         read_key=lambda: next(keys, "quit"),
     )
     assert result == "n"
+
+
+def test_session_preferred_diff_mode() -> None:
+    from code_agent.diff_types import DiffViewMode
+
+    session = SessionState()
+    assert session.preferred_diff_mode == DiffViewMode.UNIFIED
+
+    session.set_preferred_diff_mode("side-by-side")
+    assert session.preferred_diff_mode == DiffViewMode.SIDE_BY_SIDE
+
+    session.set_preferred_diff_mode("unified")
+    assert session.preferred_diff_mode == DiffViewMode.UNIFIED
+
+    import pytest
+    with pytest.raises(ValueError):
+        session.set_preferred_diff_mode("invalid")
+
+
+def test_diff_mode_command_handling() -> None:
+    from code_agent.diff_types import DiffViewMode
+
+    session = SessionState()
+
+    # No args -> inspect mode
+    handle_command(
+        "/diff-mode",
+        settings=None,  # type: ignore[arg-type]
+        base_cwd=None,  # type: ignore[arg-type]
+        cwd=None,  # type: ignore[arg-type]
+        model=None,
+        profile=None,
+        dry_run=False,
+        stream_model=False,
+        sandbox_enabled=False,
+        max_steps=10,
+        max_failures=None,
+        session_state=session,
+    )
+    assert session.preferred_diff_mode == DiffViewMode.UNIFIED
+
+    # Update mode
+    handle_command(
+        "/diff-mode side-by-side",
+        settings=None,  # type: ignore[arg-type]
+        base_cwd=None,  # type: ignore[arg-type]
+        cwd=None,  # type: ignore[arg-type]
+        model=None,
+        profile=None,
+        dry_run=False,
+        stream_model=False,
+        sandbox_enabled=False,
+        max_steps=10,
+        max_failures=None,
+        session_state=session,
+    )
+    assert session.preferred_diff_mode == DiffViewMode.SIDE_BY_SIDE

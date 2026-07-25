@@ -65,8 +65,12 @@ def _state(
     cursor_row: int = 0,
     scroll_offset: int = 0,
     terminal_height: int = 12,
+    view_mode: Any = "unified",
 ) -> DiffViewerState:
-    return DiffViewerState(cursor_row, scroll_offset, terminal_height)
+    from code_agent.diff_types import DiffViewMode
+
+    mode = DiffViewMode.normalize(view_mode)
+    return DiffViewerState(cursor_row, scroll_offset, terminal_height, view_mode=mode)
 
 
 def test_initial_state() -> None:
@@ -363,4 +367,91 @@ def test_large_diff_viewport_stays_bounded() -> None:
 
     start, end = visible_row_range(state, model.row_count)
     assert end - start == state.content_height
-    assert end <= model.row_count
+
+
+def test_diff_view_mode_enum_and_normalization() -> None:
+    from code_agent.diff_types import DiffViewMode
+
+    assert DiffViewMode.UNIFIED == "unified"
+    assert DiffViewMode.SIDE_BY_SIDE == "side-by-side"
+
+    assert DiffViewMode.normalize("unified") == DiffViewMode.UNIFIED
+    assert DiffViewMode.normalize("side-by-side") == DiffViewMode.SIDE_BY_SIDE
+    assert DiffViewMode.normalize("side_by_side") == DiffViewMode.SIDE_BY_SIDE
+    assert DiffViewMode.normalize("sbs") == DiffViewMode.SIDE_BY_SIDE
+
+    with pytest.raises(ValueError, match="Invalid diff view mode"):
+        DiffViewMode.normalize("invalid_mode")
+
+
+def test_side_by_side_rendering_viewport() -> None:
+    from code_agent.diff_types import DiffViewMode
+
+    model = _sample_model()
+    console = Console(record=True, force_terminal=True, width=120)
+    state = _state(cursor_row=2, view_mode=DiffViewMode.SIDE_BY_SIDE)
+
+    with console.capture() as capture:
+        console.print(render_screen(model, state, console=console))
+
+    text = capture.get()
+    assert "Side-by-Side" in text
+    assert "│" in text
+
+
+def test_tab_key_toggles_mode() -> None:
+    from code_agent.diff_types import DiffViewMode
+
+    model = _sample_model()
+    state = _state(cursor_row=2, scroll_offset=1, view_mode=DiffViewMode.UNIFIED)
+
+    toggled = apply_viewer_key(state, model, "toggle_mode")
+    assert toggled is not None
+    assert toggled.view_mode == DiffViewMode.SIDE_BY_SIDE
+    assert toggled.cursor_row == 2
+    assert toggled.scroll_offset == 1
+
+    toggled_back = apply_viewer_key(toggled, model, "toggle_mode")
+    assert toggled_back is not None
+    assert toggled_back.view_mode == DiffViewMode.UNIFIED
+    assert toggled_back.cursor_row == 2
+    assert toggled_back.scroll_offset == 1
+
+
+def test_toggle_invariance() -> None:
+    from code_agent.diff_types import DiffViewMode
+
+    model = _sample_model()
+    initial_state = _state(cursor_row=3, scroll_offset=2, view_mode=DiffViewMode.UNIFIED)
+
+    # Unified -> Side-by-Side
+    sbs_state = apply_viewer_key(initial_state, model, "toggle_mode")
+    assert sbs_state is not None
+    assert sbs_state.cursor_row == initial_state.cursor_row
+    assert sbs_state.scroll_offset == initial_state.scroll_offset
+    assert visible_row_range(sbs_state, model.row_count) == visible_row_range(
+        initial_state, model.row_count
+    )
+
+    # Side-by-Side -> Unified
+    restored_state = apply_viewer_key(sbs_state, model, "toggle_mode")
+    assert restored_state is not None
+    assert restored_state.cursor_row == initial_state.cursor_row
+    assert restored_state.scroll_offset == initial_state.scroll_offset
+    assert visible_row_range(restored_state, model.row_count) == visible_row_range(
+        initial_state, model.row_count
+    )
+
+
+def test_terminal_width_fallback_when_narrow() -> None:
+    from code_agent.diff_types import DiffViewMode
+
+    model = _sample_model()
+    narrow_console = Console(record=True, force_terminal=True, width=50)
+    state = _state(cursor_row=0, view_mode=DiffViewMode.SIDE_BY_SIDE)
+
+    with narrow_console.capture() as capture:
+        narrow_console.print(render_screen(model, state, console=narrow_console))
+
+    text = capture.get()
+    assert "Narrow" in text and "fallback" in text

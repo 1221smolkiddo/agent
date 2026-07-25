@@ -28,6 +28,7 @@ from .credentials.keyring import CredentialStore, KeyringUnavailableError
 from .credentials.providers import ProviderMetadata, provider_specs
 from .factory import create_agent, create_chat_client
 from .diff_launcher import launch_diff_viewer
+from .diff_types import DiffViewMode
 from .model_profiles import validate_profile_name
 from .model_presets import MODEL_PRESETS, resolve_model_preset
 from .model_registry import REGISTERED_MODELS, find_registered_model, validate_model_selection
@@ -468,9 +469,39 @@ def handle_command(
         _handle_keys_command(settings, model)
     elif command in {"/diff-view", "/diff"}:
         diff_text = session_state.last_diff if session_state else None
-        res = launch_diff_viewer(diff_text, console=console)
+        pref_mode = session_state.preferred_diff_mode if session_state else None
+        res = launch_diff_viewer(diff_text, mode=pref_mode, console=console)
         if not res.success and res.message:
             console.print(res.message)
+    elif command == "/diff-mode":
+        if not value:
+            current_mode = (
+                session_state.preferred_diff_mode if session_state else DiffViewMode.UNIFIED
+            )
+            current_str = (
+                "Side-by-Side" if current_mode == DiffViewMode.SIDE_BY_SIDE else "Unified"
+            )
+            info = (
+                f"Current Mode\n  • {current_str}\n\n"
+                "Available Modes\n  • unified\n  • side-by-side\n\n"
+                "Usage\n  /diff-mode unified\n  /diff-mode side-by-side"
+            )
+            print_panel("Diff Viewer", info)
+        else:
+            try:
+                mode = DiffViewMode.normalize(value)
+                if session_state:
+                    session_state.set_preferred_diff_mode(mode)
+                print_panel("Diff Mode", f"Preferred diff mode updated to: {mode.value}")
+            except ValueError:
+                print_error_card(
+                    "Invalid Diff Mode",
+                    [
+                        ("Invalid mode:", value),
+                        ("Allowed modes:", "unified, side-by-side"),
+                    ],
+                    ["Use '/diff-mode unified' or '/diff-mode side-by-side'"],
+                )
     elif command == "/dry-run":
         dry_run = True
         print_panel("Mode", "dry-run")

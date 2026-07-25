@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from rich.console import Console
 
+from .diff_types import DiffViewMode
 from .diff_viewer import DiffParseError, parse_unified_diff
 from .diff_viewer_rows import build_diff_view_model
 from .interactive_diff import show_diff
@@ -50,6 +51,7 @@ def extract_unified_diff(detail: str) -> str | None:
 def launch_diff_viewer(
     diff_text: str | None,
     *,
+    mode: DiffViewMode | str | None = None,
     console: Console | None = None,
     read_key: Callable[[], Any] | None = None,
 ) -> DiffLaunchResult:
@@ -70,10 +72,8 @@ def launch_diff_viewer(
 
     try:
         model = build_diff_view_model(files)
-        if read_key is not None:
-            show_diff(model, console=target_console, read_key=read_key)
-        else:
-            show_diff(model, console=target_console)
+        view_mode = DiffViewMode.normalize(mode) if mode is not None else None
+        show_diff(model, view_mode=view_mode, console=target_console, read_key=read_key)
         return DiffLaunchResult(status=DiffLaunchStatus.SHOWN, success=True)
     except Exception as exc:
         msg = f"Viewer error: {exc}"
