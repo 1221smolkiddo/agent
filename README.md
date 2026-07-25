@@ -319,7 +319,8 @@ The full release process and remaining caveats are documented in [Known Limitati
 | Module boundaries, workspace flow, trust model | [Architecture](docs/ARCHITECTURE.md) |
 | Durable execution, evidence, effects, recovery | [Execution Engine](docs/EXECUTION_ENGINE.md) |
 | Kernel compatibility and staged authority promotion | [Execution Compatibility](docs/EXECUTION_COMPATIBILITY.md) |
-| Dynamic tools, skills, plugins, MCP, subagents | [Platform](docs/PLATFORM.md) |
+| Dynamic tools, skills, plugins, subagents | [Platform](docs/PLATFORM.md) |
+| Model Context Protocol (MCP) Integration | [MCP](docs/MCP.md) |
 | Security posture and operating boundaries | [Security Review](docs/SECURITY_REVIEW.md) |
 | Product limitations and release gate | [Known Limitations](docs/KNOWN_LIMITATIONS.md) |
 

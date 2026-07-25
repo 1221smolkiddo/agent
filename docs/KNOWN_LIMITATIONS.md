@@ -145,6 +145,12 @@ security sandbox. These limitations are part of the operating contract.
 - An ambiguous external effect is intentionally not retried automatically when its adapter cannot reconcile
   it. Operator review may be required before the execution can continue.
 
+## MCP Integration
+
+- MCP tools execute through the durable execution pipeline, meaning they follow the `REQUESTED -> AUTHORIZED -> PREPARED -> DISPATCHED -> COMMITTED` lifecycle. However, eager schema validation is not performed during the `PREPARED` phase; it occurs dynamically during execution.
+- MCP-specific authorization checks (e.g. validating explicit server allowance prior to dispatch) are missing and currently rely on broader runtime engine permissions.
+- MCP adapter reconciliation acts as a generic `BEST_EFFORT` and does not feature custom failure reconciliation logic to poll an MCP server for resource creation state after a crash.
+
 ## Product And Release
 
 - Agent47 remains CLI-first; there is no maintained VS Code extension or remote multi-user service.

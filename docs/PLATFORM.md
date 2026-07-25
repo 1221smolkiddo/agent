@@ -24,10 +24,12 @@ acceptance guidance without overriding the core security prompt.
 
 ## MCP configuration
 
-`.agents/mcp.json` contains a `servers` object. Each server accepts `command`, `enabled`,
-`timeout_seconds`, `reconnect_attempts`, `auth_env_keys`, and `allowed_tools`. Only named authentication
-environment variables plus a minimal process environment reach the server. Discovered MCP tools are
-registered under `mcp-<server>.*` and still require dynamic-tool approval.
+Agent47 features a comprehensive MCP integration that natively routes JSON-RPC stdio servers through the durable execution engine.
+Servers are configured via `.agents/mcp.json`. You can manage this fleet using the CLI (`agent47 mcp start`, `stop`, `restart`, `list`, `validate`) or hot-reload configurations dynamically using `agent47 mcp reload`.
+
+Discovered MCP tools are registered as `mcp-<server>-<tool>` in the dynamic registry. MCP tool calls automatically participate in the `REQUESTED -> AUTHORIZED -> PREPARED -> DISPATCHED -> COMMITTED` lifecycle, persisting inputs and outputs to the `SQLiteEventStore`.
+
+For full details on capabilities, architecture, and configuration, see [MCP Integration](MCP.md).
 
 ## Plugins
 
