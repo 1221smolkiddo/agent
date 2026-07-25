@@ -850,8 +850,21 @@ class TestAuthRepair:
 class TestOAuthConfig:
     def test_requires_client_id(self, monkeypatch) -> None:
         monkeypatch.delenv("GOOGLE_CLIENT_ID", raising=False)
-        with pytest.raises(OAuthConfigurationError, match="GOOGLE_CLIENT_ID"):
+        monkeypatch.setattr("code_agent.auth.config.GOOGLE_CLIENT_ID", "")
+        with pytest.raises(OAuthConfigurationError, match="Developer Error: No Google OAuth Client ID"):
             GoogleOAuthConfig.from_environment()
+
+    def test_packaged_client_id_is_used_after_install(self, monkeypatch) -> None:
+        monkeypatch.delenv("GOOGLE_CLIENT_ID", raising=False)
+        monkeypatch.setattr("code_agent.auth.config.GOOGLE_CLIENT_ID", "packaged-client-id")
+        config = GoogleOAuthConfig.from_environment()
+        assert config.client_id == "packaged-client-id"
+
+    def test_uses_env_override_client_id(self, monkeypatch) -> None:
+        monkeypatch.setenv("GOOGLE_CLIENT_ID", "env-client-id")
+        monkeypatch.setattr("code_agent.auth.config.GOOGLE_CLIENT_ID", "packaged-client-id")
+        config = GoogleOAuthConfig.from_environment()
+        assert config.client_id == "env-client-id"
 
     def test_timeout_bounds(self, monkeypatch) -> None:
         monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client")

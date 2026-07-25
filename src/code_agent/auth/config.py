@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from .oauth_constants import GOOGLE_CLIENT_ID
+
 
 class OAuthConfigurationError(RuntimeError):
     pass
@@ -16,11 +18,13 @@ class GoogleOAuthConfig:
 
     @classmethod
     def from_environment(cls) -> "GoogleOAuthConfig":
-        client_id = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+        client_id = (
+            os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+            or GOOGLE_CLIENT_ID
+        )
         if not client_id:
             raise OAuthConfigurationError(
-                "Google sign-in is not configured.  "
-                "Set GOOGLE_CLIENT_ID to a Google Desktop OAuth client ID."
+                "Developer Error: No Google OAuth Client ID provided in environment or constants."
             )
         raw_timeout = os.environ.get("GOOGLE_OAUTH_TIMEOUT_SECONDS", "180")
         try:
