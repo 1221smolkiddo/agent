@@ -164,10 +164,12 @@ class ToolRegistry:
         transaction_validator: Callable[[TransactionPlan], tuple[bool, str]] | None = None,
         extension_registry: DynamicToolRegistry | None = None,
         lifecycle_hooks: LifecycleHooks | None = None,
+        session_state: Any | None = None,
     ) -> None:
         self.workspace = workspace.resolve()
         self.dry_run = dry_run
         self.approval_callback = approval_callback
+        self.session_state = session_state
         self.shell_network_policy = shell_network_policy.strip().lower()
         self.index_cache = index_cache
         self.index_refresh: BackgroundIndexRefresh | None = None
@@ -1488,6 +1490,12 @@ class ToolRegistry:
         )
 
     def _approve(self, action: str, detail: str, metadata: dict[str, Any] | None = None) -> bool:
+        if self.session_state is not None and hasattr(self.session_state, "set_last_diff"):
+            from .diff_launcher import extract_unified_diff
+
+            extracted = extract_unified_diff(detail)
+            if extracted:
+                self.session_state.set_last_diff(extracted)
         if self.approval_callback is None:
             return False
         if metadata is not None and self._callback_accepts_metadata():

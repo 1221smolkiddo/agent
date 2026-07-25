@@ -7,6 +7,7 @@ from rich.panel import Panel
 from rich.text import Text
 from rich.prompt import Prompt
 
+from .diff_launcher import extract_unified_diff, launch_diff_viewer
 from .terminal_ui import console
 
 MAX_PERMISSION_DETAIL_CHARS = 6000
@@ -66,10 +67,12 @@ class PermissionPolicy:
         self,
         callback: Callable[[str, str], str],
         mode: ApprovalMode = ApprovalMode.per_action,
+        session_state: Any | None = None,
     ) -> None:
         self._callback = callback
         self._mode = mode
         self._task_approved = False
+        self.session_state = session_state
 
     @property
     def mode(self) -> ApprovalMode:
@@ -79,9 +82,14 @@ class PermissionPolicy:
         self._mode = mode
         self._task_approved = False
 
-    def approve(self, action: str, detail: str) -> bool:
+    def approve(self, action: str, detail: str, session_state: Any | None = None) -> bool:
+        state = session_state or self.session_state
+        extracted = extract_unified_diff(detail)
+        if extracted and state is not None and hasattr(state, "set_last_diff"):
+            state.set_last_diff(extracted)
+
         if action in MANUAL_APPROVAL_ACTIONS:
-            response = self._callback(action, detail)
+            response = self._invoke_callback(action, detail, state)
             return response in {"y", "a"}  # Even if 'a', it only approves this action because it's high risk
             
         if self._mode == ApprovalMode.auto_read and action in READ_ONLY_ACTIONS:
@@ -89,7 +97,7 @@ class PermissionPolicy:
         if self._mode == ApprovalMode.approve_task and self._task_approved:
             return True
             
-        response = self._callback(action, detail)
+        response = self._invoke_callback(action, detail, state)
         if response == "a":
             self._mode = ApprovalMode.approve_task
             self._task_approved = True
@@ -97,12 +105,23 @@ class PermissionPolicy:
             
         return response == "y"
 
+    def _invoke_callback(self, action: str, detail: str, state: Any | None) -> str:
+        try:
+            return self._callback(action, detail, session_state=state)
+        except TypeError:
+            return self._callback(action, detail)
+
     def reset_task(self) -> None:
         """Call between tasks to reset per-task approval state."""
         self._task_approved = False
 
 
-def confirm_permission(action: str, detail: str) -> str:
+def confirm_permission(
+    action: str,
+    detail: str,
+    session_state: Any | None = None,
+    read_key: Callable[[], Any] | None = None,
+) -> str:
     action_labels = {
         "run_shell": "Run shell command",
         "start_process": "Start managed process",
@@ -140,6 +159,10 @@ def confirm_permission(action: str, detail: str) -> str:
     }
     label = action_labels.get(action, action.replace("_", " ").title())
 
+    extracted_diff = extract_unified_diff(detail)
+    if extracted_diff and session_state is not None and hasattr(session_state, "set_last_diff"):
+        session_state.set_last_diff(extracted_diff)
+
     text = Text()
     text.append(f"{label}\n\n", style="bold")
 
@@ -155,8 +178,13 @@ def confirm_permission(action: str, detail: str) -> str:
     if action not in MANUAL_APPROVAL_ACTIONS:
         text.append("  a", style="bold cyan")
         text.append(" approve all low-risk actions for this task\n", style="default")
+    
+    has_diff = bool(extracted_diff or (session_state and getattr(session_state, "last_diff", None)))
     text.append("  v", style="bold yellow")
-    text.append(" view full detail\n", style="default")
+    if has_diff:
+        text.append(" view interactive diff\n", style="default")
+    else:
+        text.append(" view full detail\n", style="default")
 
     console.print(
         Panel(
@@ -177,18 +205,31 @@ def confirm_permission(action: str, detail: str) -> str:
             console=console,
         )
         if response == "v":
-            console.print(
-                Panel(
-                    Text(format_permission_detail(detail)),
-                    title=Text("Full Detail", style="bold"),
-                    border_style="muted",
+            diff_text = extracted_diff or (getattr(session_state, "last_diff", None) if session_state else None)
+            if diff_text:
+                res = launch_diff_viewer(diff_text, console=console, read_key=read_key)
+                if not res.success and res.message:
+                    console.print(
+                        Panel(
+                            Text(format_permission_detail(detail)),
+                            title=Text(f"Full Detail ({res.message})", style="bold"),
+                            border_style="muted",
+                        )
+                    )
+            else:
+                console.print(
+                    Panel(
+                        Text(format_permission_detail(detail)),
+                        title=Text("Full Detail", style="bold"),
+                        border_style="muted",
+                    )
                 )
-            )
             continue
         if response == "a" and action in MANUAL_APPROVAL_ACTIONS:
             console.print("Approve-all is disabled for high-risk actions. Choose y or n.", style="warning")
             continue
         return response
+
 
 
 def _permission_prompt(action: str) -> str:

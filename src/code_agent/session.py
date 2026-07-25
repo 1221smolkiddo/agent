@@ -25,6 +25,11 @@ class SessionState:
     last_run_id: int | None = None
     previous_status: str | None = None
     conversation_steering: str | None = None
+    last_diff: str | None = None
+
+    def set_last_diff(self, diff_text: str | None) -> None:
+        if diff_text and diff_text.strip():
+            self.last_diff = diff_text.strip() + "\n"
 
     def update(self, user_input: str, result: AgentRunResult) -> None:
         self.last_run_id = result.run_id

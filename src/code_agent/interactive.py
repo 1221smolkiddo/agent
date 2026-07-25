@@ -27,6 +27,7 @@ from .auth.session import LocalSession
 from .credentials.keyring import CredentialStore, KeyringUnavailableError
 from .credentials.providers import ProviderMetadata, provider_specs
 from .factory import create_agent, create_chat_client
+from .diff_launcher import launch_diff_viewer
 from .model_profiles import validate_profile_name
 from .model_presets import MODEL_PRESETS, resolve_model_preset
 from .model_registry import REGISTERED_MODELS, find_registered_model, validate_model_selection
@@ -465,6 +466,11 @@ def handle_command(
         print_advanced_panel(SESSION_REGISTRY.by_category(include_hidden=True))
     elif command == "/keys":
         _handle_keys_command(settings, model)
+    elif command in {"/diff-view", "/diff"}:
+        diff_text = session_state.last_diff if session_state else None
+        res = launch_diff_viewer(diff_text, console=console)
+        if not res.success and res.message:
+            console.print(res.message)
     elif command == "/dry-run":
         dry_run = True
         print_panel("Mode", "dry-run")

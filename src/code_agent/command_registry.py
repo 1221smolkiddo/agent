@@ -298,6 +298,16 @@ def build_default_registry() -> CommandRegistry:
             keywords=("dry-run", "readonly", "safe", "inspect", "preview"),
             rank=100,
         ),
+        CommandMeta(
+            name="/diff-view",
+            aliases=("/diff",),
+            category="Workspace",
+            description="View the last generated patch in the interactive diff viewer",
+            usage="/diff-view",
+            examples=("/diff-view", "/diff"),
+            keywords=("diff", "view", "patch", "changes", "viewer"),
+            rank=105,
+        ),
         # History
         CommandMeta(
             name="/history",
@@ -452,16 +462,6 @@ def build_default_registry() -> CommandRegistry:
             examples=("/debug",),
             keywords=("debug", "trace", "stacktrace", "error", "exception"),
             rank=300,
-        ),
-        CommandMeta(
-            name="/diff",
-            category="Debug",
-            description="Show info on viewing workspace diffs",
-            hidden=True,
-            usage="/diff",
-            examples=("/diff",),
-            keywords=("diff", "changes", "patch"),
-            rank=310,
         ),
         CommandMeta(
             name="/report",
