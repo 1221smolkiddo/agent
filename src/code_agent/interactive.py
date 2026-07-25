@@ -681,6 +681,8 @@ def handle_command(
                 ("Profile", profile or settings.agent_profile),
             ],
         )
+    elif command == "/mcp":
+        _handle_mcp_command(value, cwd)
     elif command == "/steer":
         if session_state is None:
             print_panel("Steering", "Session steering is unavailable.")
@@ -1677,3 +1679,136 @@ def _format_transcript(transcript: list[tuple[str, str]]) -> str:
         lines.append(f"Turn {index} user: {user}")
         lines.append(f"Turn {index} Agent47: {assistant}")
     return "\n".join(lines)
+
+
+def _handle_mcp_command(value: str, cwd: Path) -> None:
+    from .platform_runtime import PlatformRuntime
+    from .terminal_ui import print_error_card, print_panel, print_renderable_panel
+    
+    path = cwd / ".agents" / "mcp.json"
+    if not path.exists():
+        print_error_card("MCP Configuration Error", [("Error:", "No MCP configuration found at .agents/mcp.json")], ["Create a configuration in .agents/mcp.json"])
+        return
+        
+    runtime = PlatformRuntime.create(cwd, trust_workspace_extensions=False)
+    try:
+        try:
+            runtime.configure_mcp()
+        except Exception as exc:
+            print_error_card("MCP Configuration Error", [("Error:", str(exc))], ["Fix the configuration in .agents/mcp.json"])
+            return
+
+        command = value.lower().strip()
+        if not command or command == "status":
+            runtime.mcp.start_enabled()
+            status_info = runtime.mcp.status()
+            if not status_info:
+                print_panel("MCP Status", "No servers configured.")
+                return
+            
+            from rich.table import Table
+            from rich import box
+            table = Table(box=box.MINIMAL)
+            table.add_column("Server", style="bold")
+            table.add_column("Enabled")
+            table.add_column("Connected")
+            table.add_column("Status")
+            
+            for info in status_info:
+                name = info.get("name", "Unknown")
+                client = runtime.mcp.clients.get(name)
+                enabled_str = "Yes" if (client and client.config.enabled) else "No"
+                connected = info.get("connected")
+                connected_str = "Yes" if connected else "No"
+                
+                if not connected:
+                    health = "Not running"
+                else:
+                    health_data = info.get("health")
+                    if isinstance(health_data, tuple) and len(health_data) == 2:
+                        health = health_data[1]
+                    else:
+                        health = str(health_data) if health_data is not None else "Not running"
+                table.add_row(name, enabled_str, connected_str, health)
+            print_renderable_panel("MCP Status", table)
+        elif command == "tools":
+            runtime.mcp.start_enabled()
+            tools = [t for t in runtime.tools.discover() if t.get("namespace", "").startswith("mcp-")]
+            if not tools:
+                print_panel("MCP Tools", "No MCP tools discovered.")
+                return
+            
+            from rich.table import Table
+            from rich import box
+            table = Table(box=box.MINIMAL)
+            table.add_column("Namespace", style="cyan")
+            table.add_column("Tool", style="bold")
+            table.add_column("Description")
+            
+            grouped = {}
+            for t in tools:
+                grouped.setdefault(t.get("namespace", ""), []).append(t)
+                
+            for ns, ns_tools in sorted(grouped.items()):
+                for idx, t in enumerate(ns_tools):
+                    table.add_row(
+                        ns if idx == 0 else "",
+                        t.get("name", ""),
+                        t.get("description", "")
+                    )
+            print_renderable_panel("MCP Tools", table)
+        elif command == "resources":
+            runtime.mcp.start_enabled()
+            resources = runtime.list_mcp_resources()
+            if not resources or all(not items for items in resources.values()):
+                print_panel("MCP Resources", "No resources available.")
+                return
+                
+            from rich.table import Table
+            table = Table(box=box.MINIMAL)
+            table.add_column("Server", style="cyan")
+            table.add_column("Resource", style="bold")
+            table.add_column("URI")
+            table.add_column("Description")
+            
+            for server, items in sorted(resources.items()):
+                for idx, item in enumerate(items):
+                    table.add_row(
+                        server if idx == 0 else "",
+                        item.get("name", ""),
+                        item.get("uri", ""),
+                        item.get("description", "")
+                    )
+            print_renderable_panel("MCP Resources", table)
+        elif command == "prompts":
+            runtime.mcp.start_enabled()
+            prompts = runtime.list_mcp_prompts()
+            if not prompts or all(not items for items in prompts.values()):
+                print_panel("MCP Prompts", "No prompts available.")
+                return
+                
+            from rich.table import Table
+            table = Table(box=box.MINIMAL)
+            table.add_column("Server", style="cyan")
+            table.add_column("Prompt", style="bold")
+            table.add_column("Description")
+            
+            for server, items in sorted(prompts.items()):
+                for idx, item in enumerate(items):
+                    table.add_row(
+                        server if idx == 0 else "",
+                        item.get("name", ""),
+                        item.get("description", "")
+                    )
+            print_renderable_panel("MCP Prompts", table)
+        else:
+            print_error_card(
+                "Invalid MCP Command",
+                [("Unknown subcommand:", command)],
+                ["Use '/mcp', '/mcp tools', '/mcp resources', or '/mcp prompts'"]
+            )
+    except Exception as exc:
+        print_panel("MCP Error", f"Failed to execute MCP command: {exc}", style="red")
+    finally:
+        runtime.close()
+

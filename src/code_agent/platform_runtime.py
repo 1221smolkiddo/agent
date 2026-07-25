@@ -165,3 +165,33 @@ class PlatformRuntime:
     def reload_mcp(self) -> ReloadResult:
         configs = self._parse_mcp_config()
         return self.mcp.reconcile(configs)
+
+    def list_mcp_resources(self, *, refresh: bool = False) -> dict[str, list[dict[str, Any]]]:
+        resources: dict[str, list[dict[str, Any]]] = {}
+        for name, client in self.mcp.clients.items():
+            if client.connected:
+                resources[name] = client.list_resources(refresh=refresh)
+        return resources
+
+    def list_mcp_prompts(self, *, refresh: bool = False) -> dict[str, list[dict[str, Any]]]:
+        prompts: dict[str, list[dict[str, Any]]] = {}
+        for name, client in self.mcp.clients.items():
+            if client.connected:
+                prompts[name] = client.list_prompts(refresh=refresh)
+        return prompts
+
+    def read_mcp_resource(self, server_name: str, uri: str) -> dict[str, Any]:
+        if server_name not in self.mcp.clients:
+            raise KeyError(f"Unknown MCP server {server_name!r}.")
+        client = self.mcp.clients[server_name]
+        if not client.connected:
+            raise ValueError(f"Server {server_name!r} is not connected.")
+        return client.read_resource(uri)
+
+    def get_mcp_prompt(self, server_name: str, prompt_name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        if server_name not in self.mcp.clients:
+            raise KeyError(f"Unknown MCP server {server_name!r}.")
+        client = self.mcp.clients[server_name]
+        if not client.connected:
+            raise ValueError(f"Server {server_name!r} is not connected.")
+        return client.get_prompt(prompt_name, arguments)

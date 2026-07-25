@@ -2557,10 +2557,208 @@ def mcp_reload() -> None:
     finally:
         pass
 
+@mcp_app.command("resources")
+def mcp_resources() -> None:
+    """List resources grouped by MCP server."""
+    from pathlib import Path
+    from rich.console import Console
+    from .platform_runtime import PlatformRuntime
+    
+    console = Console()
+    path = Path(".agents/mcp.json")
+    if not path.exists():
+        console.print("No MCP configuration found at [bold].agents/mcp.json[/bold].")
+        raise typer.Exit(code=0)
+
+    runtime = PlatformRuntime.create(Path.cwd(), trust_workspace_extensions=False)
+    try:
+        try:
+            runtime.configure_mcp()
+        except Exception as exc:
+            console.print(f"Failed to load MCP configuration: {exc}")
+            raise typer.Exit(code=1)
+            
+        runtime.mcp.start_enabled()
+        resources = runtime.list_mcp_resources()
+        if not resources or all(not items for items in resources.values()):
+            console.print("No resources available.")
+            return
+
+        for server, items in sorted(resources.items()):
+            if items:
+                console.print(f"[cyan]{server}[/cyan]")
+                for item in items:
+                    name = item.get("name", "Unnamed")
+                    uri = item.get("uri", "")
+                    desc = item.get("description", "")
+                    if desc:
+                        console.print(f"    [bold]{name}[/bold] ({uri}): {desc}")
+                    else:
+                        console.print(f"    [bold]{name}[/bold] ({uri})")
+                console.print("")
+    except Exception as exc:
+        console.print(f"Failed to list resources: {exc}")
+        raise typer.Exit(code=1)
+    finally:
+        runtime.close()
+
+
+@mcp_app.command("resource")
+def mcp_resource(uri: str = typer.Argument(..., help="URI of the resource to read.")) -> None:
+    """Read a resource from an MCP server."""
+    from pathlib import Path
+    from rich.console import Console
+    from .platform_runtime import PlatformRuntime
+    
+    console = Console()
+    path = Path(".agents/mcp.json")
+    if not path.exists():
+        console.print("No MCP configuration found at [bold].agents/mcp.json[/bold].")
+        raise typer.Exit(code=0)
+        
+    runtime = PlatformRuntime.create(Path.cwd(), trust_workspace_extensions=False)
+    try:
+        try:
+            runtime.configure_mcp()
+        except Exception as exc:
+            console.print(f"Failed to load MCP configuration: {exc}")
+            raise typer.Exit(code=1)
+            
+        runtime.mcp.start_enabled()
+        
+        # We don't know which server owns it, so check all
+        resources = runtime.list_mcp_resources()
+        owner = None
+        for server, items in resources.items():
+            for item in items:
+                if item.get("uri") == uri:
+                    owner = server
+                    break
+            if owner:
+                break
+        
+        if not owner:
+            console.print(f"Resource {uri!r} not found.")
+            raise typer.Exit(code=1)
+            
+        result = runtime.read_mcp_resource(owner, uri)
+        contents = result.get("contents", [])
+        for content in contents:
+            if "text" in content:
+                console.print(content["text"])
+            elif "blob" in content:
+                console.print(f"[Base64 Blob: {len(content['blob'])} bytes]")
+    except Exception as exc:
+        console.print(f"Failed to read resource: {exc}")
+        raise typer.Exit(code=1)
+    finally:
+        runtime.close()
+
+
+@mcp_app.command("prompts")
+def mcp_prompts() -> None:
+    """List prompts grouped by MCP server."""
+    from pathlib import Path
+    from rich.console import Console
+    from .platform_runtime import PlatformRuntime
+    
+    console = Console()
+    path = Path(".agents/mcp.json")
+    if not path.exists():
+        console.print("No MCP configuration found at [bold].agents/mcp.json[/bold].")
+        raise typer.Exit(code=0)
+        
+    runtime = PlatformRuntime.create(Path.cwd(), trust_workspace_extensions=False)
+    try:
+        try:
+            runtime.configure_mcp()
+        except Exception as exc:
+            console.print(f"Failed to load MCP configuration: {exc}")
+            raise typer.Exit(code=1)
+            
+        runtime.mcp.start_enabled()
+        prompts = runtime.list_mcp_prompts()
+        if not prompts or all(not items for items in prompts.values()):
+            console.print("No prompts available.")
+            return
+
+        for server, items in sorted(prompts.items()):
+            if items:
+                console.print(f"[cyan]{server}[/cyan]")
+                for item in items:
+                    name = item.get("name", "Unnamed")
+                    desc = item.get("description", "")
+                    if desc:
+                        console.print(f"    [bold]{name}[/bold]: {desc}")
+                    else:
+                        console.print(f"    [bold]{name}[/bold]")
+                console.print("")
+    except Exception as exc:
+        console.print(f"Failed to list prompts: {exc}")
+        raise typer.Exit(code=1)
+    finally:
+        runtime.close()
+
+
+@mcp_app.command("prompt")
+def mcp_prompt(name: str = typer.Argument(..., help="Name of the prompt to display.")) -> None:
+    """Display a prompt from an MCP server."""
+    from pathlib import Path
+    import json
+    from rich.console import Console
+    from .platform_runtime import PlatformRuntime
+    
+    console = Console()
+    path = Path(".agents/mcp.json")
+    if not path.exists():
+        console.print("No MCP configuration found at [bold].agents/mcp.json[/bold].")
+        raise typer.Exit(code=0)
+        
+    runtime = PlatformRuntime.create(Path.cwd(), trust_workspace_extensions=False)
+    try:
+        try:
+            runtime.configure_mcp()
+        except Exception as exc:
+            console.print(f"Failed to load MCP configuration: {exc}")
+            raise typer.Exit(code=1)
+            
+        runtime.mcp.start_enabled()
+        
+        # Check all servers for the prompt
+        prompts = runtime.list_mcp_prompts()
+        owner = None
+        for server, items in prompts.items():
+            for item in items:
+                if item.get("name") == name:
+                    owner = server
+                    break
+            if owner:
+                break
+        
+        if not owner:
+            console.print(f"Prompt {name!r} not found.")
+            raise typer.Exit(code=1)
+            
+        result = runtime.get_mcp_prompt(owner, name)
+        messages = result.get("messages", [])
+        for msg in messages:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", {})
+            if isinstance(content, dict) and "text" in content:
+                text = content["text"]
+            elif isinstance(content, str):
+                text = content
+            else:
+                text = json.dumps(content)
+            console.print(f"[bold]{role}[/bold]:\n{text}\n")
+    except Exception as exc:
+        console.print(f"Failed to get prompt: {exc}")
+        raise typer.Exit(code=1)
+    finally:
+        runtime.close()
 
 def main() -> None:
     app()
-
 
 if __name__ == "__main__":
     main()

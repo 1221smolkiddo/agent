@@ -422,6 +422,17 @@ def build_default_registry() -> CommandRegistry:
             rank=240,
         ),
         CommandMeta(
+            name="/mcp",
+            category="Configuration",
+            description="Inspect MCP servers, tools, resources, and prompts",
+            hidden=False,
+            subcommands=("tools", "resources", "prompts"),
+            usage="/mcp\n/mcp tools\n/mcp resources\n/mcp prompts",
+            examples=("/mcp", "/mcp tools", "/mcp resources", "/mcp prompts"),
+            keywords=("mcp", "tools", "resources", "prompts", "server"),
+            rank=245,
+        ),
+        CommandMeta(
             name="/settings",
             category="Configuration",
             description="View current session configuration settings",

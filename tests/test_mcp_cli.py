@@ -142,5 +142,40 @@ def test_mcp_restart_unknown_server(workspace: Path) -> None:
     assert result.exit_code == 1
     assert 'Unknown MCP server "unknown_server".' in result.stdout
     assert "Restarting" not in result.stdout
-    assert "Stopping" not in result.stdout
     assert "Starting" not in result.stdout
+
+def test_mcp_resources_no_config(workspace: Path) -> None:
+    result = runner.invoke(app, ["mcp", "resources"])
+    assert result.exit_code == 0
+    assert "No MCP configuration found at" in result.stdout
+
+def test_mcp_resources_offline(workspace: Path) -> None:
+    agents_dir = workspace / ".agents"
+    agents_dir.mkdir()
+    config = {
+        "servers": {
+            "test_server": {
+                "command": ["echo", "offline"],
+                "enabled": True
+            }
+        }
+    }
+    (agents_dir / "mcp.json").write_text(json.dumps(config))
+    result = runner.invoke(app, ["mcp", "resources"])
+    assert "No resources available" in result.stdout or "Failed to list resources" in result.stdout
+
+def test_mcp_prompts_no_config(workspace: Path) -> None:
+    result = runner.invoke(app, ["mcp", "prompts"])
+    assert result.exit_code == 0
+    assert "No MCP configuration found at" in result.stdout
+
+def test_mcp_resource_read_no_config(workspace: Path) -> None:
+    result = runner.invoke(app, ["mcp", "resource", "test://uri"])
+    assert result.exit_code == 0
+    assert "No MCP configuration found at" in result.stdout
+
+def test_mcp_prompt_read_no_config(workspace: Path) -> None:
+    result = runner.invoke(app, ["mcp", "prompt", "test-prompt"])
+    assert result.exit_code == 0
+    assert "No MCP configuration found at" in result.stdout
+

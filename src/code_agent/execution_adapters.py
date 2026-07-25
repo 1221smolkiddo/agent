@@ -124,9 +124,21 @@ class ToolRegistryAdapter(CallableTransactionalAdapter):
             compensate=self._compensate_tool,
         )
 
-    def _run_tool(self, request: dict[str, Any], _context: AdapterContext) -> EffectOutcome:
+    def _run_tool(self, request: dict[str, Any], context: AdapterContext) -> EffectOutcome:
         action = ACTION_ADAPTER.validate_python(request["action"])
-        result: ToolResult = self.tools.run(action)
+        
+        if hasattr(self.tools, "invoke"):
+            if hasattr(action, "tool") and hasattr(action, "arguments"):
+                result: ToolResult = self.tools.invoke(
+                    action.tool,
+                    action.arguments,
+                    actor=context.metadata.get("actor", "primary")
+                )
+            else:
+                return EffectOutcome(False, "invalid", "Action is not a valid tool invocation.")
+        else:
+            result: ToolResult = self.tools.run(action)
+            
         return EffectOutcome(
             result.ok, "committed" if result.ok else "failed", result.output,
             dict(result.metadata),
