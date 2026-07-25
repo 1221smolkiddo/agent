@@ -14,8 +14,10 @@ from code_agent.diff_viewer_rows import (
     build_diff_view_model,
 )
 from code_agent.interactive_diff import (
+    DiffReviewResult,
     DiffViewerState,
     apply_viewer_key,
+    current_hunk_id,
     ensure_cursor_visible,
     file_header_at_row,
     go_end,
@@ -68,11 +70,20 @@ def _state(
     scroll_offset: int = 0,
     terminal_height: int = 12,
     view_mode: Any = "unified",
+    selected_hunks: frozenset[tuple[int, int]] = frozenset(),
+    rejected_hunks: frozenset[tuple[int, int]] = frozenset(),
 ) -> DiffViewerState:
     from code_agent.diff_types import DiffViewMode
 
     mode = DiffViewMode.normalize(view_mode)
-    return DiffViewerState(cursor_row, scroll_offset, terminal_height, view_mode=mode)
+    return DiffViewerState(
+        cursor_row,
+        scroll_offset,
+        terminal_height,
+        view_mode=mode,
+        selected_hunks=selected_hunks,
+        rejected_hunks=rejected_hunks,
+    )
 
 
 def test_initial_state() -> None:
@@ -175,8 +186,13 @@ def test_apply_viewer_key_exit_keys() -> None:
     model = _sample_model()
     state = _state()
 
-    assert apply_viewer_key(state, model, "quit") is None
-    assert apply_viewer_key(state, model, "exit") is None
+    res_q = apply_viewer_key(state, model, "quit")
+    assert isinstance(res_q, DiffReviewResult)
+    assert res_q.cancelled
+
+    res_e = apply_viewer_key(state, model, "exit")
+    assert isinstance(res_e, DiffReviewResult)
+    assert res_e.cancelled
 
 
 def test_apply_viewer_key_interrupt_raises() -> None:
@@ -268,7 +284,7 @@ def test_render_hunk_header_row() -> None:
         context=2,
     )
 
-    assert render_hunk_header_row(row).plain == "@@ -24,8 +24,11 @@"
+    assert render_hunk_header_row(row, _state()).plain == "[ ] @@ -24,8 +24,11 @@"
 
 
 def test_render_line_rows_use_expected_styles() -> None:
@@ -299,7 +315,7 @@ def test_render_diff_row_highlights_cursor() -> None:
         context=0,
     )
 
-    rendered = render_diff_row(row, highlight=True)
+    rendered = render_diff_row(row, _state(), highlight=True)
     assert any("reverse" in (span.style or "") for span in rendered._spans)
 
 
@@ -459,3 +475,124 @@ def test_terminal_width_fallback_when_narrow() -> None:
     text = capture.get()
     assert "fallback" in text
     assert state.view_mode == DiffViewMode.SIDE_BY_SIDE
+
+
+def test_accept_and_reject_hunk() -> None:
+    model = _sample_model()
+    # Cursor on first hunk's header row
+    hunk_rows = hunk_header_rows(model)
+    state = _state(cursor_row=hunk_rows[0])
+
+    accepted = apply_viewer_key(state, model, "accept_hunk")
+    assert (0, 0) in accepted.selected_hunks
+    assert (0, 0) not in accepted.rejected_hunks
+
+    rejected = apply_viewer_key(accepted, model, "reject_hunk")
+    assert (0, 0) not in rejected.selected_hunks
+    assert (0, 0) in rejected.rejected_hunks
+
+
+def test_accept_after_reject() -> None:
+    model = _sample_model()
+    hunk_rows = hunk_header_rows(model)
+    state = _state(cursor_row=hunk_rows[0])
+
+    rejected = apply_viewer_key(state, model, "reject_hunk")
+    accepted = apply_viewer_key(rejected, model, "accept_hunk")
+
+    assert (0, 0) in accepted.selected_hunks
+    assert (0, 0) not in accepted.rejected_hunks
+
+
+def test_reject_after_accept() -> None:
+    model = _sample_model()
+    hunk_rows = hunk_header_rows(model)
+    state = _state(cursor_row=hunk_rows[0])
+
+    accepted = apply_viewer_key(state, model, "accept_hunk")
+    rejected = apply_viewer_key(accepted, model, "reject_hunk")
+
+    assert (0, 0) not in rejected.selected_hunks
+    assert (0, 0) in rejected.rejected_hunks
+
+
+def test_accept_and_reject_hunk_when_cursor_is_inside_hunk() -> None:
+    model = _sample_model()
+    state = _state(cursor_row=2)
+
+    accepted = apply_viewer_key(state, model, "accept_hunk")
+    assert (0, 0) in accepted.selected_hunks
+    assert (0, 0) not in accepted.rejected_hunks
+
+    rejected = apply_viewer_key(accepted, model, "reject_hunk")
+    assert (0, 0) not in rejected.selected_hunks
+    assert (0, 0) in rejected.rejected_hunks
+
+
+def test_viewer_state_does_not_mutate_parser_or_view_model() -> None:
+    diff = "\n".join(
+        [
+            "--- a/sample.txt",
+            "+++ b/sample.txt",
+            "@@ -1 +1 @@",
+            "-old",
+            "+new",
+            "",
+        ]
+    )
+    parsed_files = parse_unified_diff(diff)
+    first_file = parsed_files[0]
+    first_hunk = first_file.hunks[0]
+    first_line = first_hunk.lines[0]
+    model = build_diff_view_model(parsed_files)
+    original_rows = model.rows
+    original_first_row = model.rows[0]
+
+    state = _state(cursor_row=2)
+    updated = apply_viewer_key(state, model, "accept_hunk")
+
+    assert updated.selected_hunks == frozenset({(0, 0)})
+    assert first_file.hunks[0] is first_hunk
+    assert first_hunk.lines[0] is first_line
+    assert first_hunk.header == "@@ -1 +1 @@"
+    assert first_line.text == "old"
+    assert parsed_files[0].old_path == "sample.txt"
+    assert model.rows is original_rows
+    assert model.rows[0] is original_first_row
+
+
+def test_accept_and_reject_all() -> None:
+    model = _sample_model()
+    state = _state()
+
+    accepted = apply_viewer_key(state, model, "accept_all")
+    assert len(accepted.selected_hunks) == 3
+    assert len(accepted.rejected_hunks) == 0
+
+    rejected = apply_viewer_key(accepted, model, "reject_all")
+    assert len(rejected.selected_hunks) == 0
+    assert len(rejected.rejected_hunks) == 3
+
+
+def test_finish_review() -> None:
+    model = _sample_model()
+    state = _state(selected_hunks=frozenset([(0, 0)]))
+    
+    result = apply_viewer_key(state, model, "finish")
+    assert isinstance(result, DiffReviewResult)
+    assert not result.cancelled
+    assert (0, 0) in result.accepted
+
+
+def test_hunk_checkbox_rendering() -> None:
+    row = HunkHeaderRow(0, 0, "@@ -1 +1 @@", 1, 1, 0)
+    state = _state()
+
+    from dataclasses import replace
+    accepted = replace(state, selected_hunks=frozenset([(0, 0)]))
+    rejected = replace(state, rejected_hunks=frozenset([(0, 0)]))
+
+    assert "[ ]" in render_hunk_header_row(row, state).plain
+    assert "[✓]" in render_hunk_header_row(row, accepted).plain
+    assert "[✗]" in render_hunk_header_row(row, rejected).plain
+

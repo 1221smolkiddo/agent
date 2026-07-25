@@ -6,7 +6,7 @@ import os
 import shutil
 import sys
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from rich.console import Console, Group, RenderableType
@@ -35,6 +35,11 @@ DiffViewerKey = Literal[
     "next_hunk",
     "prev_hunk",
     "toggle_mode",
+    "accept_hunk",
+    "reject_hunk",
+    "accept_all",
+    "reject_all",
+    "finish",
     "quit",
     "exit",
     "interrupt",
@@ -43,6 +48,12 @@ DiffViewerKey = Literal[
 STICKY_HEADER_LINES = 4
 DEFAULT_TERMINAL_HEIGHT = 24
 MIN_SIDE_BY_SIDE_WIDTH = 70
+
+@dataclass(frozen=True)
+class DiffReviewResult:
+    accepted: frozenset[tuple[int, int]]
+    rejected: frozenset[tuple[int, int]]
+    cancelled: bool
 
 
 @dataclass(frozen=True)
@@ -53,6 +64,8 @@ class DiffViewerState:
     scroll_offset: int
     terminal_height: int
     view_mode: DiffViewMode = DiffViewMode.UNIFIED
+    selected_hunks: frozenset[tuple[int, int]] = frozenset()
+    rejected_hunks: frozenset[tuple[int, int]] = frozenset()
 
     @property
     def content_height(self) -> int:
@@ -71,6 +84,8 @@ def initial_viewer_state(
         scroll_offset=0,
         terminal_height=terminal_height,
         view_mode=mode,
+        selected_hunks=frozenset(),
+        rejected_hunks=frozenset(),
     )
 
 
@@ -93,7 +108,7 @@ def visible_row_range(state: DiffViewerState, row_count: int) -> tuple[int, int]
 def ensure_cursor_visible(state: DiffViewerState, row_count: int) -> DiffViewerState:
     """Adjust scroll offset so the cursor stays inside the viewport."""
     if row_count <= 0:
-        return DiffViewerState(0, 0, state.terminal_height, view_mode=state.view_mode)
+        return replace(state, cursor_row=0, scroll_offset=0)
 
     content_height = state.content_height
     scroll_offset = state.scroll_offset
@@ -106,11 +121,10 @@ def ensure_cursor_visible(state: DiffViewerState, row_count: int) -> DiffViewerS
 
     max_scroll = max(0, row_count - content_height)
     scroll_offset = max(0, min(scroll_offset, max_scroll))
-    return DiffViewerState(
+    return replace(
+        state,
         cursor_row=cursor_row,
         scroll_offset=scroll_offset,
-        terminal_height=state.terminal_height,
-        view_mode=state.view_mode,
     )
 
 
@@ -118,12 +132,7 @@ def move_cursor(state: DiffViewerState, row_count: int, delta: int) -> DiffViewe
     """Move the cursor by `delta` rows and keep it visible."""
     cursor_row = clamp_row(state.cursor_row + delta, row_count)
     return ensure_cursor_visible(
-        DiffViewerState(
-            cursor_row=cursor_row,
-            scroll_offset=state.scroll_offset,
-            terminal_height=state.terminal_height,
-            view_mode=state.view_mode,
-        ),
+        replace(state, cursor_row=cursor_row),
         row_count,
     )
 
@@ -143,20 +152,19 @@ def page_up(state: DiffViewerState, row_count: int) -> DiffViewerState:
 def go_home(state: DiffViewerState, row_count: int) -> DiffViewerState:
     """Jump to the first row."""
     _ = row_count
-    return DiffViewerState(0, 0, state.terminal_height, view_mode=state.view_mode)
+    return replace(state, cursor_row=0, scroll_offset=0)
 
 
 def go_end(state: DiffViewerState, row_count: int) -> DiffViewerState:
     """Jump to the last row."""
     if row_count <= 0:
-        return DiffViewerState(0, 0, state.terminal_height, view_mode=state.view_mode)
+        return replace(state, cursor_row=0, scroll_offset=0)
     cursor_row = row_count - 1
     scroll_offset = max(0, row_count - state.content_height)
-    return DiffViewerState(
+    return replace(
+        state,
         cursor_row=cursor_row,
         scroll_offset=scroll_offset,
-        terminal_height=state.terminal_height,
-        view_mode=state.view_mode,
     )
 
 
@@ -172,12 +180,7 @@ def next_hunk(state: DiffViewerState, model: DiffViewModel) -> DiffViewerState:
     for index in hunk_header_rows(model):
         if index > state.cursor_row:
             return ensure_cursor_visible(
-                DiffViewerState(
-                    index,
-                    state.scroll_offset,
-                    state.terminal_height,
-                    view_mode=state.view_mode,
-                ),
+                replace(state, cursor_row=index),
                 model.row_count,
             )
     return state
@@ -193,12 +196,7 @@ def previous_hunk(state: DiffViewerState, model: DiffViewModel) -> DiffViewerSta
     if previous is None:
         return state
     return ensure_cursor_visible(
-        DiffViewerState(
-            previous,
-            state.scroll_offset,
-            state.terminal_height,
-            view_mode=state.view_mode,
-        ),
+        replace(state, cursor_row=previous),
         model.row_count,
     )
 
@@ -207,12 +205,14 @@ def apply_viewer_key(
     state: DiffViewerState,
     model: DiffViewModel,
     key: DiffViewerKey,
-) -> DiffViewerState | None:
-    """Apply a navigation key and return the next state, or `None` to exit."""
+) -> DiffViewerState | DiffReviewResult | None:
+    """Apply a navigation key and return the next state, DiffReviewResult, or `None` to exit."""
     row_count = model.row_count
 
     if key in {"quit", "exit"}:
-        return None
+        return DiffReviewResult(frozenset(), frozenset(), cancelled=True)
+    if key == "finish":
+        return DiffReviewResult(state.selected_hunks, state.rejected_hunks, cancelled=False)
     if key == "interrupt":
         raise KeyboardInterrupt
     if key in {"up", "left"}:
@@ -231,18 +231,41 @@ def apply_viewer_key(
         return next_hunk(state, model)
     if key == "prev_hunk":
         return previous_hunk(state, model)
+    if key == "accept_hunk":
+        hunk_id = current_hunk_id(model, state.cursor_row)
+        if hunk_id:
+            new_selected = state.selected_hunks | {hunk_id}
+            new_rejected = state.rejected_hunks - {hunk_id}
+            return replace(state, selected_hunks=new_selected, rejected_hunks=new_rejected)
+        return state
+    if key == "reject_hunk":
+        hunk_id = current_hunk_id(model, state.cursor_row)
+        if hunk_id:
+            new_rejected = state.rejected_hunks | {hunk_id}
+            new_selected = state.selected_hunks - {hunk_id}
+            return replace(state, selected_hunks=new_selected, rejected_hunks=new_rejected)
+        return state
+    if key == "accept_all":
+        all_hunks = frozenset(
+            (row.file_index, row.hunk_index)
+            for row in model.rows
+            if isinstance(row, HunkHeaderRow)
+        )
+        return replace(state, selected_hunks=all_hunks, rejected_hunks=frozenset())
+    if key == "reject_all":
+        all_hunks = frozenset(
+            (row.file_index, row.hunk_index)
+            for row in model.rows
+            if isinstance(row, HunkHeaderRow)
+        )
+        return replace(state, selected_hunks=frozenset(), rejected_hunks=all_hunks)
     if key == "toggle_mode":
         next_mode = (
             DiffViewMode.SIDE_BY_SIDE
             if state.view_mode == DiffViewMode.UNIFIED
             else DiffViewMode.UNIFIED
         )
-        return DiffViewerState(
-            cursor_row=state.cursor_row,
-            scroll_offset=state.scroll_offset,
-            terminal_height=state.terminal_height,
-            view_mode=next_mode,
-        )
+        return replace(state, view_mode=next_mode)
     return state
 
 
@@ -255,6 +278,28 @@ def file_header_at_row(model: DiffViewModel, row_index: int) -> FileHeaderRow | 
         row = model.rows[index]
         if isinstance(row, FileHeaderRow):
             return row
+    return None
+
+
+def current_hunk_id(model: DiffViewModel, row_index: int) -> tuple[int, int] | None:
+    """Return `(file_index, hunk_index)` for the hunk containing or immediately associated with `row_index`."""
+    if not model.rows:
+        return None
+    bounded = clamp_row(row_index, model.row_count)
+    row = model.rows[bounded]
+    
+    if hasattr(row, "file_index") and hasattr(row, "hunk_index"):
+        return (row.file_index, row.hunk_index)
+        
+    if isinstance(row, FileHeaderRow):
+        for index in range(bounded + 1, model.row_count):
+            next_row = model.rows[index]
+            if isinstance(next_row, HunkHeaderRow):
+                if next_row.file_index == row.file_index:
+                    return (next_row.file_index, next_row.hunk_index)
+                break
+            if isinstance(next_row, FileHeaderRow):
+                break
     return None
 
 
@@ -301,9 +346,18 @@ def render_file_header_row(row: FileHeaderRow) -> Text:
     return rendered
 
 
-def render_hunk_header_row(row: HunkHeaderRow) -> Text:
+def render_hunk_header_row(row: HunkHeaderRow, state: DiffViewerState) -> Text:
     """Render a hunk header row."""
-    return Text(row.header, style="bold yellow")
+    rendered = Text()
+    hunk_id = (row.file_index, row.hunk_index)
+    if hunk_id in state.selected_hunks:
+        rendered.append("[✓] ", style="bold green")
+    elif hunk_id in state.rejected_hunks:
+        rendered.append("[✗] ", style="bold red")
+    else:
+        rendered.append("[ ] ", style="bold dim")
+    rendered.append(row.header, style="bold yellow")
+    return rendered
 
 
 def render_line_row(row: LineRow) -> Text:
@@ -413,12 +467,12 @@ def render_side_by_side_line_row(
     return rendered
 
 
-def render_diff_row(row: DiffRow, *, highlight: bool = False) -> Text:
+def render_diff_row(row: DiffRow, state: DiffViewerState, *, highlight: bool = False) -> Text:
     """Render any supported diff row in unified format."""
     if isinstance(row, FileHeaderRow):
         rendered = render_file_header_row(row)
     elif isinstance(row, HunkHeaderRow):
-        rendered = render_hunk_header_row(row)
+        rendered = render_hunk_header_row(row, state)
     else:
         rendered = render_line_row(row)
 
@@ -470,7 +524,7 @@ def render_unified_viewport(
     lines: list[Text] = []
     for index in range(start, end):
         lines.append(
-            render_diff_row(model.rows[index], highlight=index == state.cursor_row)
+            render_diff_row(model.rows[index], state, highlight=index == state.cursor_row)
         )
 
     if not lines:
@@ -500,7 +554,7 @@ def render_side_by_side_viewport(
                 rendered.stylize("reverse")
             lines.append(rendered)
         else:
-            lines.append(render_diff_row(row, highlight=is_highlight))
+            lines.append(render_diff_row(row, state, highlight=is_highlight))
 
     if not lines:
         lines.append(Text("No diff rows to display.", style="dim"))
@@ -544,7 +598,7 @@ def show_diff(
     view_mode: DiffViewMode | str | None = None,
     console: Console | None = None,
     read_key: Callable[[], DiffViewerKey | None] | None = None,
-) -> None:
+) -> DiffReviewResult:
     """Display an interactive diff viewer until the user exits."""
     console = console or Console()
     terminal_height = (
@@ -564,7 +618,7 @@ def show_diff(
 
     if not use_screen and read_key is None:
         console.print(render_screen(model, state, console=console))
-        return
+        return DiffReviewResult(frozenset(), frozenset(), cancelled=True)
 
     with Live(
         render_screen(model, state, console=console),
@@ -582,9 +636,13 @@ def show_diff(
             except KeyboardInterrupt:
                 raise
             if next_state is None:
-                break
+                return DiffReviewResult(frozenset(), frozenset(), cancelled=True)
+            if isinstance(next_state, DiffReviewResult):
+                return next_state
             state = next_state
             live.update(render_screen(model, state, console=console))
+
+    return DiffReviewResult(frozenset(), frozenset(), cancelled=True)
 
 
 def _default_read_key() -> DiffViewerKey | None:
@@ -677,6 +735,16 @@ def _normalize_key(value: str) -> DiffViewerKey | None:
         return "toggle_mode"
     if value == "\x1b":
         return "exit"
+    if value in {"\r", "\n"}:
+        return "finish"
+    if value == "a":
+        return "accept_hunk"
+    if value == "r":
+        return "reject_hunk"
+    if value == "A":
+        return "accept_all"
+    if value == "R":
+        return "reject_all"
     return None
 
 
