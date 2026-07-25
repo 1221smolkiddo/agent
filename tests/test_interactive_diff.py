@@ -17,7 +17,6 @@ from code_agent.interactive_diff import (
     DiffReviewResult,
     DiffViewerState,
     apply_viewer_key,
-    current_hunk_id,
     ensure_cursor_visible,
     file_header_at_row,
     go_end,

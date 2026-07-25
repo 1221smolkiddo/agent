@@ -617,12 +617,42 @@ class ToolRegistry:
         except ValueError as exc:
             return ToolResult(ok=False, output=str(exc))
         try:
-            plan = self.transaction_manager.plan_patch(
-                "apply_patch",
-                patch,
-                paths,
-                metadata=metadata,
-            )
+            review = None
+            if self.session_state and getattr(self.session_state, "per_hunk_review_enabled", False):
+                from .diff_viewer import parse_unified_diff, DiffParseError
+                from .diff_viewer_rows import build_diff_view_model
+                from .interactive_diff import show_diff
+                from .diff_types import DiffViewMode
+
+                try:
+                    files = parse_unified_diff(patch)
+                    if files:
+                        model = build_diff_view_model(files)
+                        mode = getattr(self.session_state, "preferred_diff_mode", None)
+                        view_mode = DiffViewMode.normalize(mode) if mode is not None else None
+                        review = show_diff(model, view_mode=view_mode)
+                        if review.cancelled:
+                            return ToolResult(ok=False, output="Patch application cancelled during review.")
+                except (DiffParseError, ValueError):
+                    pass
+                except Exception as exc:
+                    return ToolResult(ok=False, output=f"Reviewer error: {exc}")
+
+            if review:
+                plan = self.transaction_manager.plan_patch_with_review(
+                    "apply_patch",
+                    patch,
+                    paths,
+                    review,
+                    metadata=metadata,
+                )
+            else:
+                plan = self.transaction_manager.plan_patch(
+                    "apply_patch",
+                    patch,
+                    paths,
+                    metadata=metadata,
+                )
         except (TransactionConflict, TransactionError) as exc:
             return ToolResult(ok=False, output=str(exc), metadata=metadata | {"stage": "check"})
         approval_detail = self._patch_approval_detail(patch, metadata)

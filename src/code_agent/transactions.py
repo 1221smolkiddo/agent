@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from .patches import git_style_unified_diff
+from .patch_reconstruction import reconstruct_selected_patch
+from .interactive_diff import DiffReviewResult
 from .safety import is_sensitive_path
 from .sandbox_security import validate_workspace_boundary
 
@@ -132,6 +134,42 @@ class TransactionPlan:
         validator: Callable[[TransactionPlan], tuple[bool, str]] | None = None,
     ) -> TransactionResult:
         return self.manager.commit(self, validator=validator)
+
+
+class NoOpTransaction:
+    @property
+    def transaction_id(self) -> str:
+        return "noop"
+
+    @property
+    def action(self) -> str:
+        return "noop"
+
+    @property
+    def state(self) -> str:
+        return "aborted"
+
+    @property
+    def paths(self) -> list[str]:
+        return []
+
+    def abort(self, reason: str) -> None:
+        pass
+
+    def commit(
+        self,
+        *,
+        validator: Callable[[Any], tuple[bool, str]] | None = None,
+    ) -> TransactionResult:
+        return TransactionResult(
+            ok=True,
+            transaction_id="noop",
+            action="noop",
+            state="committed",
+            paths=(),
+            records=(),
+            output="No hunks were accepted. Patch aborted cleanly.",
+        )
 
 
 @dataclass(frozen=True)
@@ -355,6 +393,26 @@ class WorkspaceTransactionManager:
                     )
                 )
         return self.plan(action, entries, metadata=metadata)
+
+    def plan_patch_with_review(
+        self,
+        action: str,
+        patch: str,
+        paths: Iterable[str],
+        review: DiffReviewResult,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> TransactionPlan | NoOpTransaction:
+        reconstructed = reconstruct_selected_patch(patch, review)
+        if not reconstructed:
+            return NoOpTransaction()
+            
+        return self.plan_patch(
+            action=action,
+            patch=reconstructed,
+            paths=paths,
+            metadata=metadata,
+        )
 
     def plan(
         self,

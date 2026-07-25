@@ -568,3 +568,84 @@ def test_patch_staging_does_not_mutate_parent_git_workspace(tmp_path: Path) -> N
     assert (tmp_path / "NOTES.md").read_text(encoding="utf-8") == (
         "# Notes\nPatch-backed creation.\n"
     )
+
+def test_plan_patch_with_review_applies_selectively(tmp_path: Path) -> None:
+    (tmp_path / "app.txt").write_text("before\nline1\nafter1\nline2\nafter2\n", encoding="utf-8")
+    patch = (
+        "--- a/app.txt\n"
+        "+++ b/app.txt\n"
+        "@@ -1,5 +1,5 @@\n"
+        " before\n"
+        "-line1\n"
+        "+line1mod\n"
+        " after1\n"
+        "-line2\n"
+        "+line2mod\n"
+        " after2\n"
+    )
+    manager = WorkspaceTransactionManager(tmp_path)
+    from code_agent.interactive_diff import DiffReviewResult
+    
+    review = DiffReviewResult(
+        accepted=frozenset({(0, 0)}),
+        rejected=frozenset(),
+        cancelled=False,
+    )
+    # The reconstructed patch will include both replacements because they are in the same hunk!
+    # Wait, if they are in the same hunk, (0, 0) accepts BOTH.
+    # To test selective application, they must be in SEPARATE hunks.
+    patch = (
+        "--- a/app.txt\n"
+        "+++ b/app.txt\n"
+        "@@ -1,3 +1,3 @@\n"
+        " before\n"
+        "-line1\n"
+        "+line1mod\n"
+        " after1\n"
+        "@@ -4,2 +4,2 @@\n"
+        "-line2\n"
+        "+line2mod\n"
+        " after2\n"
+    )
+    
+    result = manager.plan_patch_with_review(
+        "apply_patch",
+        patch,
+        ["app.txt"],
+        review
+    ).commit()
+
+    assert result.ok
+    assert (tmp_path / "app.txt").read_text(encoding="utf-8") == "before\nline1mod\nafter1\nline2\nafter2\n"
+
+def test_plan_patch_with_review_aborts_cleanly_when_all_rejected(tmp_path: Path) -> None:
+    (tmp_path / "app.txt").write_text("before\nline1\nafter1\n", encoding="utf-8")
+    patch = (
+        "--- a/app.txt\n"
+        "+++ b/app.txt\n"
+        "@@ -1,3 +1,3 @@\n"
+        " before\n"
+        "-line1\n"
+        "+line1mod\n"
+        " after1\n"
+    )
+    manager = WorkspaceTransactionManager(tmp_path)
+    from code_agent.interactive_diff import DiffReviewResult
+    
+    review = DiffReviewResult(
+        accepted=frozenset(),
+        rejected=frozenset({(0, 0)}),
+        cancelled=False,
+    )
+    
+    result = manager.plan_patch_with_review(
+        "apply_patch",
+        patch,
+        ["app.txt"],
+        review
+    ).commit()
+
+    assert result.ok
+    assert result.transaction_id == "noop"
+    assert (tmp_path / "app.txt").read_text(encoding="utf-8") == "before\nline1\nafter1\n"
+
