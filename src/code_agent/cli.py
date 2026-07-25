@@ -2211,6 +2211,7 @@ def mcp_list() -> None:
 @mcp_app.command("status")
 def mcp_status() -> None:
     """Display runtime information for every configured server."""
+    import json
     from pathlib import Path
     from rich.console import Console
     from rich.table import Table
@@ -2219,7 +2220,17 @@ def mcp_status() -> None:
     console = Console()
     runtime = PlatformRuntime.create(Path.cwd(), trust_workspace_extensions=False)
     try:
-        runtime.configure_mcp()
+        try:
+            runtime.configure_mcp()
+        except json.JSONDecodeError as exc:
+            console.print(f"[red]Failed to parse .agents/mcp.json: {exc}[/red]")
+            return
+        except ValueError as exc:
+            console.print(f"[red]Configuration error: {exc}[/red]")
+            return
+        except Exception as exc:
+            console.print(f"[red]Unexpected error during configuration parsing: {exc}[/red]")
+            return
 
         status_info = runtime.mcp.status()
         if not status_info:
@@ -2258,6 +2269,7 @@ def mcp_status() -> None:
 @mcp_app.command("tools")
 def mcp_tools() -> None:
     """List every currently registered MCP tool."""
+    import json
     from pathlib import Path
     from rich.console import Console
     from .platform_runtime import PlatformRuntime
@@ -2265,7 +2277,17 @@ def mcp_tools() -> None:
     console = Console()
     runtime = PlatformRuntime.create(Path.cwd(), trust_workspace_extensions=False)
     try:
-        runtime.configure_mcp()
+        try:
+            runtime.configure_mcp()
+        except json.JSONDecodeError as exc:
+            console.print(f"[red]Failed to parse .agents/mcp.json: {exc}[/red]")
+            return
+        except ValueError as exc:
+            console.print(f"[red]Configuration error: {exc}[/red]")
+            return
+        except Exception as exc:
+            console.print(f"[red]Unexpected error during configuration parsing: {exc}[/red]")
+            return
 
         tools = [t for t in runtime.tools.discover() if t.get("namespace", "").startswith("mcp-")]
 
@@ -2283,6 +2305,82 @@ def mcp_tools() -> None:
             for t in namespace_tools:
                 console.print(f"    [bold]{t['name']}[/bold]: {t.get('description', '')}")
             console.print("")
+    finally:
+        runtime.close()
+
+
+@mcp_app.command("validate")
+def mcp_validate() -> None:
+    """Validate MCP configuration and environment."""
+    import json
+    from pathlib import Path
+    from rich.console import Console
+    from rich.table import Table
+    from .platform_runtime import PlatformRuntime
+    from .mcp_validation import validate_configuration, ValidationStatus, Severity
+
+    console = Console()
+    path = Path(".agents/mcp.json")
+    if not path.exists():
+        console.print("No MCP configuration found at [bold].agents/mcp.json[/bold].")
+        raise typer.Exit(code=0)
+
+    runtime = PlatformRuntime.create(Path.cwd(), trust_workspace_extensions=False)
+    try:
+        try:
+            runtime.configure_mcp()
+        except json.JSONDecodeError as exc:
+            console.print(f"[red]Failed to parse .agents/mcp.json: {exc}[/red]")
+            raise typer.Exit(code=1)
+        except ValueError as exc:
+            console.print(f"[red]Configuration error: {exc}[/red]")
+            raise typer.Exit(code=1)
+        except Exception as exc:
+            console.print(f"[red]Unexpected error during configuration parsing: {exc}[/red]")
+            raise typer.Exit(code=2)
+
+        configs = [client.config for client in runtime.mcp.clients.values()]
+        if not configs:
+            console.print("No servers configured.")
+            raise typer.Exit(code=0)
+
+        reports = validate_configuration(configs)
+        
+        table = Table(title="MCP Validation Summary")
+        table.add_column("Server", style="bold")
+        table.add_column("Result")
+        
+        has_errors = False
+        for report in reports:
+            if report.status == ValidationStatus.PASS:
+                result_str = "[green]PASS[/green]"
+            elif report.status == ValidationStatus.WARNING:
+                result_str = "[yellow]WARNING[/yellow]"
+            else:
+                result_str = "[red]FAIL[/red]"
+                has_errors = True
+            table.add_row(report.server, result_str)
+            
+        console.print(table)
+        console.print("")
+        
+        for report in reports:
+            console.print(f"[bold]{report.server}[/bold]")
+            if not report.findings:
+                console.print("  [green]✓[/green] No issues found")
+            for finding in report.findings:
+                if finding.severity == Severity.SUCCESS:
+                    console.print(f"  [green]✓[/green] {finding.message}")
+                elif finding.severity == Severity.WARNING:
+                    console.print(f"  [yellow]![/yellow] {finding.message}")
+                else:
+                    console.print(f"  [red]✗[/red] {finding.message}")
+            console.print("")
+            
+        if has_errors:
+            raise typer.Exit(code=1)
+        else:
+            raise typer.Exit(code=0)
     finally:
         runtime.close()
 

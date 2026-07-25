@@ -86,6 +86,26 @@ def test_mcp_status_no_servers(workspace: Path) -> None:
     assert result.exit_code == 0
     assert "No servers configured." in result.stdout
 
+
+@pytest.mark.parametrize(
+    ("command", "expected_text"),
+    [
+        (["mcp", "status"], "Failed to parse .agents/mcp.json"),
+        (["mcp", "tools"], "Failed to parse .agents/mcp.json"),
+    ],
+)
+def test_mcp_inspection_commands_handle_malformed_config(
+    workspace: Path, command: list[str], expected_text: str
+) -> None:
+    agents_dir = workspace / ".agents"
+    agents_dir.mkdir()
+    (agents_dir / "mcp.json").write_text("invalid json")
+
+    result = runner.invoke(app, command)
+    assert result.exit_code == 0
+    assert expected_text in result.stdout
+
+
 def test_mcp_tools_listing_offline(workspace: Path) -> None:
     agents_dir = workspace / ".agents"
     agents_dir.mkdir()
