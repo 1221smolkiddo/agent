@@ -3,8 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from .oauth_constants import GOOGLE_CLIENT_ID
-
+from .oauth_constants import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
 
 class OAuthConfigurationError(RuntimeError):
     pass
@@ -33,5 +32,10 @@ class GoogleOAuthConfig:
             raise OAuthConfigurationError("GOOGLE_OAUTH_TIMEOUT_SECONDS must be a number.") from exc
         if not 1 <= timeout <= 900:
             raise OAuthConfigurationError("GOOGLE_OAUTH_TIMEOUT_SECONDS must be between 1 and 900.")
-        secret = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip() or None
+        
+        secret = (
+            os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
+            or GOOGLE_CLIENT_SECRET
+        ) or None
+        
         return cls(client_id=client_id, client_secret=secret, timeout_seconds=timeout)

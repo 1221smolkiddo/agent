@@ -843,9 +843,58 @@ class TestAuthRepair:
 
 
 # ======================================================================
-# Config tests
+# Exchange code tests
 # ======================================================================
 
+class TestExchangeCode:
+    def test_exchange_code_includes_client_secret_for_google_desktop_client(self, monkeypatch) -> None:
+        captured_payload = {}
+        
+        def mock_post_token(url: str, fields: dict) -> dict:
+            nonlocal captured_payload
+            captured_payload = fields
+            return {"access_token": "token"}
+            
+        monkeypatch.setattr("code_agent.auth.oauth._post_token", mock_post_token)
+        
+        from code_agent.auth.oauth import exchange_code
+        
+        exchange_code(
+            client_id="test-client-id",
+            client_secret="test-client-secret",
+            code="test-code",
+            redirect_uri="http://127.0.0.1:8080",
+            verifier="test-verifier"
+        )
+        
+        assert captured_payload["client_id"] == "test-client-id"
+        assert captured_payload["client_secret"] == "test-client-secret"
+        
+    def test_exchange_code_omits_client_secret_if_none(self, monkeypatch) -> None:
+        captured_payload = {}
+        
+        def mock_post_token(url: str, fields: dict) -> dict:
+            nonlocal captured_payload
+            captured_payload = fields
+            return {"access_token": "token"}
+            
+        monkeypatch.setattr("code_agent.auth.oauth._post_token", mock_post_token)
+        
+        from code_agent.auth.oauth import exchange_code
+        
+        exchange_code(
+            client_id="test-client-id",
+            client_secret=None,
+            code="test-code",
+            redirect_uri="http://127.0.0.1:8080",
+            verifier="test-verifier"
+        )
+        
+        assert "client_secret" not in captured_payload
+
+# ======================================================================
+# Config tests
+# ======================================================================
 
 class TestOAuthConfig:
     def test_requires_client_id(self, monkeypatch) -> None:
@@ -865,6 +914,18 @@ class TestOAuthConfig:
         monkeypatch.setattr("code_agent.auth.config.GOOGLE_CLIENT_ID", "packaged-client-id")
         config = GoogleOAuthConfig.from_environment()
         assert config.client_id == "env-client-id"
+
+    def test_uses_embedded_client_secret_when_env_missing(self, monkeypatch) -> None:
+        monkeypatch.delenv("GOOGLE_CLIENT_SECRET", raising=False)
+        monkeypatch.setattr("code_agent.auth.config.GOOGLE_CLIENT_SECRET", "packaged-secret")
+        config = GoogleOAuthConfig.from_environment()
+        assert config.client_secret == "packaged-secret"
+
+    def test_env_client_secret_overrides_embedded_secret(self, monkeypatch) -> None:
+        monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "env-secret")
+        monkeypatch.setattr("code_agent.auth.config.GOOGLE_CLIENT_SECRET", "packaged-secret")
+        config = GoogleOAuthConfig.from_environment()
+        assert config.client_secret == "env-secret"
 
     def test_timeout_bounds(self, monkeypatch) -> None:
         monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client")
