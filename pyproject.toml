@@ -1,6 +1,6 @@
 [project]
 name = "agent47"
-version = "0.1.0b2"
+version = "0.1.0b3"
 description = "A Python CLI-first coding agent with a reusable core for future editor integrations."
 readme = "README.md"
 requires-python = ">=3.11"
