@@ -255,7 +255,7 @@ def build_default_registry() -> CommandRegistry:
             name="/exit",
             aliases=("/quit", "/q", "/stop"),
             category="Conversation",
-            description="Exit the interactive Agent47 session",
+            description="Exit session",
             usage="/exit",
             examples=("/exit", "/quit"),
             keywords=("exit", "quit", "stop", "close", "bye"),
