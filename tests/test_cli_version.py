@@ -1,10 +1,9 @@
 from typer.testing import CliRunner
 from code_agent.cli import app
 from unittest.mock import patch
+import importlib.metadata
 
 runner = CliRunner()
-
-import importlib.metadata
 original_version = importlib.metadata.version
 
 def mock_version(name):

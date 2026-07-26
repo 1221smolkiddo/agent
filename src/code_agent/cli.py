@@ -114,7 +114,7 @@ def version_callback(value: bool) -> None:
         raise typer.Exit()
 
 @app.callback()
-def main(
+def root_callback(
     version: Optional[bool] = typer.Option(
         None,
         "--version",
