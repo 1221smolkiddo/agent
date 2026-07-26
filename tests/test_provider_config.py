@@ -7,6 +7,16 @@ from code_agent.cli import app
 from code_agent.config import Settings
 from code_agent.factory import create_agent, create_chat_client
 from code_agent.model_presets import format_model_presets, resolve_model_preset
+from code_agent.credentials.keyring import KeyringUnavailableError
+
+@pytest.fixture(autouse=True)
+def _mock_os_keyring(monkeypatch):
+    """Ensure OS keyring doesn't bleed into provider config tests."""
+    def raise_keyring_error(*args, **kwargs):
+        raise KeyringUnavailableError("Mocked keyring")
+    monkeypatch.setattr(
+        "code_agent.credentials.keyring.CredentialStore._backend", raise_keyring_error
+    )
 
 
 def test_openrouter_is_default_provider() -> None:
@@ -23,7 +33,10 @@ def test_openrouter_is_default_provider() -> None:
     assert settings.model_headers == {"X-Title": "code-agent"}
 
 
-def test_openai_fallback_still_works_when_openrouter_key_is_missing() -> None:
+def test_openai_fallback_still_works_when_openrouter_key_is_missing(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "code_agent.credentials.keyring.CredentialStore.get_provider_key", lambda self, p: None
+    )
     settings = Settings(
         _env_file=None,
         agent_provider="openrouter",
