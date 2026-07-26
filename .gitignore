@@ -12,3 +12,4 @@ build/
 *.egg-info/
 .code-agent/
 node_modules/
+temp/
