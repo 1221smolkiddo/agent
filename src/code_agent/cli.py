@@ -106,6 +106,24 @@ from .schema import (
 )
 
 app = typer.Typer(help="A CLI-first coding agent.")
+
+def version_callback(value: bool) -> None:
+    if value:
+        from code_agent.interactive import agent_version
+        typer.echo(f"Agent47 {agent_version()}")
+        raise typer.Exit()
+
+@app.callback()
+def main(
+    version: Optional[bool] = typer.Option(
+        None,
+        "--version",
+        callback=version_callback,
+        is_eager=True,
+        help="Show the application's version and exit.",
+    ),
+) -> None:
+    pass
 history_app = typer.Typer(
     help="Inspect saved agent runs.",
     invoke_without_command=True,

@@ -1429,9 +1429,16 @@ def format_model_metadata(model) -> str:
 
 def agent_version() -> str:
     try:
+        return version("agent47")
+    except PackageNotFoundError:
+        pass
+
+    try:
         return version("code-agent")
     except PackageNotFoundError:
-        return "0.1.0"
+        pass
+
+    return "development"
 
 
 def git_branch(cwd: Path) -> str | None:
