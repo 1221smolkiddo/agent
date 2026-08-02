@@ -7,10 +7,12 @@ import os
 from pathlib import Path
 import re
 import signal
+import sqlite3
 import sys
 import threading
 import time
 import traceback
+import warnings
 from typing import Protocol
 
 import typer  # noqa: F401
@@ -93,6 +95,11 @@ def main() -> None:
         app(prog_name="agent47")
         return
     settings = Settings()
+    
+    # Supress RuntimeWarnings unless debug is explicitly enabled (Production Readiness Pass 1)
+    if not os.environ.get("AGENT47_DEBUG") and "--debug" not in sys.argv:
+        warnings.filterwarnings("ignore", category=RuntimeWarning)
+        
     onboarding_model = require_interactive_onboarding(settings)
     if onboarding_model is _ONBOARDING_BLOCKED:
         return
@@ -256,7 +263,7 @@ def main() -> None:
                 "Error",
                 [
                     ("Task execution could not be completed.", ""),
-                    ("Reason:", str(exc)),
+                    ("Reason:", friendly_error_message(exc)),
                 ],
                 ["Use /debug to see the full stack trace", "Check model configurations"]
             )
@@ -1290,6 +1297,8 @@ def inferred_provider_for_model(settings: Settings, model: str) -> str | None:
     registered = find_registered_model(model)
     if registered:
         return registered.provider
+    if "/" in model:
+        return "openrouter"
     return None
 
 
@@ -1298,7 +1307,7 @@ def model_switch_error(settings: Settings, model: str, *, stream_model: bool = T
     try:
         validate_model_selection(provider=provider, model=model, stream=stream_model)
         settings.model_api_key_for(provider)
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError) as exc:
         return str(exc)
     return None
 
@@ -1487,6 +1496,19 @@ def run_lightweight_chat(user_input: str, client: InteractiveAgent) -> str:
             {"role": "user", "content": user_input},
         ]
     )
+
+
+def friendly_error_message(exc: Exception) -> str:
+    """Map common exceptions to user-friendly messages (Production Readiness Pass 1)."""
+    if isinstance(exc, sqlite3.OperationalError):
+        return "A temporary database issue occurred. Please retry."
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return "The model provider could not be reached. Check your connection."
+    if isinstance(exc, PermissionError):
+        return "File system permission denied."
+    
+    # Fallback to model error parsing if it doesn't match standard OS/DB errors
+    return friendly_model_error(exc)
 
 
 def friendly_model_error(exc: Exception) -> str:

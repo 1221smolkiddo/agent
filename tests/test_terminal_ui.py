@@ -259,6 +259,7 @@ def test_model_choice_accepts_preset_names() -> None:
 def test_model_switch_validates_inferred_provider_key(monkeypatch) -> None:
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
+    monkeypatch.setattr("code_agent.credentials.keyring.CredentialStore.get_provider_key", lambda self, p: None)
     missing_key = Settings(
         _env_file=None,
         agent_provider="nvidia",

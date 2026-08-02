@@ -230,13 +230,31 @@ class AgentStorage:
         return deleted
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=30)
-        conn.row_factory = sqlite3.Row
-        conn.execute("pragma foreign_keys = on")
-        conn.execute("pragma busy_timeout = 30000")
-        if str(self.db_path) == ":memory:" or self.db_path.name == "eval.db":
-            conn.execute("pragma synchronous = OFF")
-        return conn
+        from .failure_types import SQLITE_RETRY_ATTEMPTS, SQLITE_RETRY_BACKOFF_SECONDS
+        import time as _time
+
+        last_error: sqlite3.OperationalError | None = None
+        for attempt in range(SQLITE_RETRY_ATTEMPTS + 1):
+            try:
+                conn = sqlite3.connect(self.db_path, timeout=30)
+                conn.row_factory = sqlite3.Row
+                conn.execute("pragma foreign_keys = on")
+                conn.execute("pragma busy_timeout = 30000")
+                if str(self.db_path) == ":memory:" or self.db_path.name == "eval.db":
+                    conn.execute("pragma synchronous = OFF")
+                return conn
+            except sqlite3.OperationalError as exc:
+                last_error = exc
+                if "locked" not in str(exc).lower() and "busy" not in str(exc).lower():
+                    raise
+                if attempt < SQLITE_RETRY_ATTEMPTS:
+                    backoff = (
+                        SQLITE_RETRY_BACKOFF_SECONDS[attempt]
+                        if attempt < len(SQLITE_RETRY_BACKOFF_SECONDS)
+                        else SQLITE_RETRY_BACKOFF_SECONDS[-1]
+                    )
+                    _time.sleep(backoff)
+        raise last_error  # type: ignore[misc]
 
     def _init_db(self) -> None:
         with self._connect() as conn:

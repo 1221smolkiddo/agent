@@ -13,6 +13,11 @@ from pydantic import TypeAdapter, ValidationError
 from .execution_state import ExecutionState, compact_message_history
 from .durable_execution import AgentExecutionAdapter, DurableExecutionRuntime
 from .execution_host import ExecutionRuntimeHost
+from .failure_types import (
+    CONTEXT_BUDGET_FORCE_COMPACT_RATIO,
+    CONTEXT_BUDGET_TIGHT_TARGET_RATIO,
+    EVIDENCE_RECORDS_LIMIT_COMPACTED,
+)
 from .models import ChatMessage, ModelClient
 from .patches import git_style_unified_diff
 from .platform_runtime import PlatformRuntime
@@ -115,6 +120,7 @@ class CodingAgent:
             runtime_host.shadow if runtime_host is not None else shadow_runtime
         )
         self._active_execution_state: ExecutionState | None = None
+        self._deadline_paused_seconds: float = 0.0
 
     def run(self, task: str) -> str:
         return self.run_detailed(task).message
@@ -135,6 +141,20 @@ class CodingAgent:
     def run_detailed(self, task: str) -> AgentRunResult:
         run_started = perf_counter()
         run_deadline = run_started + self.run_timeout_seconds
+        
+        # Pause deadline during approval waiting (Production Readiness Pass 1)
+        if hasattr(self.tools, "approval_callback") and getattr(self.tools, "approval_callback", None):
+            original_callback = self.tools.approval_callback
+            
+            def _timed_approval(action_type: str, detail: str) -> bool:
+                start = perf_counter()
+                try:
+                    return original_callback(action_type, detail)
+                finally:
+                    self._deadline_paused_seconds += perf_counter() - start
+                    
+            self.tools.approval_callback = _timed_approval
+            
         clean_task = self._extract_user_task(task)
         resuming_durable_execution = bool(self.durable_execution_id)
         durable_goal = self.durable_goal or clean_task
@@ -228,7 +248,7 @@ class CodingAgent:
             )
 
         for step in range(1, self.max_steps + 1):
-            remaining_run_seconds = run_deadline - perf_counter()
+            remaining_run_seconds = run_deadline + self._deadline_paused_seconds - perf_counter()
             if remaining_run_seconds <= 0:
                 return self._finalize_run(
                     AgentRunResult(
@@ -254,6 +274,33 @@ class CodingAgent:
                 chars=sum(len(message.get("content", "")) for message in messages),
                 compacted_messages=compacted_count,
             )
+            # Proactive budget check (Production Readiness Pass 1)
+            budget_hint = execution_state.proactive_budget_check(
+                context_chars=sum(len(m.get("content", "")) for m in messages),
+                max_chars=self.context_max_chars,
+            )
+            if budget_hint:
+                messages.append({"role": "system", "content": budget_hint})
+            total_chars = sum(len(m.get("content", "")) for m in messages)
+            if total_chars > self.context_max_chars * CONTEXT_BUDGET_FORCE_COMPACT_RATIO:
+                execution_state.checkpoint("budget_compaction")
+                tight_target = max(8000, int(self.context_max_chars * CONTEXT_BUDGET_TIGHT_TARGET_RATIO))
+                messages, extra_compacted = compact_message_history(messages, max_chars=tight_target)
+                if extra_compacted:
+                    execution_state.record_context(
+                        chars=sum(len(m.get("content", "")) for m in messages),
+                        compacted_messages=extra_compacted,
+                    )
+                execution_state.evidence_records = (
+                    execution_state.evidence_records[-EVIDENCE_RECORDS_LIMIT_COMPACTED:]
+                )
+                self.storage.add_step(run_id, "tool", {
+                    "type": "budget_compaction",
+                    "step": step,
+                    "original_chars": total_chars,
+                    "compacted_chars": sum(len(m.get("content", "")) for m in messages),
+                    "evidence_trimmed_to": len(execution_state.evidence_records),
+                })
             if step > 1 or execution_state.resume_count:
                 execution_state.checkpoint("before_model")
                 self.storage.add_step(run_id, "tool", execution_state.snapshot())
@@ -669,6 +716,24 @@ class CodingAgent:
                 previous_failure_allows_final = True
                 continue
 
+            # Low-confidence gate (Production Readiness Pass 1)
+            confidence_block = execution_state.low_confidence_blocker(action)
+            if confidence_block is not None:
+                consecutive_failures += 1
+                payload = self._failure_payload(
+                    step=step,
+                    kind="low_confidence",
+                    output=confidence_block,
+                    consecutive_failures=consecutive_failures,
+                )
+                payload["execution_state"] = execution_state.snapshot()
+                self.storage.add_step(run_id, "tool", payload)
+                failed_actions.append(payload)
+                messages.append({"role": "assistant", "content": action.model_dump_json()})
+                messages.append({"role": "user", "content": json.dumps(payload)})
+                self._report_recovery("low confidence; gathering more evidence first")
+                continue
+
             execution_state.begin_action(action)
             before_mutation = self._mutation_state_for_action(action)
             # File operation preview before execution
@@ -782,7 +847,7 @@ class CodingAgent:
             changed_paths = self._successful_mutation_paths(new_mutation_records)
             mutation_records.extend(new_mutation_records)
             verification_result = self._verification_result_from_action(action, result)
-            command_record = self._command_record_from_action(action, result)
+            command_record = self._command_record_from_action(action, result, tool_elapsed_ms)
             context_record = self._context_record_from_action(action, result)
             if command_record:
                 diagnostic_payload = command_record.get("diagnostics")
@@ -798,6 +863,12 @@ class CodingAgent:
                         "regression_candidate": prior_count > 0,
                     }
                 command_records.append(command_record)
+                # Shell command auditing (Production Readiness Pass 1)
+                self.storage.add_step(run_id, "tool", {
+                    "type": "shell_audit",
+                    "step": step,
+                    **command_record,
+                })
             self._report_tool_result(action, result, tool_elapsed_ms)
             if context_record:
                 context_records.append(context_record)
@@ -828,7 +899,10 @@ class CodingAgent:
                 "ok": result.ok,
                 "output": result.output,
                 "elapsed_ms": tool_elapsed_ms,
-                "recovery_instruction": self._recovery_instruction(action, result)
+                "recovery_instruction": (
+                    execution_state.failure_recovery_instruction(action, result)
+                    or self._recovery_instruction(action, result)
+                )
                 if not result.ok
                 else "Continue with the task.",
                 "consecutive_failures": consecutive_failures,
@@ -1812,9 +1886,8 @@ class CodingAgent:
             return "build"
         return None
 
-    @staticmethod
     def _command_record_from_action(
-        action: AgentAction, result: ToolResult
+        self, action: AgentAction, result: ToolResult, elapsed_ms: float = 0.0,
     ) -> dict[str, Any] | None:
         if action.type in {
             "start_process",
@@ -1853,6 +1926,8 @@ class CodingAgent:
                 "ok": result.ok,
                 "status": "ok" if result.ok else "failed",
                 "process": summary,
+                "working_directory": getattr(action, "cwd", "") or str(self.cwd),
+                "duration_ms": elapsed_ms,
             }
         if action.type != "run_shell":
             return None
@@ -1862,6 +1937,10 @@ class CodingAgent:
             "ok": result.ok,
             "status": "passed" if result.ok else "failed",
             "output": result.output,
+            "working_directory": getattr(action, "cwd", "") or str(self.cwd),
+            "exit_code": result.metadata.get("exit_code"),
+            "duration_ms": result.metadata.get("elapsed_ms", elapsed_ms),
+            "captured_output": result.output[:4000],
         }
         for key in ("execution", "logs", "diagnostics"):
             value = result.metadata.get(key)

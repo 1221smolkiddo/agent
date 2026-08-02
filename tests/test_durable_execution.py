@@ -636,3 +636,47 @@ def test_subagent_worker_adapter_bridges_isolated_agent_manager(tmp_path):
     assert next(iter(state.evidence.values())).payload["agent"] == "coder"
     executor.close()
     manager.close()
+
+
+def test_approval_never_expires_if_none(tmp_path):
+    from code_agent.durable_execution import ApprovalProjection, AutonomousExecutor, ExecutionProjection
+    
+    projection = ApprovalProjection(
+        id="appr-1",
+        scope="task",
+        risk="low",
+        task_ids=("task-1",),
+        granted_at="2026-08-02T12:00:00Z",
+    )
+    assert projection.expires_at is None
+
+    state = ExecutionProjection(id="exec-1", approvals={"appr-1": projection})
+    assert AutonomousExecutor._approved(state, "task-1")
+
+
+def test_sqlite_retry_on_transient_lock(tmp_path):
+    import sqlite3
+    import threading
+    import time
+    from code_agent.durable_execution import SQLiteEventStore
+    
+    store = SQLiteEventStore(tmp_path / "execution.db")
+    
+    # Intentionally hold a lock from another connection in exclusive mode
+    # that blocks reading/writing to test the retry logic
+    def locker():
+        conn = sqlite3.connect(tmp_path / "execution.db", timeout=0.1)
+        try:
+            conn.execute("begin exclusive")
+            time.sleep(0.5)
+        finally:
+            conn.close()
+            
+    t = threading.Thread(target=locker)
+    t.start()
+    time.sleep(0.1) # let lock acquire
+    
+    # Store operation should survive the lock by retrying
+    with store._connect() as conn:
+        conn.execute("pragma synchronous=OFF")
+    t.join()

@@ -2776,7 +2776,21 @@ def mcp_prompt(name: str = typer.Argument(..., help="Name of the prompt to displ
         runtime.close()
 
 def main() -> None:
-    app()
+    import os
+    import sys
+    from rich.console import Console
+
+    if os.environ.get("AGENT47_DEBUG") or "--debug" in sys.argv:
+        app()
+    else:
+        try:
+            app()
+        except Exception as exc:
+            from .interactive import friendly_error_message
+            console = Console(stderr=True)
+            console.print(f"\n[red]Error:[/red] {friendly_error_message(exc)}")
+            console.print("[dim]Use --debug to see the full stack trace[/dim]\n")
+            sys.exit(1)
 
 if __name__ == "__main__":
     main()

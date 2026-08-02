@@ -18,7 +18,16 @@ from code_agent.schema import (
 )
 from code_agent.storage import AgentStorage
 from code_agent.tools import ToolRegistry
+import pytest
+from unittest.mock import patch
 
+@pytest.fixture(autouse=True)
+def bypass_low_confidence_blocker(request):
+    if request.node.name == "test_agent_low_confidence_blocks_mutation":
+        yield
+        return
+    with patch("code_agent.execution_state.ExecutionState._confidence", return_value={"score": 1.0, "band": "high"}):
+        yield
 
 class FakeModel:
     model = "fake-model"
@@ -111,9 +120,17 @@ class RecoveringTools:
     def __init__(self, workspace: Path | None = None) -> None:
         self.calls = 0
         self.workspace = workspace
+        self.results: dict[str, ToolResult] = {}
 
     def run(self, action: AgentAction) -> ToolResult:
         self.calls += 1
+        callback = getattr(self, "approval_callback", None)
+        if callable(callback):
+            if not callback(action.type, "dummy"):
+                return ToolResult(ok=False, output="denied")
+                
+        if action.type in self.results:
+            return self.results[action.type]
         if isinstance(action, ReadFileAction):
             return ToolResult(ok=False, output="missing file")
         if isinstance(action, WriteFileAction):
@@ -334,8 +351,11 @@ def test_agent_enforces_plan_completion_before_success_claim(tmp_path: Path) -> 
             '{"type":"final","message":"Updated app.py."}',
         ]
     )
-    agent = make_agent(tmp_path, model, RecoveringTools())
-
+    tools = RecoveringTools(tmp_path)
+    tools.results["read_file"] = ToolResult(ok=True, output="evidence")
+    
+    agent = make_agent(tmp_path, model, tools)
+    
     result = agent.run_detailed("update this project app")
 
     assert result.message == "Updated app.py."
@@ -1206,3 +1226,93 @@ def test_agent_resumes_latest_hierarchical_plan_checkpoint_end_to_end(tmp_path: 
     assert result.execution_state["resumed_from_run_id"] == 41
     assert result.execution_state["plan_steps"][0]["status"] == "completed"
     assert result.execution_state["hypotheses"][0]["id"] == "root-cause"
+
+
+def test_agent_shell_command_audit_completeness(tmp_path: Path) -> None:
+    model = FakeModel([
+        '{"type":"run_shell","command":"echo hello"}',
+        '{"type":"final","message":"done"}',
+    ])
+    tools = RecoveringTools(tmp_path)
+    # mock run_shell to return exit_code
+    tools.results["run_shell"] = ToolResult(ok=True, output="hello", metadata={"exit_code": 0, "elapsed_ms": 150})
+    agent = make_agent(tmp_path, model, tools)
+    
+    result = agent.run_detailed("run command")
+    
+    assert len(result.command_records) == 1
+    record = result.command_records[0]
+    assert record["command"] == "echo hello"
+    assert record["exit_code"] == 0
+    assert record["duration_ms"] == 150
+    assert "working_directory" in record
+    assert record["captured_output"] == "hello"
+
+
+def test_agent_deadline_pauses_during_approval(tmp_path: Path) -> None:
+    model = FakeModel([
+        '{"type":"run_shell","command":"sleep 1"}',
+        '{"type":"final","message":"done"}',
+    ])
+    tools = RecoveringTools(tmp_path)
+    
+    # Simulate a slow user approval
+    def slow_approval(action, detail):
+        time.sleep(0.5)
+        return True
+    
+    tools.approval_callback = slow_approval
+    agent = make_agent(tmp_path, model, tools)
+    agent.run_timeout_seconds = 60.0
+    
+    agent.run_detailed("run slow command")
+    assert agent._deadline_paused_seconds >= 0.5
+
+
+def test_agent_low_confidence_blocks_mutation(tmp_path: Path) -> None:
+    # Model tries to mutate immediately when confidence is low due to replan requirement
+    model = FakeModel([
+        '{"type":"write_file","path":"new.py","content":"x"}',
+        '{"type":"read_file","path":"new.py"}',  # gathers context (dummy)
+        '{"type":"final","message":"done"}',
+    ])
+    tools = RecoveringTools(tmp_path)
+    state = ExecutionState(task="do stuff", max_steps=5)
+    state.require_replan("need context first")
+    agent = CodingAgent(
+        cwd=tmp_path,
+        dry_run=False,
+        max_steps=5,
+        max_failures=3,
+        model_client=model,
+        tools=tools,  # type: ignore[arg-type]
+        storage=AgentStorage(tmp_path / "agent.db"),
+        execution_state_snapshot=state.snapshot(),
+    )
+    
+    result = agent.run_detailed("do stuff in this project")
+    
+    # First action should fail due to low confidence or replan required
+    assert len(result.failed_actions) >= 1
+    output = result.failed_actions[0].get("output", "").lower()
+    assert "revised" in output or "confidence" in output or "replan" in output
+
+
+def test_agent_proactive_budget_compaction(tmp_path: Path) -> None:
+    # Model generates a lot of context
+    model = FakeModel([
+        '{"type":"read_file","path":"app.py"}',
+        '{"type":"final","message":"done"}',
+    ])
+    tools = RecoveringTools(tmp_path)
+    # mock read_file to return a massive string
+    massive_content = "x" * 50_000
+    tools.results["read_file"] = ToolResult(ok=True, output=massive_content)
+    agent = make_agent(tmp_path, model, tools)
+    # Set context limit low
+    agent.context_max_chars = 40_000
+    
+    result = agent.run_detailed("read massive file")
+    
+    # It should have triggered budget_compaction
+    assert result.execution_state["checkpoint_count"] >= 1

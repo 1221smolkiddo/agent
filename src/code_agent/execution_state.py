@@ -6,6 +6,15 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from .failure_types import (
+    CONTEXT_BUDGET_WARNING_RATIO,
+    LOW_CONFIDENCE_HARD_THRESHOLD,
+    LOW_CONFIDENCE_MUTATION_THRESHOLD,
+    MAX_RECOVERY_ATTEMPTS,
+    FailureFingerprint,
+    classify_failure,
+    recovery_instruction,
+)
 from .models import ChatMessage
 from .schema import AgentAction, ToolResult, UpdatePlanAction
 
@@ -55,6 +64,8 @@ class ExecutionState:
     resume_count: int = 0
     resumed_from_run_id: int | None = None
     _outcomes: dict[str, list[ActionOutcome]] = field(default_factory=dict)
+    _failure_fingerprints: dict[FailureFingerprint, int] = field(default_factory=dict)
+    recovery_attempt_count: int = 0
 
     @classmethod
     def from_snapshot(
@@ -274,9 +285,21 @@ class ExecutionState:
         self.action_count += 1
         if not result.ok:
             self.phase = ExecutionPhase.RECOVER
+            self.recovery_attempt_count += 1
             hypothesis = f"{action.type}: {' '.join(result.output.split())[:240]}"
             self.failed_hypotheses = _dedupe([*self.failed_hypotheses, hypothesis])[-8:]
             self.record_evidence(source=action.type, summary=hypothesis, confidence="high")
+            # Track structured failure fingerprint (action + target + category)
+            category = classify_failure(
+                action.type,
+                result.output,
+                result.metadata if hasattr(result, "metadata") else None,
+            )
+            action_payload = action.model_dump(exclude_none=True)
+            fp = FailureFingerprint.from_action(action.type, action_payload, category)
+            self._failure_fingerprints[fp] = self._failure_fingerprints.get(fp, 0) + 1
+        else:
+            self.recovery_attempt_count = 0
         if changed_paths:
             self.changed_paths = _dedupe([*self.changed_paths, *changed_paths])
             self.workspace_generation += 1
@@ -330,6 +353,120 @@ class ExecutionState:
     def finalize(self) -> None:
         self.phase = ExecutionPhase.FINALIZE
         self.checkpoint("finalized")
+
+    # ------------------------------------------------------------------
+    # Structured failure recovery (Production Readiness Pass 1)
+    # ------------------------------------------------------------------
+
+    def failure_recovery_instruction(
+        self,
+        action: AgentAction,
+        result: ToolResult,
+    ) -> str | None:
+        """Return a category-specific recovery instruction, or trigger replan.
+
+        Returns ``None`` if the failure does not need special handling (i.e. the
+        existing generic recovery path is fine).  Returns a non-empty string to
+        override the generic recovery instruction.  As a side effect, may set
+        ``replan_required`` when the same fingerprint has repeated too many times.
+        """
+        if result.ok:
+            return None
+
+        category = classify_failure(
+            action.type,
+            result.output,
+            result.metadata if hasattr(result, "metadata") else None,
+        )
+        action_payload = action.model_dump(exclude_none=True)
+        fp = FailureFingerprint.from_action(action.type, action_payload, category)
+        occurrences = self._failure_fingerprints.get(fp, 0)
+
+        # Hard stop: too many total recovery attempts
+        if self.recovery_attempt_count >= MAX_RECOVERY_ATTEMPTS:
+            self.require_replan(
+                f"Reached {MAX_RECOVERY_ATTEMPTS} recovery attempts. "
+                "The current approach is not working."
+            )
+            return (
+                f"Recovery limit reached ({MAX_RECOVERY_ATTEMPTS} attempts). "
+                "Stop the current approach. Revise the plan, choose a completely "
+                "different strategy, or ask the user how to proceed."
+            )
+
+        # Same fingerprint repeated >= 2 times => force replan
+        if occurrences >= 2:
+            self.require_replan(
+                f"Repeated {category.value} failure on {fp.action_type} "
+                f"targeting '{fp.target[:80]}'. A different strategy is needed."
+            )
+            return (
+                f"The same {category.value} failure has occurred {occurrences} times "
+                f"for `{fp.action_type}`. The plan must be revised before retrying. "
+                "Update the plan with new information from the failed attempts."
+            )
+
+        return recovery_instruction(category)
+
+    def low_confidence_blocker(self, action: AgentAction) -> str | None:
+        """Block mutating actions when planning confidence is too low.
+
+        Returns ``None`` if the action should proceed, or a blocking message
+        explaining why more evidence is needed.
+        """
+        confidence = self._confidence()
+        score = confidence["score"]
+
+        # Discovery and planning actions are never blocked
+        discovery_actions = {
+            "list_files", "read_file", "search", "summarize_code",
+            "inspect_git_diff", "repo_map", "rank_context", "symbol_index",
+            "dependency_graph", "read_memory", "lsp_status", "lsp_definition",
+            "lsp_references", "lsp_hover", "lsp_workspace_symbols",
+            "lsp_diagnostics", "detect_verification", "suggest_verification",
+            "read_process_logs", "inspect_process", "process_events",
+            "update_plan",
+        }
+        if action.type in discovery_actions:
+            return None
+
+        mutating_actions = {
+            "write_file", "edit_file", "apply_patch", "delete_file",
+            "move_file", "run_shell", "start_process",
+        }
+
+        if score < LOW_CONFIDENCE_HARD_THRESHOLD:
+            return (
+                f"Planning confidence is critically low ({score:.2f}). "
+                "Gather more evidence, inspect additional files, search for "
+                "project symbols, or ask clarifying questions before continuing. "
+                "Do not attempt any action until confidence improves."
+            )
+
+        if score < LOW_CONFIDENCE_MUTATION_THRESHOLD and action.type in mutating_actions:
+            return (
+                f"Planning confidence is low ({score:.2f}). "
+                "Before modifying files or running commands, inspect additional "
+                "repository context, search for relevant symbols, or collect "
+                "more evidence to increase confidence."
+            )
+
+        return None
+
+    def proactive_budget_check(
+        self, context_chars: int, max_chars: int
+    ) -> str | None:
+        """Return a compaction hint when context usage approaches the budget."""
+        if max_chars <= 0:
+            return None
+        ratio = context_chars / max_chars
+        if ratio >= CONTEXT_BUDGET_WARNING_RATIO:
+            return (
+                f"Context budget is at {ratio:.0%} capacity ({context_chars:,} / "
+                f"{max_chars:,} chars). Summarize earlier reasoning and discard "
+                "obsolete information before the next action."
+            )
+        return None
 
     def finalization_blocker(
         self,
@@ -443,7 +580,7 @@ class ExecutionState:
         return "focused"
 
     def _confidence(self) -> dict[str, Any]:
-        score = 0.2
+        score = 0.5
         reasons: list[str] = []
         if self.plan_steps:
             completed = sum(item.get("status") == "completed" for item in self.plan_steps)
