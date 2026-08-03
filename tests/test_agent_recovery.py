@@ -18,16 +18,8 @@ from code_agent.schema import (
 )
 from code_agent.storage import AgentStorage
 from code_agent.tools import ToolRegistry
-import pytest
 from unittest.mock import patch
 
-@pytest.fixture(autouse=True)
-def bypass_low_confidence_blocker(request):
-    if request.node.name == "test_agent_low_confidence_blocks_mutation":
-        yield
-        return
-    with patch("code_agent.execution_state.ExecutionState._confidence", return_value={"score": 1.0, "band": "high"}):
-        yield
 
 class FakeModel:
     model = "fake-model"
@@ -889,7 +881,8 @@ testpaths = ["tests"]
     assert "Automatic focused verification passed" in tool_payload
 
 
-def test_agent_recovers_after_failed_automatic_verification(tmp_path: Path) -> None:
+@patch("code_agent.execution_state.ExecutionState.low_confidence_blocker", return_value=None)
+def test_agent_recovers_after_failed_automatic_verification(_, tmp_path: Path) -> None:
     (tmp_path / "tests").mkdir()
     (tmp_path / "uv.lock").write_text("", encoding="utf-8")
     (tmp_path / "pyproject.toml").write_text(
