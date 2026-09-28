@@ -5,6 +5,7 @@ from collections.abc import Callable
 import warnings
 
 from .agent import CodingAgent
+from .experience_memory import ExperienceMemoryService
 from .execution_host import ExecutionRuntimeHost, ModelPlanProvider
 from .config import Settings
 from .model_profiles import ModelProfile, resolve_model_profile
@@ -214,6 +215,7 @@ def create_agent(
         shadow_runtime=shadow_runtime,
         runtime_host=runtime_host,
         durable_goal=durable_goal,
+        experience_memory=ExperienceMemoryService(settings.experience_memory_config, workspace),
     )
 
 

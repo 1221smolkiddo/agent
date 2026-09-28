@@ -10,6 +10,7 @@ from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 
+from .experience_memory import ExperienceMemoryService
 from .execution_state import ExecutionState, compact_message_history
 from .durable_execution import AgentExecutionAdapter, DurableExecutionRuntime
 from .execution_host import ExecutionRuntimeHost
@@ -92,7 +93,9 @@ class CodingAgent:
         shadow_runtime: Any | None = None,
         runtime_host: ExecutionRuntimeHost | None = None,
         durable_goal: str | None = None,
+        experience_memory: ExperienceMemoryService | None = None,
     ) -> None:
+        self.experience_memory = experience_memory
         self.cwd = cwd
         self.dry_run = dry_run
         self.max_steps = max_steps

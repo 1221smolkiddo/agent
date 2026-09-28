@@ -316,6 +316,7 @@ The full release process and remaining caveats are documented in [Known Limitati
 | Topic | Document |
 | --- | --- |
 | Installation, providers, sandboxes, language servers | [Install](docs/INSTALL.md) |
+| Optional historical experience memory foundation | [Experience Memory](docs/EXPERIENCE_MEMORY.md) |
 | Module boundaries, workspace flow, trust model | [Architecture](docs/ARCHITECTURE.md) |
 | Durable execution, evidence, effects, recovery | [Execution Engine](docs/EXECUTION_ENGINE.md) |
 | Kernel compatibility and staged authority promotion | [Execution Compatibility](docs/EXECUTION_COMPATIBILITY.md) |

@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+import asyncio
+import importlib
+from typing import Any, Literal
+
+from ..config import ExperienceMemoryConfig
+from ..contracts import Experience, MemoryResult, MemoryStatus, RecalledExperience
+from ..privacy import safe_text, valid_experience, valid_query
+
+
+class HindsightExperienceMemoryProvider:
+    """Sync facade over the optional SDK, with one bounded async client per call.
+
+    Construction performs no imports, network operations, or bank creation. No retries:
+    a retain timeout is ambiguous and must not trigger automatic duplicate writes.
+    """
+
+    def __init__(self, config: ExperienceMemoryConfig) -> None:
+        self._config = config
+
+    def health(self) -> MemoryResult:
+        return self._call("health")
+
+    def recall(self, bank_id: str, query: str) -> MemoryResult:
+        return self._call("recall", bank_id=bank_id, query=query)
+
+    def retain(self, bank_id: str, experience: Experience) -> MemoryResult:
+        return self._call("retain", bank_id=bank_id, experience=experience)
+
+    def reflect(self, bank_id: str, query: str) -> MemoryResult:
+        return self._call("reflect", bank_id=bank_id, query=query)
+
+    def _call(
+        self, operation: Literal["health", "recall", "retain", "reflect"], *,
+        bank_id: str = "", query: str = "", experience: Experience | None = None,
+    ) -> MemoryResult:
+        status = self._config.availability
+        if status != MemoryStatus.OK:
+            return MemoryResult(status)
+        try:
+            if operation in {"recall", "reflect"} and not valid_query(
+                bank_id, query, self._config,
+            ):
+                return MemoryResult(MemoryStatus.INVALID_REQUEST)
+            if operation == "retain" and (
+                experience is None or not valid_experience(bank_id, experience, self._config)
+            ):
+                return MemoryResult(MemoryStatus.INVALID_REQUEST)
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                pass
+            else:
+                return MemoryResult(MemoryStatus.UNAVAILABLE)
+            try:
+                sdk = importlib.import_module("hindsight_client")
+            except ImportError:
+                return MemoryResult(MemoryStatus.MISSING_DEPENDENCY)
+            return asyncio.run(self._execute(sdk, operation, bank_id, query, experience))
+        except TimeoutError:
+            return MemoryResult(MemoryStatus.TIMEOUT)
+        except Exception:
+            # Never propagate exception messages, URLs, request bodies, or SDK objects.
+            return MemoryResult(MemoryStatus.UNAVAILABLE)
+
+    async def _execute(
+        self, sdk: Any, operation: str, bank_id: str, query: str,
+        experience: Experience | None,
+    ) -> MemoryResult:
+        config = self._config
+        deadline = asyncio.get_running_loop().time() + config.timeout_seconds
+        async with asyncio.timeout_at(deadline):
+            client = sdk.Hindsight(
+                base_url=config.endpoint,
+                api_key=config.api_key.get_secret_value() if config.api_key else None,
+                timeout=config.timeout_seconds, max_attempts=1,
+            )
+            try:
+                if operation == "health":
+                    response = await client.monitoring.health_endpoint_health_get(
+                        _request_timeout=config.timeout_seconds,
+                    )
+                    if not isinstance(response, dict) or response.get("status") != "healthy":
+                        return MemoryResult(MemoryStatus.UNAVAILABLE)
+                    return MemoryResult(MemoryStatus.OK)
+                if operation == "retain":
+                    assert experience is not None
+                    metadata = {
+                        "source": "agent47", "memory_kind": "historical_experience",
+                    }
+                    if experience.branch:
+                        metadata["branch"] = experience.branch
+                    if experience.head:
+                        metadata["head"] = experience.head
+                    response = await client.aretain(
+                        bank_id=bank_id, content=experience.summary,
+                        metadata=metadata, retain_async=False,
+                    )
+                    success = response.success is True and response.var_async is False
+                    return MemoryResult(MemoryStatus.OK if success else MemoryStatus.UNAVAILABLE)
+                if operation == "recall":
+                    response = await client.arecall(
+                        bank_id=bank_id, query=query, max_tokens=config.recall_max_tokens,
+                        budget=config.budget,
+                    )
+                    remaining = config.recall_max_tokens  # conservative UTF-8 byte ceiling
+                    memories: list[RecalledExperience] = []
+                    for item in response.results[:config.recall_max_results]:
+                        text = safe_text(item.text, config).encode("utf-8")[:remaining]
+                        remaining -= len(text)
+                        if text:
+                            memories.append(RecalledExperience(text.decode("utf-8", errors="ignore")))
+                        if remaining <= 0:
+                            break
+                    return MemoryResult(MemoryStatus.OK, tuple(memories))
+                response = await client.areflect(
+                    bank_id=bank_id, query=query, max_tokens=config.recall_max_tokens,
+                    budget=config.budget,
+                )
+                text = safe_text(response.text, config).encode("utf-8")[:config.recall_max_tokens]
+                return MemoryResult(MemoryStatus.OK, text=text.decode("utf-8", errors="ignore"))
+            finally:
+                remaining = max(0.001, deadline - asyncio.get_running_loop().time())
+                async with asyncio.timeout(remaining):
+                    await client.aclose()

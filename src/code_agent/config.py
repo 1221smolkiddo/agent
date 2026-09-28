@@ -4,14 +4,16 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
+
+from .experience_memory.config import ExperienceMemorySettings
 
 from .model_registry import provider_name_list, provider_names
 
 load_dotenv()
 
 
-class Settings(BaseSettings):
+class Settings(ExperienceMemorySettings):
     agent_provider: str = "openrouter"
     agent_model_preset: str | None = None
 
@@ -64,7 +66,9 @@ class Settings(BaseSettings):
     agent_sandbox_image: str = "python:3.13-slim"
     agent_trust_workspace_extensions: bool = False
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore", hide_input_in_errors=True,
+    )
 
     @field_validator(
         "agent_input_cost_per_million",
