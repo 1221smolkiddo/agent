@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from code_agent import __version__
 from code_agent.agent import AgentRunResult, CodingAgent
 from code_agent.durable_execution import CriterionProjection, ExecutionProjection, ExecutionStatus
 from code_agent.experience_memory import ExperienceMemoryConfig, ExperienceMemoryService, MemoryResult, MemoryStatus
@@ -296,7 +297,7 @@ def test_sdk_uses_stable_async_ids_and_safe_metadata(rig, monkeypatch):
     assert call["metadata"] == {
         "source": "agent47", "memory_kind": "engineering_episode",
         "branch": SCOPE.branch, "head": SCOPE.head,
-        "outcome": "verified", "agent_version": "0.1.0b4",
+        "outcome": "verified", "agent_version": __version__,
         "repository_bank_id": SCOPE.bank_id,
         "changed_paths": '["src/parser.py"]',
     }
