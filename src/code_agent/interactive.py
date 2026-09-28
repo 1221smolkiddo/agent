@@ -47,6 +47,8 @@ from .sandbox_security import SandboxIsolationError, resolve_sandbox_policy
 from .session import SessionState
 from .storage import AgentStorage
 from .status import StatusReporter, analyze_workspace
+from .models import classify_model_error, safe_model_error
+from .safety import redact_secrets
 from .terminal_ui import (
     console,
     print_error_card,
@@ -213,7 +215,7 @@ def main() -> None:
             except Exception as exc:
                 if reporter:
                     reporter.done()
-                session_state._last_exc = traceback.format_exc()
+                session_state._last_exc = redact_secrets("".join(traceback.format_tb(exc.__traceback__))) + safe_model_error(exc)
                 print_error_card(
                     "Model Request Failed",
                     [
@@ -258,7 +260,7 @@ def main() -> None:
             print_panel("Stopped", "Current action stopped. Interactive session is still open.")
             continue
         except Exception as exc:
-            session_state._last_exc = traceback.format_exc()
+            session_state._last_exc = redact_secrets("".join(traceback.format_tb(exc.__traceback__))) + safe_model_error(exc)
             print_error_card(
                 "Error",
                 [
@@ -1512,12 +1514,13 @@ def friendly_error_message(exc: Exception) -> str:
 
 
 def friendly_model_error(exc: Exception) -> str:
-    message = str(exc).strip() or exc.__class__.__name__
-    return friendly_model_error_text(f"{exc.__class__.__name__}: {message}")
+    if classify_model_error(exc).kind in {"capacity", "rate_limit"}:
+        return f"The model provider is currently capacity-limited or rate-limited. {type(exc).__name__}."
+    return friendly_model_error_text(safe_model_error(exc))
 
 
 def friendly_model_error_text(message: str) -> str:
-    cleaned = message.strip() or "Unknown model error."
+    cleaned = redact_secrets(message.strip()) or "Unknown model error."
     lowered = cleaned.lower()
     if "resourceexhausted" in lowered or "request limit reached" in lowered or "rate limit" in lowered:
         return (

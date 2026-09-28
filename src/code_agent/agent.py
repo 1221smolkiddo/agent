@@ -24,7 +24,7 @@ from .failure_types import (
     CONTEXT_BUDGET_TIGHT_TARGET_RATIO,
     EVIDENCE_RECORDS_LIMIT_COMPACTED,
 )
-from .models import ChatMessage, ModelClient
+from .models import ChatMessage, ModelClient, classify_model_error, safe_model_error
 from .patches import git_style_unified_diff
 from .platform_runtime import PlatformRuntime
 from .repo_index import affected_test_paths, build_context_pack, build_repo_map
@@ -148,6 +148,15 @@ class CodingAgent:
         return cancelled
 
     def run_detailed(self, task: str) -> AgentRunResult:
+        self._deadline_paused_seconds = 0.0
+        original_callback = getattr(self.tools, "approval_callback", None)
+        try:
+            return self._run_detailed(task)
+        finally:
+            if original_callback is not None:
+                self.tools.approval_callback = original_callback
+
+    def _run_detailed(self, task: str) -> AgentRunResult:
         run_started = perf_counter()
         run_deadline = run_started + self.run_timeout_seconds
         
@@ -377,9 +386,10 @@ class CodingAgent:
                 payload = self._failure_payload(
                     step=step,
                     kind="model_failure",
-                    output=f"{type(exc).__name__}: {exc}",
+                    output=safe_model_error(exc),
                     consecutive_failures=consecutive_failures + 1,
                 )
+                payload["category"] = "MODEL_" + classify_model_error(exc).kind.upper()
                 self.storage.add_step(run_id, "tool", payload)
                 failed_actions.append(payload)
                 self._report_recovery("model failed; stopping run")
@@ -400,7 +410,7 @@ class CodingAgent:
                         blocked=True,
                     )
                 )
-            if perf_counter() >= run_deadline:
+            if perf_counter() >= run_deadline + self._deadline_paused_seconds:
                 payload = self._failure_payload(
                     step=step,
                     kind="run_deadline",
@@ -431,7 +441,7 @@ class CodingAgent:
             action, parse_error = self._parse_action(response)
             if parse_error:
                 if not workspace_task and self._can_use_raw_final(response):
-                    self.storage.add_step(run_id, "assistant", {"raw": response})
+                    self.storage.add_step(run_id, "assistant", {"response_chars": len(response), "parsed": False})
                     self._report_done()
                     return self._finalize_run(
                         AgentRunResult(
@@ -449,7 +459,7 @@ class CodingAgent:
                     output=parse_error,
                     consecutive_failures=consecutive_failures,
                 )
-                self.storage.add_step(run_id, "assistant", {"raw": response})
+                self.storage.add_step(run_id, "assistant", {"response_chars": len(response), "parsed": False})
                 self.storage.add_step(run_id, "tool", payload)
                 failed_actions.append(payload)
                 self._report_recovery("invalid model action; retrying")
@@ -1252,6 +1262,13 @@ class CodingAgent:
         stream_complete = getattr(self.model_client, "stream_complete", None)
         stream_started = False
         started = perf_counter()
+        timing = {"type": "runtime_timing", "phase": "model_request", "step": step,
+                  "execution_id": self.durable_execution_id}
+        category = "completed"
+        try:
+            self.storage.add_step(run_id, "tool", {**timing, "event": "start", "elapsed_ms": 0})
+        except Exception:
+            pass
         try:
             if not self.stream_model or stream_complete is None:
                 complete_with_timeout = getattr(self.model_client, "complete_with_timeout", None)
@@ -1270,8 +1287,17 @@ class CodingAgent:
                     timeout_seconds,
                 )
             return stream_complete(messages, self._report_model_stream_chunk)
+        except Exception as exc:
+            category = "MODEL_" + classify_model_error(exc).kind.upper()
+            raise
         finally:
             latency_ms = round((perf_counter() - started) * 1000, 2)
+            try:
+                self.storage.add_step(run_id, "tool", {
+                    **timing, "event": "end", "elapsed_ms": latency_ms, "category": category,
+                })
+            except Exception:
+                pass
             self._drain_model_usage(run_id, model_usage_records, latency_ms=latency_ms)
             if self.reporter and stream_started:
                 self.reporter.model_stream_end()

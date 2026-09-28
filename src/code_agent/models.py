@@ -11,6 +11,7 @@ import openai
 from openai import OpenAI
 
 from .model_profiles import ModelProfile
+from .safety import redact_secrets
 
 
 ChatMessage = dict[str, str]
@@ -162,7 +163,7 @@ class OpenAICompatibleChatClient:
         def _make_request(current_max_tokens: int, remaining_seconds: float) -> str:
             request: dict[str, Any] = {
                 "model": self.model,
-                "messages": messages,
+                "messages": [{**message, "content": redact_secrets(message["content"])} for message in messages],
                 "temperature": self.temperature,
                 "max_tokens": current_max_tokens,
                 "timeout": remaining_seconds,
@@ -196,7 +197,7 @@ class OpenAICompatibleChatClient:
             chunks: list[str] = []
             request: dict[str, Any] = {
                 "model": self.model,
-                "messages": messages,
+                "messages": [{**message, "content": redact_secrets(message["content"])} for message in messages],
                 "temperature": self.temperature,
                 "max_tokens": current_max_tokens,
                 "stream": True,
@@ -206,19 +207,27 @@ class OpenAICompatibleChatClient:
                 request["stream_options"] = {"include_usage": True}
             if self.extra_body:
                 request["extra_body"] = self.extra_body
+            stream_deadline = time.monotonic() + remaining_seconds
             stream = self._client.chat.completions.create(**request)  # type: ignore[arg-type]
-            for event in stream:
-                usage = getattr(event, "usage", None)
-                if usage is not None:
-                    self._record_success(_usage_from_object(usage))
-                choices = getattr(event, "choices", []) or []
-                if not choices:
-                    continue
-                token = choices[0].delta.content or ""
-                if not token:
-                    continue
-                chunks.append(token)
-                on_token(token)
+            try:
+                for event in stream:
+                    if time.monotonic() >= stream_deadline:
+                        raise TimeoutError("Model stream exceeded its turn deadline.")
+                    usage = getattr(event, "usage", None)
+                    if usage is not None:
+                        self._record_success(_usage_from_object(usage))
+                    choices = getattr(event, "choices", []) or []
+                    if not choices:
+                        continue
+                    token = choices[0].delta.content or ""
+                    if not token:
+                        continue
+                    chunks.append(token)
+                    on_token(token)
+            finally:
+                close = getattr(stream, "close", None)
+                if callable(close):
+                    close()
             content = "".join(chunks)
             if not content:
                 self._record_failure("Model returned an empty streamed response.")
@@ -263,7 +272,10 @@ class OpenAICompatibleChatClient:
                     raise TimeoutError(
                         f"Model turn exceeded its {timeout_seconds:g}s absolute deadline."
                     )
-                return make_request(current_tokens, remaining)
+                result = make_request(current_tokens, remaining)
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Model response arrived after its turn deadline.")
+                return result
             except Exception as exc:
                 classified = classify_model_error(exc)
                 if classified.kind == "credits" and classified.retryable:
@@ -296,7 +308,7 @@ class OpenAICompatibleChatClient:
                     ) from exc
                 self._record_failure(
                     f"{classified.kind} provider failure "
-                    f"(retry {transient_retries}/{self.transient_retry_count} in {delay:g}s): {exc}"
+                    f"(retry {transient_retries}/{self.transient_retry_count} in {delay:g}s)"
                 )
                 if delay > 0:
                     time.sleep(delay)
@@ -417,7 +429,7 @@ class FallbackModelClient:
             try:
                 content = call(client)
             except Exception as exc:
-                error = f"{type(exc).__name__}: {exc}"
+                error = safe_model_error(exc)
                 classified = classify_model_error(exc)
                 errors.append(f"{client.model}: {error}")
                 drained = client.drain_usage_records()
@@ -576,3 +588,8 @@ def classify_model_error(exc: Exception) -> ClassifiedModelError:
 
 
 OpenAIChatClient = OpenAICompatibleChatClient
+
+
+def safe_model_error(exc: Exception) -> str:
+    """A category only: provider exception bodies can contain prompts or headers."""
+    return f"{type(exc).__name__}: Model provider {classify_model_error(exc).kind} failure."

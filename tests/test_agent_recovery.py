@@ -540,7 +540,8 @@ def test_agent_records_plan_updates_without_calling_tools(tmp_path: Path) -> Non
         }
     ]
     assert tools.calls == 0
-    assert stored_steps[1]["payload"]["type"] == "plan_updated"
+    action_steps = [item for item in stored_steps if item["payload"].get("type") != "runtime_timing"]
+    assert action_steps[1]["payload"]["type"] == "plan_updated"
     assert "Plan updated" in model.messages_seen[1][-1]["content"]
 
 

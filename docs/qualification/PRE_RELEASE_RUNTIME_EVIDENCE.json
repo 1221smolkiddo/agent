@@ -1,0 +1,110 @@
+{
+  "baseline_main_sha": "361027aadd8130c31cc9bd8756f24119a3c4e08f",
+  "audit_branch": "audit/pre-release-runtime",
+  "focused": {
+    "tests": 681,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 5,
+    "passed": 676,
+    "seconds": 145.647,
+    "failed_tests": [],
+    "audit_regressions": 24
+  },
+  "full_non_docker": {
+    "tests": 1247,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 5,
+    "passed": 1241,
+    "seconds": 211.569,
+    "failed_tests": [
+      "tests.test_interactive_diff::test_terminal_width_fallback_when_narrow"
+    ],
+    "audit_regressions": 24
+  },
+  "ruff": "PASS",
+  "diff_check": "PASS",
+  "docker_live": "NOT RUN: Docker Desktop Linux daemon unavailable",
+  "real_provider": {
+    "provider": "gemini",
+    "model": "gemini-3.5-flash",
+    "temporary_workspace": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-runtime-provider-audit-_ljym0ib",
+    "results": [
+      {
+        "task": "trivial",
+        "status": "server",
+        "total_elapsed_ms": 2169.18,
+        "model_calls": 1,
+        "retries": 0
+      }
+    ]
+  },
+  "package_smoke": {
+    "fresh_venv": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-runtime-audit-install-zchqmw2b\\.venv",
+    "results": {
+      "venv": {
+        "exit_code": 0,
+        "log": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-runtime-audit-install-zchqmw2b\\venv.log"
+      },
+      "install": {
+        "exit_code": 0,
+        "log": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-runtime-audit-install-zchqmw2b\\install.log"
+      },
+      "pip-check": {
+        "exit_code": 0,
+        "log": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-runtime-audit-install-zchqmw2b\\pip-check.log"
+      },
+      "imports": {
+        "exit_code": 0,
+        "log": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-runtime-audit-install-zchqmw2b\\imports.log",
+        "path": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-runtime-audit-install-zchqmw2b\\.venv\\Lib\\site-packages\\code_agent\\__init__.py"
+      },
+      "help": {
+        "exit_code": 0,
+        "log": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-runtime-audit-install-zchqmw2b\\help.log"
+      },
+      "automation-help": {
+        "exit_code": 0,
+        "log": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-runtime-audit-install-zchqmw2b\\automation-help.log"
+      },
+      "startup": {
+        "exit_code": 0,
+        "log": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-runtime-audit-install-zchqmw2b\\startup.log",
+        "normal_setup": true
+      }
+    }
+  },
+  "durable_privacy_probe": {
+    "event_goal_contains_fake_secret": true,
+    "event_count": 4,
+    "probe_scope": "synthetic goal only",
+    "database": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-durable-privacy-audit-tqjo5izz\\events.db"
+  },
+  "remaining_privacy_probe": {
+    "status_label_contains_fake_secret": true,
+    "typer_exception_locals_enabled": false,
+    "httpcore_read_sets_socket_timeout": true
+  },
+  "source_sha256": {
+    "src/code_agent/agent.py": "9496fa3611bf34ccd9dd7d7baaa6e4b41670e6ea69072ccd7b00400377f86aab",
+    "src/code_agent/interactive.py": "f0f653bd129b7bb9e38cae9d536fde7029e6604f8e540805a818212b5afd118a",
+    "src/code_agent/models.py": "7f23672bf802d35d29a633a043e40c17ba02f8ca6ac708a9b637717fcd6f51f3",
+    "src/code_agent/processes.py": "7223a0047b280b89e65a0fbb584dfd1905d273ec992eea35231850284d14aa88",
+    "src/code_agent/reviewer.py": "ca9ceb01a017069f172f845f55c9d6695869e647187a3e795a091315b274a8a2",
+    "src/code_agent/status.py": "8bb605f791639ce748d3c8c504b327aab11c1f3873d6b6baf7aaedc6fb54c341",
+    "src/code_agent/terminal_ui.py": "4505737efed561b6973ab26f563cf215314bdd9a0602fa55d934a3cdb547764b",
+    "src/code_agent/tools.py": "5a6d9f9f7191cf71628453a7c0f36e6a957098364b75d2c7bc45752483eedfa3",
+    "tests/test_agent_recovery.py": "ba8f4706a4b941d322d14a6d837db7cf2fa57d878fd30d768ddb8eb6caf5587b",
+    "tests/test_model_usage.py": "c741fe75e79f8f008d03d532479a02cf2ef5bf901fd3a23c650438291257dcc8",
+    "tests/test_runtime_audit.py": "039f626cf68ae121f28620cfe62678d0267b4a6bbf3a9f97e7e71ff81644049e"
+  },
+  "verdict": "NOT READY FOR 0.1.0",
+  "pushed": false,
+  "tag_modified": false,
+  "published": false,
+  "audit_wheel": {
+    "sha256": "845feb814a82d913c6f7ea0f3af6389edd4b4ea8fe2aaafc46dc58f8cae73674",
+    "runtime_files_match_source": 134
+  }
+}

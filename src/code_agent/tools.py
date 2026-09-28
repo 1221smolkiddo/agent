@@ -306,6 +306,8 @@ class ToolRegistry:
         )
         if after_hooks:
             result.metadata["hooks"] = after_hooks
+        result.output = redact_secrets(result.output)
+        result.metadata = self._redact_payload(result.metadata)
         return result
 
     def _dispatch(self, action: AgentAction) -> ToolResult:

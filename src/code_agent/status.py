@@ -169,10 +169,8 @@ class StatusReporter:
         return guarded
 
     def thinking(self, step: int) -> None:
-        if self._current_label or self._stages:
-            return
         self._current_label = "Thinking"
-        self._current_detail = ""
+        self._current_detail = "Waiting for model"
         self._update()
 
     def action(self, action: AgentAction) -> None:

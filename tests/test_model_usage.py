@@ -98,7 +98,7 @@ def test_fallback_model_client_uses_next_model_after_failure() -> None:
             "completion_tokens": None,
             "total_tokens": None,
             "estimated_cost_usd": None,
-            "error": "RuntimeError: rate limited",
+            "error": "RuntimeError: Model provider rate_limit failure.",
             "fallback_from": None,
         },
         {
