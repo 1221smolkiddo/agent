@@ -12,6 +12,7 @@ from openai import OpenAI
 
 from .model_profiles import ModelProfile
 from .safety import redact_secrets
+from .context_budget import bound_messages
 
 
 ChatMessage = dict[str, str]
@@ -71,6 +72,7 @@ class ModelProviderConfig:
     name: str = "openai-compatible"
     default_headers: dict[str, str] | None = None
     include_stream_usage: bool = True
+    context_window_tokens: int = 65_536
     timeout_seconds: float = 60.0
     input_cost_per_million: float | None = None
     output_cost_per_million: float | None = None
@@ -130,6 +132,7 @@ class OpenAICompatibleChatClient:
     default_headers: dict[str, str] | None = None
     provider_name: str = "openai-compatible"
     include_stream_usage: bool = True
+    context_window_tokens: int = 65_536
     timeout_seconds: float = 60.0
     input_cost_per_million: float | None = None
     output_cost_per_million: float | None = None
@@ -160,6 +163,8 @@ class OpenAICompatibleChatClient:
         return self.complete_with_timeout(messages, self.timeout_seconds)
 
     def complete_with_timeout(self, messages: list[ChatMessage], timeout_seconds: float) -> str:
+        messages, _ = bound_messages(messages, max_chars=self.context_window_tokens,
+                                     window_tokens=self.context_window_tokens, output_tokens=self.max_tokens)
         def _make_request(current_max_tokens: int, remaining_seconds: float) -> str:
             request: dict[str, Any] = {
                 "model": self.model,
@@ -193,6 +198,8 @@ class OpenAICompatibleChatClient:
         on_token: Callable[[str], None],
         timeout_seconds: float,
     ) -> str:
+        messages, _ = bound_messages(messages, max_chars=self.context_window_tokens,
+                                     window_tokens=self.context_window_tokens, output_tokens=self.max_tokens)
         def _make_request(current_max_tokens: int, remaining_seconds: float) -> str:
             chunks: list[str] = []
             request: dict[str, Any] = {
@@ -496,6 +503,7 @@ def create_openai_compatible_client(
         default_headers=provider.default_headers,
         provider_name=provider.name,
         include_stream_usage=provider.include_stream_usage,
+        context_window_tokens=provider.context_window_tokens,
         timeout_seconds=provider.timeout_seconds,
         input_cost_per_million=provider.input_cost_per_million,
         output_cost_per_million=provider.output_cost_per_million,

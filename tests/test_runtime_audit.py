@@ -241,8 +241,8 @@ def test_planner_timeout_uses_deterministic_fallback():
     assert planner.last_error == "TimeoutError"
 
 
-@pytest.mark.parametrize("budget,blocked,tool_calls", [(300,True,3),(600,False,3)])
-def test_multicycle_task_run_budget(tmp_path, monkeypatch, budget, blocked, tool_calls):
+@pytest.mark.parametrize("budget,blocked,tool_calls", [(300,False,3),(600,False,3)])
+def test_multicycle_task_ignores_deprecated_run_budget(tmp_path, monkeypatch, budget, blocked, tool_calls):
     clock = Clock()
     monkeypatch.setattr("code_agent.agent.perf_counter", lambda: clock.now)
     model = Model(['{"type":"read_file","path":"a.py"}',

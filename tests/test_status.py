@@ -45,13 +45,13 @@ def test_semantic_stage_for_delete_file() -> None:
 def test_semantic_stage_for_project_search() -> None:
     stage, detail = _semantic_stage(SearchAction(type="search", query="TODO"))
     assert stage == "Inspecting Project"
-    assert "TODO" in detail
+    assert detail == "Inspected project"
 
 
 def test_semantic_stage_for_web_search() -> None:
     stage, detail = _semantic_stage(WebSearchAction(type="web_search", query="OpenRouter docs"))
     assert stage == "Understanding Request"
-    assert "OpenRouter docs" in detail
+    assert detail == "Web search"
 
 
 def test_semantic_stage_for_detect_verification() -> None:

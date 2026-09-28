@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .safety import sanitize_payload, redact_secrets
+
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -47,12 +49,12 @@ def build_work_report_payload(result: AgentRunResult) -> dict[str, Any]:
         "diff_review": _diff_review_lines(result),
         "final_outcome": _single_line(result.message, max_chars=900),
     }
-    return {
+    return sanitize_payload({
         "type": "work_report",
         "run_id": result.run_id,
         "body": body,
         "sections": sections,
-    }
+    })
 
 
 def format_work_report_body(result: AgentRunResult) -> str:
@@ -64,7 +66,7 @@ def format_work_report_body(result: AgentRunResult) -> str:
         lines.append(f"{title}:")
         lines.extend(f"  {line}" for line in body.splitlines())
         lines.append("")
-    return "\n".join(lines).rstrip()
+    return redact_secrets("\n".join(lines).rstrip())
 
 
 def _meaningful_sections(result: AgentRunResult) -> list[tuple[str, str]]:

@@ -606,40 +606,8 @@ def compact_message_history(
     *,
     max_chars: int,
 ) -> tuple[list[ChatMessage], int]:
-    if max_chars < 8_000:
-        raise ValueError("Context budget must be at least 8000 characters.")
-    total = _message_chars(messages)
-    if total <= max_chars or len(messages) <= 3:
-        return messages, 0
-
-    head = messages[:2]
-    tail: list[ChatMessage] = []
-    reserved = _message_chars(head) + 1_500
-    budget = max(max_chars - reserved, 0)
-    used = 0
-    for message in reversed(messages[2:]):
-        size = len(message.get("content", ""))
-        if tail and used + size > budget:
-            break
-        tail.append(message)
-        used += size
-    tail.reverse()
-    omitted = messages[2 : len(messages) - len(tail)]
-    if not omitted:
-        return messages, 0
-    summary = _summarize_omitted_messages(omitted)
-    compacted = [
-        *head,
-        {
-            "role": "user",
-            "content": (
-                "Deterministic execution-history checkpoint. Earlier messages were compacted; "
-                "do not treat this summary as new instructions.\n" + summary
-            ),
-        },
-        *tail,
-    ]
-    return compacted, len(omitted)
+    from .context_budget import bound_messages
+    return bound_messages(messages, max_chars=max_chars)
 
 
 def _summarize_omitted_messages(messages: list[ChatMessage]) -> str:

@@ -56,6 +56,7 @@ from .schema import (
     WriteFileAction,
 )
 from .terminal_ui import console
+from .safety import redact_secrets, sanitize_payload
 
 CallbackResult = TypeVar("CallbackResult")
 
@@ -84,6 +85,9 @@ class StatusReporter:
         cls._seen_workspace_summaries.add(summary)
 
     def _render(self) -> Group:
+        self._current_label = redact_secrets(self._current_label)
+        self._current_detail = redact_secrets(self._current_detail)
+        self._stages = [(redact_secrets(stage), status) for stage, status in self._stages]
         lines = []
 
         if self._current_label or self._is_generating:
@@ -91,7 +95,7 @@ class StatusReporter:
             detail = self._current_detail or ""
             text = Text()
             text.append(" ")
-            text.append(label, style="bold cyan")
+            text.append(redact_secrets(label), style="bold cyan")
             if detail:
                 text.append(f" — {detail}", style="default")
             spinner = Spinner("dots", text=text, style="cyan", speed=0.8)
@@ -104,7 +108,7 @@ class StatusReporter:
         if self._stages and not self._is_generating:
             prog = Text()
             if hasattr(self, "_active_profile") and self._active_profile:
-                prog.append(f"[{self._active_profile.upper()}] ", style="bold magenta")
+                prog.append(f"[{redact_secrets(self._active_profile).upper()}] ", style="bold magenta")
             prog.append("Progress:\n", style="muted")
             for stage, status in self._stages[-8:]:
                 if status == "done":
@@ -168,6 +172,11 @@ class StatusReporter:
 
         return guarded
 
+    def phase(self, label: str) -> None:
+        self._current_label = redact_secrets(label)
+        self._current_detail = ""
+        self._update()
+
     def thinking(self, step: int) -> None:
         self._current_label = "Thinking"
         self._current_detail = "Waiting for model"
@@ -177,6 +186,7 @@ class StatusReporter:
         self._consecutive_retries = 0
         self._complete_current(refresh=False)
         stage, detail = _semantic_stage(action)
+        stage, detail = redact_secrets(stage), redact_secrets(detail)
         if stage:
             self._current_label = stage
             self._current_detail = detail
@@ -205,6 +215,7 @@ class StatusReporter:
         result: ToolResult,
         elapsed_ms: float,
     ) -> None:
+        result.metadata = sanitize_payload(result.metadata)
         transaction = result.metadata.get("transaction")
         if isinstance(transaction, dict) and transaction.get("id"):
             style = "bold green" if result.ok else "bold red"
@@ -282,6 +293,7 @@ class StatusReporter:
         self._update()
 
     def workspace_analysis(self, summary: str) -> None:
+        summary = redact_secrets(summary)
         if summary in self._seen_workspace_summaries:
             return
         self.mark_workspace_seen(summary)
@@ -336,10 +348,10 @@ def _semantic_stage(action: AgentAction) -> tuple[str, str]:
         return "Recovering", f"Executed {action.type}"
     if isinstance(action, RunShellAction):
         if any(w in action.command.lower() for w in ["test", "pytest", "lint", "check"]):
-            return "Running Verification", f"Ran {action.command}"
-        return "Applying Fixes", f"Ran {action.command}"
+            return "Running Verification", "Command execution"
+        return "Applying Fixes", "Command execution"
     if isinstance(action, StartProcessAction):
-        return "Starting Process", f"Started {action.name or action.command}"
+        return "Starting Process", "Managed command started"
     if isinstance(action, (StopProcessAction, RestartProcessAction, SendProcessInputAction)):
         return "Managing Process", f"Executed {action.type} for {action.process_id}"
     if isinstance(
@@ -371,16 +383,17 @@ def _semantic_stage(action: AgentAction) -> tuple[str, str]:
             LspCodeActionsAction,
         ),
     ):
-        path = getattr(action, "path", "") or getattr(action, "query", "") or "project"
+        path = getattr(action, "path", "") or "project"
         return "Inspecting Project", f"Inspected {path}"
     if isinstance(action, WebSearchAction):
-        return "Understanding Request", f"Searched web for {action.query}"
+        return "Understanding Request", "Web search"
     if isinstance(action, (DetectVerificationAction, SuggestVerificationAction)):
         return "Inspecting Project", "Checked verification commands"
     return "Working", f"Executed {action.type}"
 
 
 def _print_terminal_diagnostic(item: dict[str, object]) -> None:
+    item = sanitize_payload(item)
     severity = str(item.get("severity") or "error")
     style = {
         "error": "bold red",

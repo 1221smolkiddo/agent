@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .safety import safe_exception, sanitize_payload
+
 import json
 import sqlite3
 import threading
@@ -90,7 +92,7 @@ class ShadowDivergenceStore:
                 (
                     divergence.execution_id, divergence.task_id,
                     divergence.decision_type, divergence.severity,
-                    int(divergence.expected), json.dumps(asdict(divergence), sort_keys=True),
+                    int(divergence.expected), json.dumps(sanitize_payload(asdict(divergence)), sort_keys=True),
                     divergence.created_at,
                 ),
             )
@@ -461,7 +463,7 @@ class ExecutionPlane:
             "execution_id": execution_id,
             "worker_alive": bool(thread and thread.is_alive()),
             "status": self.runtime.engine.state(execution_id).status.value,
-            "error": str(result) if isinstance(result, BaseException) else None,
+            "error": safe_exception(result, component="Worker") if isinstance(result, BaseException) else None,
         }
 
     def wait(self, execution_id: str, timeout: float | None = None) -> ExecutionProjection:

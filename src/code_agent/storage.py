@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .safety import sanitize_payload
+
 import json
 import os
 import shutil
@@ -176,6 +178,15 @@ class AgentStorage:
             )
         return payloads
 
+    def latest_session_checkpoint(self, cwd: Path) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """select steps.payload from steps join runs on runs.id = steps.run_id
+                where runs.cwd = ? and json_extract(steps.payload, '$.type') = 'session_checkpoint'
+                order by steps.id desc limit 1""", (str(cwd.resolve()),),
+            ).fetchone()
+        return self._redact_payload(json.loads(row["payload"])["state"]) if row else None
+
     def diagnostic_occurrence_count(
         self,
         signature: str,
@@ -274,15 +285,7 @@ class AgentStorage:
 
     @classmethod
     def _redact_payload(cls, value: Any) -> Any:
-        if isinstance(value, str):
-            return redact_secrets(value)
-        if isinstance(value, dict):
-            return {str(key): cls._redact_payload(item) for key, item in value.items()}
-        if isinstance(value, list):
-            return [cls._redact_payload(item) for item in value]
-        if isinstance(value, tuple):
-            return [cls._redact_payload(item) for item in value]
-        return value
+        return sanitize_payload(value)
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
         legacy_database = self._has_user_tables(conn) and not self._table_exists(

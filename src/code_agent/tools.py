@@ -87,7 +87,7 @@ from .repo_index import (
     rank_context,
     start_background_index_refresh,
 )
-from .safety import classify_network_url, classify_shell_command, is_sensitive_path, redact_secrets
+from .safety import classify_network_url, classify_shell_command, is_sensitive_path, redact_secrets, safe_exception
 from .sandbox_security import (
     SandboxAuditLog,
     SandboxPolicy,
@@ -638,7 +638,7 @@ class ToolRegistry:
                 except (DiffParseError, ValueError):
                     pass
                 except Exception as exc:
-                    return ToolResult(ok=False, output=f"Reviewer error: {exc}")
+                    return ToolResult(ok=False, output=safe_exception(exc, component="Reviewer"))
 
             if review:
                 plan = self.transaction_manager.plan_patch_with_review(

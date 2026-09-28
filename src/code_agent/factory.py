@@ -220,7 +220,8 @@ def create_agent(
         reviewer_client=resolved_reviewer,
         context_max_chars=settings.agent_context_max_chars,
         model_timeout_seconds=settings.agent_model_timeout_seconds,
-        run_timeout_seconds=settings.agent_run_timeout_seconds,
+        context_window_tokens=settings.agent_context_window_tokens,
+        reserved_output_tokens=settings.agent_max_tokens,
         execution_state_snapshot=execution_state_snapshot,
         resumed_from_run_id=resumed_from_run_id,
         platform_runtime=platform_runtime,
@@ -286,6 +287,7 @@ def model_provider_config(
     runtime = runtime or ModelRuntimeDefaults()
     resolved_provider_name = settings.provider_name_for(provider)
     return ModelProviderConfig(
+        context_window_tokens=settings.agent_context_window_tokens,
         api_key=settings.model_api_key_for(provider),
         base_url=settings.model_base_url_for(provider),
         name=resolved_provider_name,

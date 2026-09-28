@@ -869,7 +869,7 @@ def test_execution_plane_reports_worker_failure_without_corrupting_stream(tmp_pa
         plane.wait(execution_id, timeout=5)
     state = runtime.engine.replay(execution_id)
     assert state.tasks["task"].state == TaskState.RUNNING
-    assert plane.status(execution_id)["error"] == "worker lost"
+    assert plane.status(execution_id)["error"] == "Worker failed (RuntimeError)."
 
 
 def test_execution_plane_recovers_orphaned_running_worker(tmp_path):

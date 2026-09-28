@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import re
+import json
+from uuid import uuid4
+from .safety import sanitize_payload, redact_secrets
 from dataclasses import dataclass, field
 
 from .agent import AgentRunResult
@@ -15,6 +18,10 @@ FILE_REF_PATTERN = re.compile(
 
 @dataclass
 class SessionState:
+    session_id: str = field(default_factory=lambda: uuid4().hex)
+    current_plan: list[dict] = field(default_factory=list)
+    verified_evidence: list[dict] = field(default_factory=list)
+    durable_execution_id: str | None = None
     current_task: str | None = None
     pending_user_info: str | None = None
     target_files: list[str] = field(default_factory=list)
@@ -38,6 +45,16 @@ class SessionState:
 
     def update(self, user_input: str, result: AgentRunResult) -> None:
         self.last_run_id = result.run_id
+        self.durable_execution_id = result.durable_execution_id
+        state = result.execution_state or {}
+        if state.get("plan_steps"):
+            self.current_plan = sanitize_payload(state["plan_steps"])
+        for item in state.get("verification_records", []):
+            if item.get("status") == "passed":
+                evidence = sanitize_payload({**item, "run_id": result.run_id})
+                if evidence not in self.verified_evidence:
+                    self.verified_evidence.append(evidence)
+        self.verified_evidence = self.verified_evidence[-12:]
         self.last_blocker = self._blocker_from_result(result)
         self.previous_status = "blocked" if self.last_blocker else "completed"
         if self._looks_like_workspace_request(user_input):
@@ -93,7 +110,13 @@ class SessionState:
         self.last_tool_results = self._summarize_tool_results(result)
 
     def render(self) -> str:
-        rows: list[tuple[str, object]] = []
+        rows: list[tuple[str, object]] = [("session_id", self.session_id)]
+        if self.current_plan:
+            rows.append(("current_plan", json.dumps(sanitize_payload(self.current_plan))))
+        if self.verified_evidence:
+            rows.append(("verified_evidence", json.dumps(sanitize_payload(self.verified_evidence))))
+        if self.durable_execution_id:
+            rows.append(("durable_execution_id", self.durable_execution_id))
         if self.current_task:
             rows.append(("current_task", self.current_task))
         if self.pending_user_info:
@@ -121,7 +144,26 @@ class SessionState:
 
         lines = ["Current interactive session state:"]
         lines.extend(f"- {key}: {value}" for key, value in rows)
-        return "\n".join(lines)
+        return redact_secrets("\n".join(lines))
+
+    def save(self, storage) -> None:
+        if self.last_run_id is None:
+            return
+        # Explicit structured checkpoint: no raw transcript, diff, traceback or reasoning.
+        fields = ("session_id", "current_task", "pending_user_info", "target_files",
+                  "last_created_files", "last_edited_files", "last_deleted_files",
+                  "last_tool_results", "last_blocker", "last_run_id", "previous_status",
+                  "conversation_steering", "current_plan", "verified_evidence", "durable_execution_id")
+        storage.add_step(self.last_run_id, "tool", {
+            "type": "session_checkpoint", "state": sanitize_payload({k: getattr(self, k) for k in fields}),
+        })
+
+    @classmethod
+    def restore(cls, storage, cwd):
+        values = storage.latest_session_checkpoint(cwd)
+        if values is not None:
+            return cls(**{k: v for k, v in values.items() if k in cls.__dataclass_fields__})
+        return cls()
 
     @staticmethod
     def _merge_unique(existing: list[str], incoming: list[str]) -> list[str]:

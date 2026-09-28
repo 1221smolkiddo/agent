@@ -164,6 +164,47 @@ def redact_secrets(value: str) -> str:
     return _JWT_TOKEN.sub(_redact_jwt, redacted)
 
 
+
+# One recursive boundary for event payloads, snapshots, UI metadata and checkpoints.
+# These are provider-private fields, not public plans or verification explanations.
+_PRIVATE_FIELDS = {"reasoning_content", "reasoning_details", "chain_of_thought", "private_analysis", "provider_debug"}
+_CREDENTIAL_FIELDS = {"api_key", "apikey", "password", "authorization", "access_token", "refresh_token", "client_secret"}
+
+
+def sanitize_payload(value):
+    if isinstance(value, str):
+        return redact_secrets(value)
+    if isinstance(value, dict):
+        result = {}
+        for key, item in value.items():
+            normalized = str(key).lower().replace("-", "_")
+            if normalized in _PRIVATE_FIELDS:
+                continue
+            safe_key = redact_secrets(str(key))
+            result[safe_key] = (
+                "[REDACTED]" if normalized in _CREDENTIAL_FIELDS and item is not None
+                else sanitize_payload(item)
+            )
+        return result
+    if isinstance(value, (list, tuple)):
+        return [sanitize_payload(item) for item in value]
+    return value
+
+
+def safe_exception(exc: BaseException, *, component: str = "Operation") -> str:
+    # Never echo exception bodies: they can contain arbitrary prompts and responses.
+    if type(exc).__name__ == "SandboxIsolationError":
+        return "Sandbox isolation unavailable; Agent47 will not fall back to local execution."
+    if isinstance(exc, (TimeoutError,)):
+        category = "timed out"
+    elif isinstance(exc, PermissionError):
+        category = "permission denied"
+    elif isinstance(exc, (KeyboardInterrupt, SystemExit)):
+        category = "cancelled"
+    else:
+        category = "failed"
+    return f"{component} {category} ({type(exc).__name__})."
+
 def classify_shell_command(command: str) -> ShellPolicy:
     normalized = " ".join(command.strip().split())
     lowered = normalized.lower()

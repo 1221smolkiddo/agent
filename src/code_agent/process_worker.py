@@ -19,7 +19,7 @@ from .managed_processes import (
     sample_process_resources,
 )
 from .processes import terminate_process_tree, windows_creation_flags
-from .safety import redact_secrets
+from .safety import redact_secrets, safe_exception
 
 
 class ProcessWorker:
@@ -54,8 +54,8 @@ class ProcessWorker:
             try:
                 self._start_child()
             except Exception as exc:
-                self._emit("start_failed", severity="error", message=redact_secrets(str(exc)))
-                self._write_state(status="failed", pid=None, error=redact_secrets(str(exc)))
+                self._emit("start_failed", severity="error", message=safe_exception(exc, component="Managed process"))
+                self._write_state(status="failed", pid=None, error=safe_exception(exc, component="Managed process"))
                 return 1
 
             exit_code = self._monitor_child()
@@ -320,7 +320,7 @@ class ProcessWorker:
             else:
                 raise OSError("stdin is unavailable")
         except (BrokenPipeError, OSError, ValueError) as exc:
-            self._emit("input_rejected", severity="error", message=redact_secrets(str(exc)))
+            self._emit("input_rejected", severity="error", message=safe_exception(exc, component="Managed process"))
             return
         self._emit("input", bytes=len(data.encode("utf-8")))
 
