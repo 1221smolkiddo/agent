@@ -71,7 +71,7 @@ def test_healthy_active_workflow_exceeds_ten_minutes(tmp_path, monkeypatch, lega
             return super().run(action)
     class WorkingModel(Model):
         def complete_with_timeout(self, messages, timeout_seconds):
-            assert timeout_seconds == 60
+            assert timeout_seconds == 180
             clock.advance(50 if not self.seen else 45)
             return self.complete(messages)
     class PlanningAgent(CodingAgent):
@@ -288,3 +288,107 @@ def test_unicode_context_reserves_output_and_reports_pressure():
     assert omitted and estimate_tokens(bounded) + 1000 <= 5000
     error = ContextBudgetExceeded("Current task exceeds context budget; state is preserved.")
     assert "state is preserved" in friendly_model_error(error)
+
+
+def test_unlimited_healthy_actions_continue_for_two_mocked_hours(tmp_path, monkeypatch):
+    clock = Clock()
+    monkeypatch.setattr("code_agent.agent.perf_counter", lambda: clock.now)
+
+    class LongTools(Tools):
+        def run(self, action):
+            clock.advance(61)
+            self.calls += 1
+            return ToolResult(ok=True, output=f"new evidence for {action.path}", metadata={})
+
+    class LongModel(Model):
+        def complete_with_timeout(self, messages, timeout_seconds):
+            assert timeout_seconds == 180
+            clock.advance(1)
+            return self.complete(messages)
+
+    actions = [f'{{"type":"read_file","path":"file_{i}.py"}}' for i in range(121)]
+    model = LongModel(actions + ['{"type":"final","message":"complete"}'])
+    tools = LongTools()
+    runner = agent(tmp_path, model, tools)
+    runner.max_steps = None
+    result = runner.run_detailed("inspect the project and report findings")
+
+    assert not result.blocked
+    assert tools.calls == 121, (result.message, result.failed_actions[-3:], result.context_records[-3:], len(model.seen))
+    assert clock.now >= 7200
+    assert result.execution_state["max_steps"] is None
+    assert tools.closed
+
+
+def test_default_model_turn_accepts_150_seconds_and_rejects_181(tmp_path, monkeypatch):
+    clock = Clock()
+    monkeypatch.setattr("code_agent.agent.perf_counter", lambda: clock.now)
+
+    class SlowModel(Model):
+        def __init__(self, duration):
+            super().__init__(['{"type":"final","message":"complete"}'])
+            self.duration = duration
+
+        def complete_with_timeout(self, messages, timeout_seconds):
+            assert timeout_seconds == 180
+            clock.advance(self.duration)
+            return self.complete(messages)
+
+    assert not agent(tmp_path, SlowModel(150)).run_detailed("inspect project").blocked
+    blocked = agent(tmp_path, SlowModel(181)).run_detailed("inspect project").blocked
+    assert blocked
+
+
+def test_100_turn_checkpoint_compaction_and_restart(tmp_path):
+    storage = AgentStorage(tmp_path / "agent.db")
+    state = SessionState()
+    transcript = []
+    compactions = 0
+    (tmp_path / "migration.py").write_text("SCHEMA_VERSION = 2\n", encoding="utf-8")
+    for turn in range(100):
+        user = (
+            "Build a production issue tracker" if turn == 0
+            else f"Continue project turn {turn} " + ("old discussion " * 100)
+        )
+        if turn == 10:
+            state.record_decision("SQLite is the source of truth for project records")
+        if turn == 25:
+            state.record_failed_approach("Manual schema patch failed; use migration.py")
+        if turn == 70:
+            user = "Correction: keep SQLite and preserve existing account IDs"
+        run_id = storage.create_run(user, "fake", tmp_path)
+        result = AgentRunResult(
+            message="done", run_id=run_id, task=user,
+            blocked=turn == 99,
+            execution_state={
+                "plan_steps": [{"step": "finish migration", "status": "in_progress"}],
+                "verification_records": [{"command": "pytest tests/migration", "status": "passed"}],
+            },
+        )
+        state.update(user, result)
+        if turn == 99:
+            state.last_blocker = "migration test needs fresh repository verification"
+        state.save(storage)
+        transcript.append(("old " + "x" * 800, "history " + "y" * 800 + " " + SECRETS[0]))
+        messages = [
+            {"role": "system", "content": "Use current repository files as truth"},
+            {"role": "user", "content": user},
+        ] + [{"role": "user", "content": str(pair)} for pair in transcript]
+        bounded, omitted = bound_messages(
+            messages, window_tokens=16_384, output_tokens=1024,
+            checkpoint={"session": state.render()},
+        )
+        compactions += int(omitted > 0)
+        assert estimate_tokens(bounded) + 1024 <= 16_384
+    restored = SessionState.restore(AgentStorage(tmp_path / "agent.db"), tmp_path)
+    prompt = task_with_context("Verify migration.py against repository", [], restored)
+    assert compactions > 50
+    assert restored.persistent_goal == "Build a production issue tracker"
+    assert "keep SQLite" in prompt
+    assert "finish migration" in prompt
+    assert "needs fresh repository verification" in prompt
+    assert "SQLite is the source of truth" in prompt
+    assert "Manual schema patch failed" in prompt
+    assert (tmp_path / "migration.py").read_text(encoding="utf-8") == "SCHEMA_VERSION = 2\n"
+    assert SECRETS[0] not in str(bounded) + prompt
+    assert PRIVATE not in str(bounded) + prompt

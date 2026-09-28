@@ -207,3 +207,89 @@ remain explicit qualifications; this does not claim green CI for these unpushed 
 
 The implementation is ready for merge review with these limitations documented.
 No push, merge, tag change or publication was performed.
+
+## K. LONG-HORIZON ARCHITECTURE
+
+Agent47 uses long-running coding-agent patterns without claiming undocumented Codex
+internals. The global task deadline remains removed. Healthy progress has no fixed
+default step ceiling; `--max-steps N` or `AGENT_MAX_STEPS=N` can bound a run,
+while omitted/zero means unlimited. The same-action/same-result detector,
+failure fingerprints, five recovery attempts, default three consecutive failures,
+replan requirements, cancellation and verification gates continue to stop non-progress.
+
+A logical model turn defaults to 180 seconds, including owned retries and fallback.
+The timeout is configurable with `AGENT_MODEL_TIMEOUT_SECONDS`; late results are
+rejected and stream handles are closed. Shell policy defaults are 60 seconds for
+read-only inspection, 120 for git, and 600 for tests/build/lint/typecheck and
+install/network operations. Workspace resource policy may reduce those ceilings.
+Development servers and watchers use the existing managed-process path. There is
+no global task clock.
+
+Model profile and registered-model numeric context metadata take priority over
+`AGENT_CONTEXT_WINDOW_TOKENS`; absent metadata/override, the fallback is 65,536
+tokens. This fallback is a conservative policy value, not a claim about a provider.
+The existing UTF-8 byte estimator is conservative where an exact provider tokenizer
+is unavailable. The request budget reserves the selected model's output capacity,
+ten percent of the context window and a fixed framing allowance. Agent47 begins
+compaction at 75% of usable input capacity and enforces an 85% hard bound. The old
+character setting is optional compatibility protection, not the primary default.
+Provider fallback uses the smallest configured client capacity. Stored context
+metrics contain numeric estimates/counts only, never prompt text.
+
+The current user request and structured execution checkpoint are pinned. The
+checkpoint contains active plan, verification, blockers, evidence and changed paths;
+recent conversation is kept only while it fits. Duplicate or oversized older
+messages are omitted. Existing checkpoints are replaced by the newest structured
+one, avoiding summary-of-summary decay. A truly oversized pinned request returns
+`CONTEXT_CAPACITY` with durable state preserved. The status phase reports
+compaction without exposing hidden reasoning.
+
+Interactive sessions keep a stable persistent project goal separately from the
+changing task. Explicit `SessionState.set_goal` changes it; ordinary follow-up
+tasks do not. `/status` displays the goal. Recent explicit corrections are retained.
+Bounded structured session checkpoints
+persist the goal, plan, verification, relevant paths, decisions, failed approaches,
+blockers and next actions in the existing project-local store. On restart, Agent47
+restores that checkpoint without replaying a raw transcript. Repository files and
+current tests remain authoritative; a checkpoint is an aid to continuation, not
+proof that stale facts are still true. `project.md` remains explicit project
+knowledge. Hindsight supplies selectively recalled historical experience and does
+not become the active transcript or source of repo truth.
+
+All checkpoint and event payloads continue through recursive sanitization; provider
+reasoning fields remain excluded. The long-horizon tests use fake clocks and process
+objects: they do not wait hours or run a real five-minute build. They verify more
+than 100 productive actions, two simulated hours, a 150-second model turn,
+a late model response, a five-minute build, process cleanup beyond 600 seconds,
+100 conversational turns, repeated compaction and restart recovery.
+
+The earlier sections' test counts describe the prior audit commit; the verification
+for this long-horizon revision is recorded below after the final suite.
+## L. Long-horizon qualification result
+
+**READY FOR 0.1.0 WITH DOCUMENTED LIMITATIONS.** The final focused runtime,
+context, session, process and privacy set reports **179 passed**. The final
+non-Docker suite reports **1,264 passed, 1 failed, 5 skipped, 4 deselected**.
+The sole failure is the pre-existing, unchanged Windows narrow-terminal case
+`tests/test_interactive_diff.py::test_terminal_width_fallback_when_narrow`
+(`"fallback" in text` fails). Ruff and `git diff --check` pass.
+
+The deterministic long-horizon tests verify 121 productive actions across 7,503
+simulated seconds, a 150-second model response accepted within the 180-second
+turn limit, an over-deadline response rejected, a five-minute build accepted,
+a 600-second hung build cleaned up, and 100 task turns with repeated compaction
+and checkpoint restoration. The restart test restores the original goal,
+active plan, latest correction, blocker, decision and failed approach from a
+fresh storage instance, then checks repository content directly. Privacy tests
+cover event/snapshot storage, status, automation errors, credentials and private
+reasoning fields. These results are simulated where noted, not live provider or
+hours-long process measurements.
+
+The local Docker daemon is unavailable (the Docker Desktop Linux engine pipe
+does not exist), so Docker security tests were not rerun. Provider smoke and
+best-effort descendant cleanup limitations from the earlier audit remain. Model
+capacity metadata is optional; current registered models without numeric
+capacity use the configured override or conservative 65,536-token fallback.
+The known terminal assertion still prevents a completely green local suite.
+No packaging metadata, tag, main branch, PyPI publication or remote branch
+was changed by this qualification.

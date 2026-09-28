@@ -37,7 +37,7 @@ def create_agent(
     cwd: Path,
     model: str | None,
     dry_run: bool,
-    max_steps: int,
+    max_steps: int | None,
     max_failures: int | None = None,
     approval_callback: Callable[[str, str], bool] | None = None,
     reporter: StatusReporter | None = None,
@@ -98,15 +98,15 @@ def create_agent(
         else DEFAULT_CAPABILITIES.stream_usage,
         registered_default_model.runtime if registered_default_model else None,
     )
-    client = create_fallback_client(
-        provider,
-        selected_profile,
-        fallback_model_specs(
-            settings,
-            settings.fallback_model_list,
-            stream=settings.agent_stream if stream_model is None else stream_model,
-        ),
+    provider.context_window_tokens = resolve_context_window(
+        selected_profile, registered_default_model, settings,
     )
+    fallback_specs = fallback_model_specs(
+        settings,
+        settings.fallback_model_list,
+        stream=settings.agent_stream if stream_model is None else stream_model,
+    )
+    client = create_fallback_client(provider, selected_profile, fallback_specs)
     storage = AgentStorage(settings.agent_db_path)
     index_cache = RepoIndexCache(storage.db_path)
     sandbox_policy = resolve_sandbox_policy(
@@ -210,7 +210,7 @@ def create_agent(
     return CodingAgent(
         cwd=workspace,
         dry_run=dry_run,
-        max_steps=max_steps,
+        max_steps=max_steps if max_steps is not None else settings.agent_max_steps,
         max_failures=max_failures or settings.agent_max_failures,
         model_client=client,
         tools=tools,
@@ -220,8 +220,16 @@ def create_agent(
         reviewer_client=resolved_reviewer,
         context_max_chars=settings.agent_context_max_chars,
         model_timeout_seconds=settings.agent_model_timeout_seconds,
-        context_window_tokens=settings.agent_context_window_tokens,
-        reserved_output_tokens=settings.agent_max_tokens,
+        context_window_tokens=min(
+            [provider.context_window_tokens]
+            + [spec.provider.context_window_tokens for spec in fallback_specs]
+        ),
+        reserved_output_tokens=max(
+            [selected_profile.max_tokens]
+            + [spec.max_tokens or selected_profile.max_tokens for spec in fallback_specs]
+        ),
+        context_compact_ratio=settings.agent_context_compact_ratio,
+        context_hard_compact_ratio=settings.agent_context_hard_compact_ratio,
         execution_state_snapshot=execution_state_snapshot,
         resumed_from_run_id=resumed_from_run_id,
         platform_runtime=platform_runtime,
@@ -275,6 +283,7 @@ def create_chat_client(
         else DEFAULT_CAPABILITIES.stream_usage,
         registered_default_model.runtime if registered_default_model else None,
     )
+    provider_config.context_window_tokens = resolve_context_window(selected_profile, registered_default_model, settings)
     return create_openai_compatible_client(provider_config, selected_profile)
 
 
@@ -287,7 +296,7 @@ def model_provider_config(
     runtime = runtime or ModelRuntimeDefaults()
     resolved_provider_name = settings.provider_name_for(provider)
     return ModelProviderConfig(
-        context_window_tokens=settings.agent_context_window_tokens,
+        context_window_tokens=settings.agent_context_window_tokens or 65_536,
         api_key=settings.model_api_key_for(provider),
         base_url=settings.model_base_url_for(provider),
         name=resolved_provider_name,
@@ -323,6 +332,7 @@ def fallback_model_specs(
             registered.capabilities.stream_usage if registered else DEFAULT_CAPABILITIES.stream_usage,
             registered.runtime if registered else None,
         )
+        provider_config.context_window_tokens = resolve_context_window(None, registered, settings)
         specs.append(
             FallbackModelSpec(
                 provider=provider_config,
@@ -344,4 +354,13 @@ def apply_runtime_defaults(profile: ModelProfile, runtime: ModelRuntimeDefaults 
         temperature=temperature,
         max_tokens=max_tokens,
         purpose=profile.purpose,
+    )
+
+def resolve_context_window(profile, registered, settings: Settings) -> int:
+    """Prefer explicit profile and registry capacities, then operator override."""
+    return (
+        (profile.context_window_tokens if profile is not None else None)
+        or (registered.context_window_tokens if registered is not None else None)
+        or settings.agent_context_window_tokens
+        or 65_536
     )

@@ -48,15 +48,18 @@ class Settings(ExperienceMemorySettings):
     agent_input_cost_per_million: float | None = None
     agent_output_cost_per_million: float | None = None
     agent_max_tokens: int = 4096
-    agent_model_timeout_seconds: float = 60.0
+    agent_max_steps: int | None = Field(default=None, ge=0)
+    agent_model_timeout_seconds: float = 180.0
     # Deprecated and ignored: old .env files must not reintroduce a total run timer.
     agent_run_timeout_seconds: float | None = Field(default=None, ge=0, deprecated=True)
-    agent_context_window_tokens: int = Field(default=65_536, ge=1024)
+    agent_context_window_tokens: int | None = Field(default=None, ge=1024)
     agent_model_retry_count: int = Field(default=2, ge=0, le=10)
     agent_model_retry_base_seconds: float = Field(default=0.5, ge=0, le=60)
     agent_model_retry_max_seconds: float = Field(default=4.0, ge=0, le=300)
     agent_max_failures: int = 3
-    agent_context_max_chars: int = Field(default=60_000, ge=8_000, le=1_000_000)
+    agent_context_max_chars: int | None = Field(default=None, ge=8_000, le=1_000_000)
+    agent_context_compact_ratio: float = Field(default=0.75, gt=0, lt=1)
+    agent_context_hard_compact_ratio: float = Field(default=0.85, gt=0, lt=1)
     agent_db_path: Path = Path(".code-agent/agent.db")
     agent_execution_db_path: Path = Path(".code-agent/executions.db")
     agent_execution_mode: str = "shadow"

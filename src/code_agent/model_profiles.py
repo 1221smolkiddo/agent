@@ -14,6 +14,7 @@ class ModelProfile:
     temperature: float
     max_tokens: int
     purpose: str
+    context_window_tokens: int | None = None
 
 
 PROFILE_PURPOSES: dict[ModelProfileName, str] = {

@@ -208,7 +208,7 @@ def _summarize_execution_state(payload: dict[str, Any]) -> str:
     ]
     parts = [
         f"execution phase={payload.get('phase', 'unknown')}",
-        f"step={payload.get('step', 0)}/{payload.get('max_steps', 0)}",
+        f"step={payload.get('step', 0)}/{payload.get('max_steps') or 'unlimited'}",
         f"generation={payload.get('workspace_generation', 0)}",
     ]
     if pending:

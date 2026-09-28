@@ -1086,7 +1086,7 @@ def run(
         "--sandbox-backend",
         help="Sandbox backend override: auto, docker, or podman. Local is refused with --sandbox.",
     ),
-    max_steps: int = typer.Option(12, "--max-steps", min=1, help="Maximum agent loop steps."),
+    max_steps: Optional[int] = typer.Option(None, "--max-steps", min=0, help="Optional maximum agent steps; omitted or 0 has no hard cap."),
     max_failures: Optional[int] = typer.Option(
         None,
         "--max-failures",
@@ -1469,7 +1469,7 @@ def run_json(
         "--sandbox-backend",
         help="Sandbox backend override: auto, docker, or podman. Local is refused with --sandbox.",
     ),
-    max_steps: int = typer.Option(12, "--max-steps", min=1, help="Maximum agent loop steps."),
+    max_steps: Optional[int] = typer.Option(None, "--max-steps", min=0, help="Optional maximum agent steps; omitted or 0 has no hard cap."),
     max_failures: Optional[int] = typer.Option(
         None,
         "--max-failures",
@@ -1611,7 +1611,7 @@ def resume(
         "--sandbox-backend",
         help="Sandbox backend override: auto, docker, or podman. Local is refused with --sandbox.",
     ),
-    max_steps: int = typer.Option(12, "--max-steps", min=1, help="Maximum agent loop steps."),
+    max_steps: Optional[int] = typer.Option(None, "--max-steps", min=0, help="Optional maximum agent steps; omitted or 0 has no hard cap."),
     max_failures: Optional[int] = typer.Option(
         None,
         "--max-failures",

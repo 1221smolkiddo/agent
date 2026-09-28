@@ -387,3 +387,41 @@ def test_cli_models_lists_presets() -> None:
     assert "- deepseek-v4-flash:" not in result.output
     assert "key=" not in result.output
     assert "Available model presets:\n\n- qwen-coder: provider=openrouter, model=qwen/qwen3-coder\nDefault OpenRouter coding model." in result.output
+
+
+def test_context_capacity_priority_and_optional_step_configuration(tmp_path) -> None:
+    from types import SimpleNamespace
+
+    from code_agent.factory import resolve_context_window
+    from code_agent.model_profiles import ModelProfile
+
+    settings = Settings(
+        _env_file=None,
+        agent_context_window_tokens=24_000,
+        agent_max_steps=100,
+        agent_model_preset=None,
+        openrouter_api_key="test-key",
+        agent_fallback_models="",
+        agent_reviewer_pass=False,
+        agent_db_path=tmp_path / "agent.db",
+    )
+    profile = ModelProfile(
+        name="default", model="custom", temperature=0.2,
+        max_tokens=4096, purpose="test", context_window_tokens=48_000,
+    )
+    registered = SimpleNamespace(context_window_tokens=32_000)
+    assert resolve_context_window(profile, registered, settings) == 48_000
+    assert resolve_context_window(None, registered, settings) == 32_000
+    assert resolve_context_window(None, None, settings) == 24_000
+    assert resolve_context_window(
+        None, None, settings.model_copy(update={"agent_context_window_tokens": None}),
+    ) == 65_536
+
+    configured = create_agent(
+        settings=settings, cwd=tmp_path, model=None, dry_run=True, max_steps=None,
+    )
+    unlimited = create_agent(
+        settings=settings, cwd=tmp_path, model=None, dry_run=True, max_steps=0,
+    )
+    assert configured.max_steps == 100
+    assert unlimited.max_steps is None

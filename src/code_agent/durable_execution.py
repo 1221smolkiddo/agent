@@ -1835,7 +1835,7 @@ class DurableExecutionRuntime:
         profile, signals = self.policy_selector.select(task_intent, overrides=profile_overrides)
 
         # Use profile budgets unless caller provided explicit overrides
-        effective_budgets = budgets if budgets else profile.budgets.to_engine_budgets()
+        effective_budgets = budgets if budgets is not None else profile.budgets.to_engine_budgets()
 
         execution_id = self.engine.create(
             goal, budgets=effective_budgets, compatibility_version=compatibility_version

@@ -257,7 +257,7 @@ def classify_shell_command(command: str) -> ShellPolicy:
             "May install packages or contact external network resources.",
             may_write=True,
             may_network=True,
-            timeout_seconds=180,
+            timeout_seconds=600,
         )
     if _looks_like_test_or_build(lowered):
         return ShellPolicy(
@@ -266,7 +266,7 @@ def classify_shell_command(command: str) -> ShellPolicy:
             True,
             "Runs project verification.",
             may_write=True,
-            timeout_seconds=120,
+            timeout_seconds=600,
         )
     if _looks_like_development_process(lowered):
         return ShellPolicy(
@@ -286,7 +286,7 @@ def classify_shell_command(command: str) -> ShellPolicy:
             True,
             "Touches git metadata or repository state.",
             may_write=True,
-            timeout_seconds=60,
+            timeout_seconds=120,
         )
     if _looks_like_read_only(lowered):
         return ShellPolicy(
@@ -294,7 +294,7 @@ def classify_shell_command(command: str) -> ShellPolicy:
             "low",
             True,
             "Inspects local state without obvious mutation.",
-            timeout_seconds=30,
+            timeout_seconds=60,
         )
     return ShellPolicy(
         "unknown",

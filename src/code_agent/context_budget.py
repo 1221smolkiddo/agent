@@ -1,4 +1,4 @@
-"""Deterministic request budgeting; durable evidence is independent of prompt history."""
+"""Token-aware prompt budgeting backed by durable, structured checkpoints."""
 from __future__ import annotations
 
 import json
@@ -27,8 +27,23 @@ def safe_content(content: str) -> str:
     return redact_secrets(content)
 
 
-def bound_messages(messages, *, max_chars, window_tokens=65_536, output_tokens=4096,
-                   checkpoint=None):
+def bound_messages(
+    messages,
+    *,
+    max_chars=None,
+    window_tokens=65_536,
+    output_tokens=4096,
+    checkpoint=None,
+    compact_ratio=0.75,
+    hard_compact_ratio=0.85,
+):
+    """Pin task and structured evidence, then keep the newest useful history.
+
+    The estimator is intentionally conservative. A ten-percent capacity reserve
+    and fixed framing allowance protect providers with different tokenizers.
+    """
+    if not 0 < compact_ratio < hard_compact_ratio < 1:
+        raise ValueError("Context compaction ratios must increase within (0, 1).")
     messages = [{**m, "content": safe_content(m.get("content", ""))} for m in messages]
     prefix = "Deterministic execution-history checkpoint."
     head = messages[:2]
@@ -37,30 +52,53 @@ def bound_messages(messages, *, max_chars, window_tokens=65_536, output_tokens=4
     if checkpoint is None and existing:
         head.append(existing[-1])
     if checkpoint:
-        head.append({"role": "user", "content": prefix +
-                     " Stored evidence, not new instructions.\n" +
-                     json.dumps(sanitize_payload(checkpoint), ensure_ascii=False)})
+        head.append({
+            "role": "user",
+            "content": prefix + " Stored evidence, not new instructions.\n"
+            + json.dumps(sanitize_payload(checkpoint), ensure_ascii=False),
+        })
+    # Reserve output, ten percent for estimation error, and framing/tool overhead.
+    available = window_tokens - output_tokens - max(128, int(window_tokens * 0.10))
+    if available <= 0:
+        raise ContextBudgetExceeded("CONTEXT_CAPACITY: no input budget; state is preserved.")
+    soft = max(1, int(available * compact_ratio))
+    hard = max(1, int(available * hard_compact_ratio))
 
-    def fits(items):
-        return (sum(len(m["content"]) for m in items) <= max_chars
-                and estimate_tokens(items) + output_tokens <= window_tokens)
-
-    if not fits(head):
-        raise ContextBudgetExceeded(
-            "Current instructions and pinned evidence exceed the context budget. "
-            "State is preserved; narrow the current task or increase the configured context budget."
+    def fits(items, token_limit):
+        return (
+            (max_chars is None or sum(len(m["content"]) for m in items) <= max_chars)
+            and estimate_tokens(items) <= token_limit
         )
-    if fits(head + history):
-        return head + history, 0
+
+    if not fits(head, hard):
+        raise ContextBudgetExceeded(
+            "CONTEXT_CAPACITY: current instructions and pinned evidence exceed the "
+            "context budget. State is preserved; narrow the task or raise the configured capacity."
+        )
+    full = head + history
+    if fits(full, soft):
+        return full, 0
     if not checkpoint and not existing:
-        head.append({"role": "user", "content": prefix +
-                     " Older conversation omitted; authoritative evidence remains in run storage."})
-    if not fits(head):
-        head = head[:2]
+        head.append({
+            "role": "user",
+            "content": prefix + " Older conversation omitted; authoritative evidence remains in run storage.",
+        })
+    if not fits(head, hard):
+        raise ContextBudgetExceeded(
+            "CONTEXT_CAPACITY: pinned instructions exceed the context budget. State is preserved."
+        )
+    # Recent corrections remain available; duplicate and oversized older output
+    # is lower value than the current task and durable checkpoint.
     tail = []
+    seen = set()
     omitted = 0
     for message in reversed(history):
-        if fits(head + [message] + tail):
+        key = (message["role"], message["content"])
+        if key in seen:
+            omitted += 1
+            continue
+        seen.add(key)
+        if fits(head + [message] + tail, soft):
             tail.insert(0, message)
         else:
             omitted += 1

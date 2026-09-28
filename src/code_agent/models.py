@@ -73,7 +73,7 @@ class ModelProviderConfig:
     default_headers: dict[str, str] | None = None
     include_stream_usage: bool = True
     context_window_tokens: int = 65_536
-    timeout_seconds: float = 60.0
+    timeout_seconds: float = 180.0
     input_cost_per_million: float | None = None
     output_cost_per_million: float | None = None
     credit_retry_count: int = 3
@@ -133,7 +133,7 @@ class OpenAICompatibleChatClient:
     provider_name: str = "openai-compatible"
     include_stream_usage: bool = True
     context_window_tokens: int = 65_536
-    timeout_seconds: float = 60.0
+    timeout_seconds: float = 180.0
     input_cost_per_million: float | None = None
     output_cost_per_million: float | None = None
     credit_retry_count: int = 3
@@ -155,7 +155,7 @@ class OpenAICompatibleChatClient:
             default_headers=self.default_headers,
             timeout=self.timeout_seconds,
             # Agent47 owns retry policy. SDK retries would multiply the configured
-            # attempts and make a 60 second logical timeout last several minutes.
+            # attempts and make a logical turn timeout last several minutes.
             max_retries=0,
         )
 

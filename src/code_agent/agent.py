@@ -17,7 +17,7 @@ from .experience_memory.recall import (
     MemoryRecallCoordinator, RecallRunMetrics, record_recall_evaluation,
 )
 from .execution_state import ExecutionState
-from .context_budget import bound_messages, ContextBudgetExceeded
+from .context_budget import bound_messages, ContextBudgetExceeded, estimate_tokens
 from .safety import safe_exception
 from .durable_execution import AgentExecutionAdapter, DurableExecutionRuntime
 from .execution_host import ExecutionRuntimeHost, PlanningContext
@@ -76,7 +76,7 @@ class CodingAgent:
         self,
         cwd: Path,
         dry_run: bool,
-        max_steps: int,
+        max_steps: int | None,
         max_failures: int,
         model_client: ModelClient,
         tools: ToolRegistry,
@@ -84,11 +84,13 @@ class CodingAgent:
         reporter: StatusReporter | None = None,
         stream_model: bool = True,
         reviewer_client: ModelClient | None = None,
-        context_max_chars: int = 60_000,
-        model_timeout_seconds: float = 60.0,
+        context_max_chars: int | None = None,
+        model_timeout_seconds: float = 180.0,
         run_timeout_seconds: float | None = None,
         context_window_tokens: int = 65_536,
         reserved_output_tokens: int = 4096,
+        context_compact_ratio: float = 0.75,
+        context_hard_compact_ratio: float = 0.85,
         execution_state_snapshot: dict[str, Any] | None = None,
         resumed_from_run_id: int | None = None,
         platform_runtime: PlatformRuntime | None = None,
@@ -103,7 +105,7 @@ class CodingAgent:
         self._recall_metrics = RecallRunMetrics()
         self.cwd = cwd
         self.dry_run = dry_run
-        self.max_steps = max_steps
+        self.max_steps = max_steps or None
         self.max_failures = max_failures
         self.model_client = model_client
         self.tools = tools
@@ -112,6 +114,8 @@ class CodingAgent:
         self.stream_model = stream_model
         self.reviewer_client = reviewer_client
         self.context_max_chars = context_max_chars
+        self.context_compact_ratio = context_compact_ratio
+        self.context_hard_compact_ratio = context_hard_compact_ratio
         self.model_timeout_seconds = model_timeout_seconds
         self.run_timeout_seconds = run_timeout_seconds  # Deprecated; deliberately ignored.
         self.context_window_tokens = context_window_tokens
@@ -231,10 +235,10 @@ class CodingAgent:
                 durable_goal,
                 execution_id=self.durable_execution_id,
                 planning_context=planning_context,
-                budgets={
-                    "tokens": float(self.max_steps * 10_000),
-                    "tool_calls": float(self.max_steps),
-                },
+                budgets=(
+                    {"tokens": float(self.max_steps * 10_000), "tool_calls": float(self.max_steps)}
+                    if self.max_steps is not None else {}
+                ),
             )
             self.durable_execution_id = self._durable_adapter.execution_id
         elif self.durable_runtime is not None:
@@ -242,7 +246,7 @@ class CodingAgent:
                 self.durable_runtime,
                 clean_task,
                 execution_id=self.durable_execution_id,
-                budgets={"tokens": float(self.max_steps * 10_000), "tool_calls": float(self.max_steps)},
+                budgets=({"tokens": float(self.max_steps * 10_000), "tool_calls": float(self.max_steps)} if self.max_steps is not None else {}),
             )
             self.durable_execution_id = self._durable_adapter.execution_id
         run_id = self.storage.create_run(task=clean_task, model=self.model_client.model, cwd=self.cwd)
@@ -323,7 +327,9 @@ class CodingAgent:
                 )
             )
 
-        for step in range(1, self.max_steps + 1):
+        step = 0
+        while self.max_steps is None or step < self.max_steps:
+            step += 1
             self._check_cancelled()
             execution_state.begin_step(step)
             if step > 1 or execution_state.resume_count:
@@ -946,7 +952,7 @@ class CodingAgent:
                             self.cwd,
                             execution_state.task,
                             max_files=10,
-                            max_tokens=min(6000, max(1000, self.context_max_chars // 8)),
+                            max_tokens=min(6000, max(1000, (self.context_max_chars or self.context_window_tokens) // 8)),
                             cache=self.tools.index_cache
                             if isinstance(self.tools, ToolRegistry)
                             else None,
@@ -1005,7 +1011,7 @@ class CodingAgent:
                 self._report_recovery("tool failed; asking model for another attempt")
             messages.append({"role": "assistant", "content": action.model_dump_json()})
             messages.append({"role": "user", "content": json.dumps(tool_payload)})
-            if reflect_coordinator is not None and step < self.max_steps:
+            if reflect_coordinator is not None and (self.max_steps is None or step < self.max_steps):
                 # Normal diagnosis, evidence recording, and retry-budget checks have already run.
                 reflection_context = self._reflection_recovery_context(
                     coordinator=reflect_coordinator, run_id=run_id, clean_task=clean_task,
@@ -1207,11 +1213,23 @@ class CodingAgent:
                 "changed_paths": state.changed_paths,
                 "recovery": state.replan_reason,
             }
+        input_estimate = estimate_tokens(messages)
         messages[:], omitted = bound_messages(
             messages, max_chars=self.context_max_chars,
             window_tokens=self.context_window_tokens, output_tokens=self.reserved_output_tokens,
             checkpoint=checkpoint,
+            compact_ratio=self.context_compact_ratio,
+            hard_compact_ratio=self.context_hard_compact_ratio,
         )
+        self.storage.add_step(run_id, "tool", {
+            "type": "context_budget", "input_estimate": input_estimate,
+            "budget": self.context_window_tokens - self.reserved_output_tokens
+            - max(128, int(self.context_window_tokens * 0.10)),
+            "compaction_triggered": bool(omitted), "messages_dropped": omitted,
+            "checkpoint_used": checkpoint is not None,
+        })
+        if omitted:
+            self._phase("Compacting context")
         if state is not None:
             state.record_context(chars=sum(len(m["content"]) for m in messages), compacted_messages=omitted)
             if omitted:
@@ -1389,7 +1407,7 @@ class CodingAgent:
             self.cwd,
             task,
             max_files=10,
-            max_tokens=min(6000, max(1000, self.context_max_chars // 8)),
+            max_tokens=min(6000, max(1000, (self.context_max_chars or self.context_window_tokens) // 8)),
             cache=self.tools.index_cache,
         )
         execution_state.record_context_pack(context_pack)

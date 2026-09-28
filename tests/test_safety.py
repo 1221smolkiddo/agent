@@ -1,6 +1,8 @@
 from pathlib import Path
 import subprocess
 
+import pytest
+
 from code_agent import processes as processes_module
 import code_agent.tools as tools_module
 from code_agent.safety import classify_network_url, classify_shell_command, redact_secrets
@@ -191,7 +193,7 @@ def test_run_shell_permission_detail_includes_risk_label(tmp_path: Path) -> None
     assert "May access network: yes" in approval_details[0]
     assert "Shell network policy: allow" in approval_details[0]
     assert "Arbitrary code: no" in approval_details[0]
-    assert "Timeout: 180s" in approval_details[0]
+    assert "Timeout: 600s" in approval_details[0]
     assert "Command: npm install" in approval_details[0]
 
 
@@ -312,7 +314,7 @@ def test_run_shell_uses_scrubbed_environment_and_policy_timeout(tmp_path: Path, 
     result = tools.run(RunShellAction(type="run_shell", command="uv run pytest"))
 
     assert result.ok
-    assert captured["timeout_seconds"] == 120
+    assert captured["timeout_seconds"] == 600
     env = captured["env"]
     assert isinstance(env, dict)
     assert env["AGENT47_SANDBOXED_SHELL"] == "1"
@@ -333,7 +335,7 @@ def test_run_shell_reports_timeout_with_capped_redacted_output(tmp_path: Path, m
     result = tools.run(RunShellAction(type="run_shell", command="uv run pytest"))
 
     assert not result.ok
-    assert "timed out after 120s" in result.output
+    assert "timed out after 600s" in result.output
     assert "super-secret-token" not in result.output
     assert "<truncated" in result.output
     assert result.metadata["process_tree_cleanup"] is True
@@ -511,3 +513,14 @@ def test_fetch_url_blocks_local_network_targets(tmp_path: Path) -> None:
         assert "Blocked local-network web target" in str(exc)
     else:
         raise AssertionError("expected local-network web target to be blocked")
+
+
+def test_dev_server_uses_managed_process_action(tmp_path: Path, monkeypatch) -> None:
+    tools = ToolRegistry(workspace=tmp_path, dry_run=False)
+    monkeypatch.setattr(
+        tools, "_run_shell_process",
+        lambda *_args, **_kwargs: pytest.fail("server must not run as a one-shot command"),
+    )
+    result = tools.run(RunShellAction(type="run_shell", command="npm run dev"))
+    assert not result.ok
+    assert "start_process" in result.output

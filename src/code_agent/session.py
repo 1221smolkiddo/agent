@@ -22,7 +22,12 @@ class SessionState:
     current_plan: list[dict] = field(default_factory=list)
     verified_evidence: list[dict] = field(default_factory=list)
     durable_execution_id: str | None = None
+    persistent_goal: str | None = None
     current_task: str | None = None
+    architecture_decisions: list[str] = field(default_factory=list)
+    failed_approaches: list[str] = field(default_factory=list)
+    next_actions: list[str] = field(default_factory=list)
+    recent_corrections: list[str] = field(default_factory=list)
     pending_user_info: str | None = None
     target_files: list[str] = field(default_factory=list)
     last_created_files: list[str] = field(default_factory=list)
@@ -48,17 +53,31 @@ class SessionState:
         self.durable_execution_id = result.durable_execution_id
         state = result.execution_state or {}
         if state.get("plan_steps"):
-            self.current_plan = sanitize_payload(state["plan_steps"])
+            self.current_plan = _bounded_checkpoint_value(sanitize_payload(state["plan_steps"]))[-12:]
+            self.next_actions = [
+                redact_secrets(str(item.get("step", ""))[:200])
+                for item in self.current_plan if item.get("status") in {"pending", "in_progress"}
+            ][:6]
         for item in state.get("verification_records", []):
             if item.get("status") == "passed":
-                evidence = sanitize_payload({**item, "run_id": result.run_id})
+                evidence = _bounded_checkpoint_value(sanitize_payload({**item, "run_id": result.run_id}))
                 if evidence not in self.verified_evidence:
                     self.verified_evidence.append(evidence)
         self.verified_evidence = self.verified_evidence[-12:]
         self.last_blocker = self._blocker_from_result(result)
         self.previous_status = "blocked" if self.last_blocker else "completed"
-        if self._looks_like_workspace_request(user_input):
-            self.current_task = user_input
+        if self.persistent_goal is None:
+            self.set_goal(user_input)
+        self.current_task = redact_secrets(user_input[:2000])
+        if user_input.strip().lower().startswith(("correction:", "actually,", "instead,", "please change")):
+            correction = redact_secrets(" ".join(user_input.split())[:500])
+            self.recent_corrections = (self.recent_corrections + [correction])[-4:]
+        if result.failed_actions:
+            last_failure = result.failed_actions[-1]
+            self.record_failed_approach(
+                str(last_failure.get("action", last_failure.get("kind", "action")))
+                + ": " + str(last_failure.get("output", "failed"))
+            )
 
         changed_paths = result.changed_paths
         if changed_paths:
@@ -117,6 +136,16 @@ class SessionState:
             rows.append(("verified_evidence", json.dumps(sanitize_payload(self.verified_evidence))))
         if self.durable_execution_id:
             rows.append(("durable_execution_id", self.durable_execution_id))
+        if self.persistent_goal:
+            rows.append(("persistent_goal", self.persistent_goal))
+        if self.architecture_decisions:
+            rows.append(("architecture_decisions", json.dumps(self.architecture_decisions[-6:])))
+        if self.failed_approaches:
+            rows.append(("failed_approaches", json.dumps(self.failed_approaches[-6:])))
+        if self.recent_corrections:
+            rows.append(("recent_corrections", json.dumps(self.recent_corrections[-4:])))
+        if self.next_actions:
+            rows.append(("next_actions", json.dumps(self.next_actions[-6:])))
         if self.current_task:
             rows.append(("current_task", self.current_task))
         if self.pending_user_info:
@@ -150,7 +179,8 @@ class SessionState:
         if self.last_run_id is None:
             return
         # Explicit structured checkpoint: no raw transcript, diff, traceback or reasoning.
-        fields = ("session_id", "current_task", "pending_user_info", "target_files",
+        fields = ("session_id", "persistent_goal", "architecture_decisions", "failed_approaches",
+                  "next_actions", "recent_corrections", "current_task", "pending_user_info", "target_files",
                   "last_created_files", "last_edited_files", "last_deleted_files",
                   "last_tool_results", "last_blocker", "last_run_id", "previous_status",
                   "conversation_steering", "current_plan", "verified_evidence", "durable_execution_id")
@@ -170,30 +200,8 @@ class SessionState:
         merged = list(existing)
         for item in incoming:
             if item not in merged:
-                merged.append(item)
+                merged.append(redact_secrets(str(item)[:240]))
         return merged[-12:]
-
-    @staticmethod
-    def _looks_like_workspace_request(text: str) -> bool:
-        lowered = text.lower()
-        return bool(
-            extract_file_refs(text)
-            or any(
-                term in lowered
-                for term in [
-                    "project",
-                    "repo",
-                    "workspace",
-                    "file",
-                    "create",
-                    "edit",
-                    "update",
-                    "fix",
-                    "test",
-                    "commit",
-                ]
-            )
-        )
 
     @staticmethod
     def _asks_for_more_info(message: str) -> bool:
@@ -237,7 +245,22 @@ class SessionState:
         if result.failed_actions:
             action = result.failed_actions[-1].get("action", "tool")
             summaries.append(f"{action} failed")
-        return summaries
+        return [redact_secrets(summary[:300]) for summary in summaries]
+
+    def set_goal(self, goal: str) -> None:
+        """An explicit goal edit replaces the stable project objective."""
+        cleaned = " ".join(goal.strip().split())
+        self.persistent_goal = redact_secrets(cleaned[:1000]) if cleaned else None
+
+    def record_decision(self, decision: str) -> None:
+        cleaned = redact_secrets(" ".join(decision.strip().split())[:300])
+        if cleaned and cleaned not in self.architecture_decisions:
+            self.architecture_decisions = (self.architecture_decisions + [cleaned])[-6:]
+
+    def record_failed_approach(self, approach: str) -> None:
+        cleaned = redact_secrets(" ".join(approach.strip().split())[:300])
+        if cleaned and cleaned not in self.failed_approaches:
+            self.failed_approaches = (self.failed_approaches + [cleaned])[-6:]
 
     def set_steering(self, guidance: str) -> None:
         cleaned = " ".join(guidance.strip().split())
@@ -254,3 +277,19 @@ def extract_file_refs(text: str) -> list[str]:
         if value not in seen:
             seen.append(value)
     return seen
+
+
+def _bounded_checkpoint_value(value, depth: int = 0):
+    """Keep checkpoint facts structured while bounding each nested field."""
+    if depth >= 3:
+        return redact_secrets(str(value)[:120])
+    if isinstance(value, str):
+        return redact_secrets(value[:200])
+    if isinstance(value, list):
+        return [_bounded_checkpoint_value(item, depth + 1) for item in value[-12:]]
+    if isinstance(value, dict):
+        return {
+            str(key)[:80]: _bounded_checkpoint_value(item, depth + 1)
+            for key, item in list(value.items())[:8]
+        }
+    return value

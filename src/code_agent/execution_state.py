@@ -37,7 +37,7 @@ class ActionOutcome:
 @dataclass
 class ExecutionState:
     task: str
-    max_steps: int
+    max_steps: int | None
     repeated_outcome_limit: int = 2
     phase: ExecutionPhase = ExecutionPhase.DISCOVER
     step: int = 0
@@ -73,7 +73,7 @@ class ExecutionState:
         snapshot: dict[str, Any],
         *,
         task: str,
-        max_steps: int,
+        max_steps: int | None,
         resumed_from_run_id: int | None = None,
     ) -> "ExecutionState":
         state = cls(task=task, max_steps=max_steps)

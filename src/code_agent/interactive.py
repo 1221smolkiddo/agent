@@ -113,7 +113,7 @@ def main() -> None:
     dry_run = DEFAULT_DRY_RUN
     stream_model = settings.agent_stream
     sandbox_enabled = False
-    max_steps = 12
+    max_steps = settings.agent_max_steps or None
     max_failures: int | None = None
     transcript: list[tuple[str, str]] = []
     session_state = SessionState.restore(AgentStorage(settings.agent_db_path), cwd)
@@ -411,7 +411,7 @@ class CommandState:
         dry_run: bool,
         stream_model: bool,
         sandbox_enabled: bool,
-        max_steps: int,
+        max_steps: int | None,
         max_failures: int | None,
         exit_requested: bool = False,
     ) -> None:
@@ -437,7 +437,7 @@ def handle_command(
     dry_run: bool,
     stream_model: bool,
     sandbox_enabled: bool,
-    max_steps: int,
+    max_steps: int | None,
     max_failures: int | None,
     session_state: SessionState | None = None,
     permission_policy: PermissionPolicy | None = None,
@@ -619,8 +619,8 @@ def handle_command(
         print_panel("Profile", profile or settings.agent_profile)
     elif command == "/max-steps":
         if value:
-            max_steps = int(value)
-        print_panel("Max Steps", str(max_steps))
+            max_steps = int(value) or None
+        print_panel("Max Steps", str(max_steps) if max_steps else "Unlimited")
     elif command == "/max-failures":
         if value:
             max_failures = int(value)
@@ -646,7 +646,7 @@ def handle_command(
     elif command == "/history-show":
         print_history_detail(settings, value)
     elif command == "/status":
-        _handle_status_command(settings, cwd, model, profile, dry_run, stream_model, sandbox_enabled, permission_policy)
+        _handle_status_command(settings, cwd, model, profile, dry_run, stream_model, sandbox_enabled, permission_policy, session_state)
     elif command == "/approve-all":
         if permission_policy:
             permission_policy.set_mode(ApprovalMode.approve_task)
@@ -693,6 +693,15 @@ def handle_command(
         )
     elif command == "/mcp":
         _handle_mcp_command(value, cwd)
+    elif command == "/goal":
+        if session_state is None:
+            print_panel("Project Goal", "Project session is unavailable.")
+        elif value:
+            session_state.set_goal(value)
+            session_state.save(AgentStorage(settings.agent_db_path))
+            print_panel("Project Goal", session_state.persistent_goal or "unset")
+        else:
+            print_panel("Project Goal", session_state.persistent_goal or "unset")
     elif command == "/steer":
         if session_state is None:
             print_panel("Steering", "Session steering is unavailable.")
@@ -762,6 +771,7 @@ def _handle_status_command(
     stream_model: bool,
     sandbox_enabled: bool,
     permission_policy: PermissionPolicy | None,
+    session_state: SessionState | None = None,
 ) -> None:
     """Gather environment, auth, model, and workspace status and render /status panel."""
     auth_status = "✓ Signed in" if LocalSession().signed_in() else "✗ Not signed in"
@@ -791,6 +801,7 @@ def _handle_status_command(
         ("Model", "Provider", current_provider_name(settings, model)),
         ("Model", "Profile", profile or settings.agent_profile),
         ("Session", "Mode", "dry-run" if dry_run else "write-enabled"),
+        ("Session", "Project goal", (session_state.persistent_goal or "unset") if session_state else "unset"),
         ("Session", "Approvals", permission_policy.mode.value if permission_policy else "auto_read"),
         ("Session", "Sandbox", "enabled" if sandbox_enabled else "disabled"),
         ("Session", "Streaming", "on" if stream_model else "off"),
@@ -848,7 +859,7 @@ def run_resume_command(
     profile: str | None,
     dry_run: bool,
     stream_model: bool,
-    max_steps: int,
+    max_steps: int | None,
     max_failures: int | None,
     sandbox_enabled: bool,
     session_state: SessionState | None,
@@ -1670,7 +1681,7 @@ def run_interactive_turn(
     session_state: SessionState,
 ) -> list[tuple[str, str]]:
     task = task_with_context(user_input, transcript, session_state,
-                             max_chars=min(20_000, max(2048, getattr(agent, "context_max_chars", 60_000) // 3)))
+                             max_chars=min(10_000, max(2048, (getattr(agent, "context_window_tokens", 65_536) - getattr(agent, "reserved_output_tokens", 4096)) // 4)))
     result = agent.run_detailed(task)
     if is_model_failure_result(result):
         print_model_failure_card(result)

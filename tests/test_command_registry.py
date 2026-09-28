@@ -130,3 +130,20 @@ def test_handle_command_unknown_with_suggestions(tmp_path):
     # /modl should show suggestions without breaking
     st = handle_command("/modl", settings, cwd, cwd, None, None, False, True, False, 12, None)
     assert st.exit_requested is False
+
+
+def test_goal_command_updates_and_persists_project_objective(tmp_path):
+    from code_agent.session import SessionState
+    from code_agent.storage import AgentStorage
+
+    storage = AgentStorage(tmp_path / "agent.db")
+    state = SessionState()
+    state.last_run_id = storage.create_run("original task", "fake", tmp_path)
+    settings = Settings(_env_file=None, agent_db_path=tmp_path / "agent.db")
+    assert build_default_registry().lookup("/goal") is not None
+    handle_command(
+        "/goal Build a production issue tracker",
+        settings, tmp_path, tmp_path, None, None,
+        False, True, False, None, None, session_state=state,
+    )
+    assert SessionState.restore(storage, tmp_path).persistent_goal == "Build a production issue tracker"

@@ -887,6 +887,11 @@ class ToolRegistry:
                     f"{policy.reason}"
                 ),
             )
+        if policy.category == "development":
+            return ToolResult(
+                ok=False,
+                output="Use start_process for development servers and watchers; they need managed process lifecycle.",
+            )
         if self.shell_network_policy == "deny" and policy.may_network:
             return ToolResult(
                 ok=False,
@@ -1054,6 +1059,7 @@ class ToolRegistry:
                     f"{policy.reason}"
                 ),
             )
+
         if self.shell_network_policy == "deny" and policy.may_network:
             return ToolResult(
                 ok=False,
