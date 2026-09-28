@@ -80,7 +80,7 @@ Without an origin, the canonical Git common directory identifies all linked work
 Git, the canonical workspace path is the fallback. Independent no-origin clones do not share banks;
 moving a no-origin repository changes its bank. Branch and HEAD are allowlisted retention metadata.
 
-## Security and future integration
+## Security and privacy boundaries
 
 The original explicit summary API accepts only a reviewed single-paragraph prose summary of at most 1000 characters;
 queries are at most 2000 characters. Shared Agent47 secret checks/redaction are reused, including
@@ -104,8 +104,7 @@ own bounded worker infrastructure.
 For explicit summary retains, a timeout or transport failure may occur after the server stored
 data. There is no automatic retry, and `ok` requires confirmed synchronous success. The P2
 path uses a stable document and operation ID and an asynchronous acknowledgement instead.
-Historical memory never becomes recovery state or completion evidence. Live cloud and
-self-hosted server qualification remains future work.
+Historical memory never becomes recovery state or completion evidence. Live cloud and self-hosted server qualification is available through the opt-in P6 smoke command below; an actual deployment result is not included here.
 
 ## P1 release-gate observations
 
@@ -124,7 +123,8 @@ storage passes `AgentRunResult` plus the current execution projection to
 
 ```text
 recorded run/runtime evidence -> EngineeringEpisodeBuilder -> RetentionPolicy
-  -> MemorySanitizer -> ExperienceMemoryService.retain_episode -> Hindsight
+  -> MemorySanitizer -> durable SQLite outbox -> async Hindsight retain
+  -> operation reconciliation/polling
 ```
 
 The builder reads bounded, structured fields: clean goal, execution/run/task IDs, runtime
@@ -161,7 +161,7 @@ an uncertain submission with the same sanitized content reuses the same operatio
 revising content uses a new operation ID but replaces the same logical document.
 Hindsight documents [document upserts and async operation idempotency](https://github.com/vectorize-io/hindsight/blob/main/hindsight-docs/docs/developer/api/retain.mdx).
 An `ok` result means Hindsight acknowledged the asynchronous operation, **not** that
-extraction and indexing finished. P2 does not poll or reconcile operations.
+extraction and indexing finished. The outbox polls and reconciles those operations.
 
 Provider and sanitizer failures yield fixed local step telemetry (`status`, reason code,
 document and operation IDs) without episode text, credentials, or SDK exception messages.
@@ -212,9 +212,7 @@ on each code change. Disable that setting to stop both submission and recovery. 
 outbox records attempted provider requests and wall time locally; because the execution
 is already terminal, these are **not** charged against its runtime budget. P4 adds a
 one-request budget for automatic recall; background outbox reconciliation has its own
-startup and poller limits. Operator-facing outbox inspection/repair commands remain
-future work. Live cloud/self-hosted qualification and provider operation-retention-window
-behavior also remain to be verified before claiming end-to-end exactly-once delivery.
+startup and poller limits. Operator inspection and bounded manual reconciliation are described below. Live cloud/self-hosted deployment results and provider operation-retention-window behavior remain to be verified before claiming end-to-end exactly-once delivery.
 
 ## P4 selective recall before planning
 
@@ -347,3 +345,141 @@ responses, error text, and credentials are excluded from this telemetry.
 Live cloud/self-hosted Reflect and its effect on reasoning remain unqualified. Local
 fake-provider and SDK-contract tests establish wiring and authority boundaries, not a
 model-quality or deployment-success claim.
+
+## P6 production qualification
+
+### IMPLEMENTED
+
+Architecture and authority:
+
+```text
+task -> deterministic recall policy -> bounded Hindsight recall -> provenance/staleness
+                                                |                    |
+                                                v                    v
+                                       advisory planning context   numeric telemetry
+verified run -> sanitizer -> SQLite outbox -> async retain -> operation polling
+                                    |
+                           operator inspection/retry
+```
+
+The opt-in Hindsight configuration, cloud and self-hosted URL rules, retention identity,
+recall budget, provenance rules, and privacy boundary are described above. The outbox
+stores sanitized episode content locally, so protect the SQLite database as repository
+operational data. CLI diagnostics deliberately omit content, branch, HEAD, keys, URLs,
+provider payloads, and exception messages. Error codes come from a fixed allowlist.
+The SDK is imported only when enabled operations are called.
+
+Operators can use:
+
+```sh
+agent47 memory status
+agent47 memory health
+agent47 memory outbox --limit 50
+agent47 memory inspect OPERATION_ID
+agent47 memory retry OPERATION_ID
+```
+
+`status` reports availability, complete state totals, scheduled/due counts, review count, and oldest pending age. The bounded list includes lease expiry, update time, and age for identifying stuck rows.
+`health` distinguishes disabled, missing dependency, configuration error, provider
+unavailable, and healthy. The outbox view shows prepared (queued), submitted,
+processing, completed, failed, cancelled, and unknown rows. An unknown row with
+`operation_missing_after_ack`, `ambiguity_window_expired`, or `retry_limit`
+requires operator review. `retry` performs one provider lookup with the stored
+operation ID before any permissible resend. It refuses terminal, review-only, and
+exhausted rows. It never creates a fresh operation ID. A currently leased row cannot
+be claimed. There is no delete or purge command.
+
+A live deployment can be checked explicitly, outside normal CI:
+
+```sh
+agent47 memory live-smoke --bank-id agent47-repo-<64 hex characters> --timeout-seconds 60
+```
+
+Configure `AGENT_EXPERIENCE_MEMORY_ENABLED=true` and either cloud
+(`HINDSIGHT_API_KEY`, optional HTTPS `HINDSIGHT_BASE_URL`) or self-hosted
+(`AGENT_EXPERIENCE_MEMORY_DEPLOYMENT=self_hosted` and `HINDSIGHT_BASE_URL`).
+Use an **existing** bank. The command checks health, retains a unique synthetic
+episode, polls the same operation ID to completion within the deadline, recalls its
+marker, and requires matching document and repository-bank provenance. The timeout bounds the whole sequence, including individual SDK deadlines. It does not remove the synthetic
+memory because this integration has no qualified safe deletion path. JSON output
+contains IDs and stage/status only. Normal unit tests use fakes and require no key.
+
+The A/B harness is `agent47 memory evaluate`. Give it a JSON manifest with a
+`scenarios` array. Each item has `name`, `task`, and a relative `fixture`
+directory inside the manifest tree. Supported names are `repeated_bug_class`,
+`recurring_ci_failure`, `rejected_approach_later`, `multi_session_migration`,
+`release_rollback_lesson`, `architecture_decision_recall`, `simple_rename`,
+and `isolated_simple_bug`. The last two are negative controls. Example:
+
+```json
+{"scenarios":[{"name":"repeated_bug_class","task":"Fix the recurring parser bug","fixture":"fixtures/parser"}]}
+```
+
+```sh
+agent47 memory evaluate --manifest cases.json --runner "python path/to/instrumented_runner.py" --output results.json
+```
+
+The harness copies each fixture into a fresh temporary workspace for A
+(`AGENT_EXPERIENCE_MEMORY_ENABLED=false`) and B (selective recall enabled),
+alternates arm order by scenario, and sets `AGENT47_EVAL_TASK`,
+`AGENT47_EVAL_SCENARIO`, `AGENT47_EVAL_ARM`, and
+`AGENT47_EVAL_METRICS`. The runner must execute the task and write a JSON object
+to the metrics path. It may use actual Agent47 run telemetry and verification
+evidence. The harness records verified completion, first-pass verification, steps
+to verified solution, model/tool calls, repository reads, verification commands,
+repeated failed strategies, recall latency, memory context bytes, stale/irrelevant
+recalls, total latency, and token counts when available. Missing observations stay
+`null`; runner stdout/stderr and task content are not copied into the report.
+The human report gives paired completion and errors without a superiority claim.
+P5 supplies Reflect, but this harness currently supports A/B only. A C evaluation arm remains a qualification extension.
+
+### FUTURE / ROADMAP
+
+Run the manifest against independently reviewed, representative repository fixtures
+with real model calls, multiple trials, fixed model/settings, and seeded historical
+memories. Publish the resulting JSON and review quality as well as costs before
+claiming memory improves outcomes. Qualify actual cloud and self-hosted deployments,
+including operation-retention-window behavior. The smoke utility and harness do not
+by themselves establish exactly-once delivery or a performance benefit.
+
+### Offline smoke and performance commands
+
+```sh
+agent47 memory evaluate-smoke --output memory-smoke.json
+agent47 memory benchmark --output memory-benchmark.json --iterations 10000 --samples 7
+```
+
+The offline smoke builds eight small Git repositories and runs the real CodingAgent,
+durable runtime, file tools, and pytest verification in both arms. Historical lessons
+are explicitly synthetic seeded fixtures. Both arms use identical scripted model
+responses, so this measures wiring rather than memory's effect on reasoning. The
+migration fixture represents continuation against a seeded earlier-session lesson;
+it is not a measured long-running real migration. The runner counts actual model
+calls and tool dispatches; repository reads count read/search/list/map dispatches,
+not every internal filesystem read. Steps count model decisions through verified
+finalization. Verification commands count recorded verification runs. Repeated failed
+strategies count repeated failing action signatures; a real semantic strategy rubric
+must be supplied by a reviewed external runner. Irrelevance has known fixture labels;
+a live evaluation requires an independent relevance review. Missing token counts stay
+null. The harness also records recall request count.
+
+Use `--trials N` with the external evaluator to repeat pairs. Both arms explicitly
+disable automatic Reflect, and each gets a separate local run database. Fixture
+`.env` files are excluded. The external runner must provide reviewed, frozen memory
+seeds and fixed model settings; shared provider-bank writes can otherwise contaminate
+later trials. Credentials can be inherited for opt-in live runners but are never
+persisted in evaluation reports. JSON and a sibling Markdown report are saved.
+
+The disabled benchmark trips on socket connections/DNS and optional SDK imports. It
+times disabled service construction and deterministic recall decisions and records
+fresh-process CLI import samples, alternating order. Its baseline removes only P6's
+CLI import/registration from the current source. It declares no acceptance threshold.
+Timing variation is reported directly rather than converted into a production pass.
+The negative controls record the existing P4 policy: local rename skips recall, while
+an isolated bug matches the broad repair rule and can trigger an irrelevant recall.
+No new classification model call is introduced.
+
+The [P5 report](qualification/P5_REPORT.md) and [P6 report](qualification/P6_REPORT.md)
+are historical checkpoint observations, including the policy behavior measured then. See them for
+release checks. Live cloud/self-hosted results remain unqualified until the opt-in
+smoke command succeeds against a real deployment.

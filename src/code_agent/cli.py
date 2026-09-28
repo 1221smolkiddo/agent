@@ -48,6 +48,7 @@ from .eval_reports import (
     summarize_eval_reports,
 )
 from .factory import create_agent
+from .memory_operator import memory_app
 from .model_profiles import validate_profile_name
 from .model_presets import format_model_presets, resolve_model_preset
 from .model_registry import provider_name_list, validate_provider_name
@@ -150,6 +151,7 @@ app.add_typer(execution_app, name="execution")
 app.add_typer(keys_app, name="keys")
 app.add_typer(auth_app, name="auth")
 app.add_typer(mcp_app, name="mcp")
+app.add_typer(memory_app, name="memory")
 
 
 def validate_profile_option(value: Optional[str]) -> Optional[str]:

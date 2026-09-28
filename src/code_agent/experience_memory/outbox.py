@@ -10,7 +10,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .contracts import Experience, MemoryStatus, OperationState
@@ -33,7 +33,7 @@ SAFE_ERROR_CODES = frozenset({
 @dataclass(frozen=True)
 class OutboxEntry:
     bank_id: str
-    prepared: PreparedEpisode
+    prepared: PreparedEpisode = field(repr=False)
     state: str
     attempts: int
     submitted: bool
@@ -42,6 +42,8 @@ class OutboxEntry:
     error_code: str
     network_requests: int
     wall_seconds: float
+    updated_at: float = 0.0
+    lease_until: float | None = None
 
 
 class ExperienceMemoryOutbox:
@@ -156,6 +158,7 @@ class ExperienceMemoryOutbox:
             submitted=bool(row["submitted"]), created_at=row["created_at"],
             next_attempt_at=row["next_attempt_at"], error_code=row["error_code"],
             network_requests=row["network_requests"], wall_seconds=row["wall_seconds"],
+            updated_at=row["updated_at"], lease_until=row["lease_until"],
         )
 
     def get(self, operation_id: str) -> OutboxEntry | None:
@@ -234,8 +237,10 @@ class ExperienceMemoryOutbox:
                 network_calls, elapsed, entry.prepared.operation_id, owner,
             ))
 
-    def process(self, operation_id: str, *, first_submission: bool = False) -> OutboxEntry | None:
-        claim = self._claim(operation_id, force=first_submission)
+    def process(
+        self, operation_id: str, *, first_submission: bool = False, manual_retry: bool = False,
+    ) -> OutboxEntry | None:
+        claim = self._claim(operation_id, force=first_submission or manual_retry)
         if claim is None:
             return self.get(operation_id)
         entry, owner = claim
@@ -295,6 +300,65 @@ class ExperienceMemoryOutbox:
             self._record(entry, owner, "unknown", "local_dispatch_error",
                          network_calls=network_calls, elapsed=time.monotonic() - started)
         return self.get(operation_id)
+
+    def list_entries(self, *, limit: int = 50) -> list[OutboxEntry]:
+        """Bounded local inspection; callers must display metadata only."""
+        if not 1 <= limit <= 200:
+            raise ValueError("Outbox limit must be between 1 and 200.")
+        with self._connect() as conn:
+            rows = conn.execute(
+                "select * from experience_memory_outbox order by created_at desc limit ?",
+                (limit,),
+            ).fetchall()
+        return [self._entry(row) for row in rows]
+
+    def diagnostics(self) -> dict[str, object]:
+        """Aggregate all rows without loading episode content."""
+        states = ("prepared", "submitted", "processing", "completed", "failed", "cancelled", "unknown")
+        counts = {state: 0 for state in states}
+        now = time.time()
+        with self._connect() as conn:
+            rows = conn.execute(
+                "select state, count(*) as count from experience_memory_outbox group by state",
+            ).fetchall()
+            for row in rows:
+                state = row["state"] if row["state"] in counts else "unknown"
+                counts[state] += row["count"]
+            activity = conn.execute(
+                """
+                select
+                  sum(case when state not in ('completed', 'failed', 'cancelled')
+                      and next_attempt_at is not null then 1 else 0 end) as scheduled,
+                  sum(case when state not in ('completed', 'failed', 'cancelled')
+                      and next_attempt_at <= ? then 1 else 0 end) as due,
+                  sum(case when state = 'unknown' and next_attempt_at is null
+                      then 1 else 0 end) as review,
+                  min(case when state not in ('completed', 'failed', 'cancelled')
+                      then created_at end) as oldest
+                from experience_memory_outbox
+                """, (now,),
+            ).fetchone()
+        counts["queued"] = counts.pop("prepared")
+        return {
+            "counts": counts, "total": sum(counts.values()),
+            "scheduled": int(activity["scheduled"] or 0),
+            "due": int(activity["due"] or 0),
+            "operator_review": int(activity["review"] or 0),
+            "oldest_pending_age_seconds": max(0.0, now - activity["oldest"]) if activity["oldest"] else None,
+        }
+
+    def retry(self, operation_id: str) -> OutboxEntry | None:
+        """One reconciliation pass, never a forced first submission."""
+        entry = self.get(operation_id)
+        if entry is None:
+            return None
+        if entry.state in TERMINAL or entry.error_code in {
+            "operation_missing_after_ack", "ambiguity_window_expired", "retry_limit",
+        } or entry.attempts >= MAX_ATTEMPTS:
+            raise ValueError("Operation requires review or is terminal; retry is not allowed.")
+        if not self.service.enabled or self.service.availability != MemoryStatus.OK:
+            raise ValueError("Memory provider is not configured for retry.")
+        return self.process(operation_id, manual_retry=True)
 
     def recover(self, *, max_items: int = 3) -> list[OutboxEntry]:
         """Bounded startup pass; each candidate reconciles its ID before resend."""
