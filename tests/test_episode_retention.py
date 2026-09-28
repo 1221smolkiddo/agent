@@ -297,6 +297,8 @@ def test_sdk_uses_stable_async_ids_and_safe_metadata(rig, monkeypatch):
         "source": "agent47", "memory_kind": "engineering_episode",
         "branch": SCOPE.branch, "head": SCOPE.head,
         "outcome": "verified", "agent_version": "0.1.0b4",
+        "repository_bank_id": SCOPE.bank_id,
+        "changed_paths": '["src/parser.py"]',
     }
 
 

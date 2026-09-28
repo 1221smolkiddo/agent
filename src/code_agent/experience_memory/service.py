@@ -7,7 +7,8 @@ import uuid
 
 from .config import ExperienceMemoryConfig
 from .contracts import (
-    Experience, ExperienceMemoryProvider, MemoryResult, MemoryStatus, OperationLookup, RecalledExperience,
+    Experience, ExperienceMemoryProvider, ExperienceMemoryRecall, MemoryResult, MemoryStatus,
+    OperationLookup, RecallRequest, RecalledExperience, RecalledMemory,
 )
 from .privacy import safe_text, valid_experience, valid_query
 from .episode_sanitizer import PreparedEpisode
@@ -16,10 +17,10 @@ from .scope import RepositoryScope, repository_scope
 
 
 class ExperienceMemoryService:
-    """Explicit historical-memory API. No lifecycle hooks or automatic operations.
+    """Provider-neutral historical-memory API.
 
-    Future runtime use must supply authorization and effect accounting before calling
-    this service. Recalled information cannot prove current facts or completion.
+    The runtime may make one policy-controlled recall before planning. Recalled
+    information cannot prove current facts or completion.
     """
 
     def __init__(
@@ -64,6 +65,46 @@ class ExperienceMemoryService:
 
     def recall(self, query: str) -> MemoryResult:
         return self._query(query, reflect=False)
+
+    def recall_detailed(self, request: RecallRequest) -> ExperienceMemoryRecall:
+        """One bounded, provider-neutral recall for automatic historical context."""
+        if self._config.availability != MemoryStatus.OK:
+            return ExperienceMemoryRecall(self._config.availability)
+        if (
+            not isinstance(request, RecallRequest) or len(request.query) > 800
+            or request.max_results < 1 or request.max_results > self._config.recall_max_results
+            or request.max_tokens < 1 or request.max_tokens > min(
+                self._config.recall_max_tokens, self._config.automatic_recall_max_tokens,
+            )
+            or request.source_fact_tokens < 0
+            or request.source_fact_tokens > self._config.automatic_recall_source_facts_max_tokens
+            or request.timeout_seconds <= 0
+            or request.timeout_seconds > min(
+                self._config.timeout_seconds, self._config.automatic_recall_timeout_seconds,
+            )
+        ):
+            return ExperienceMemoryRecall(MemoryStatus.INVALID_REQUEST)
+        try:
+            scope = self.scope()
+            if not valid_query(scope.bank_id, request.query, self._config):
+                return ExperienceMemoryRecall(MemoryStatus.INVALID_REQUEST)
+            detailed = getattr(self._provider, "recall_detailed", None)
+            if callable(detailed):
+                result = detailed(scope.bank_id, request)
+                if isinstance(result, ExperienceMemoryRecall):
+                    return result
+                return ExperienceMemoryRecall(MemoryStatus.UNAVAILABLE)
+            # Older injected providers remain usable, but cannot claim provenance.
+            legacy = self._provider.recall(scope.bank_id, request.query)
+            if legacy.status != MemoryStatus.OK:
+                return ExperienceMemoryRecall(MemoryStatus(legacy.status))
+            return ExperienceMemoryRecall(MemoryStatus.OK, tuple(
+                RecalledMemory(text=item.text) for item in legacy.memories[:request.max_results]
+            ))
+        except TimeoutError:
+            return ExperienceMemoryRecall(MemoryStatus.TIMEOUT)
+        except Exception:
+            return ExperienceMemoryRecall(MemoryStatus.UNAVAILABLE)
 
     def reflect(self, query: str) -> MemoryResult:
         return self._query(query, reflect=True)

@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
+import re
 from typing import Any, Literal
 
 from ..config import ExperienceMemoryConfig
 from ..contracts import (
-    Experience, MemoryResult, MemoryStatus, OperationLookup, OperationState, RecalledExperience,
+    Experience, ExperienceMemoryRecall, MemoryProvenance, MemoryResult, MemoryStatus,
+    OperationLookup, OperationState, RecallRequest, RecalledExperience, RecalledMemory,
 )
 from ..privacy import safe_text, valid_experience, valid_query
+from ..episode_sanitizer import MemorySanitizer
 
 
 class HindsightExperienceMemoryProvider:
@@ -26,6 +30,147 @@ class HindsightExperienceMemoryProvider:
 
     def recall(self, bank_id: str, query: str) -> MemoryResult:
         return self._call("recall", bank_id=bank_id, query=query)
+
+    def recall_detailed(self, bank_id: str, request: RecallRequest) -> ExperienceMemoryRecall:
+        if self._config.availability != MemoryStatus.OK:
+            return ExperienceMemoryRecall(self._config.availability)
+        try:
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                pass
+            else:
+                return ExperienceMemoryRecall(MemoryStatus.UNAVAILABLE)
+            sdk = importlib.import_module("hindsight_client")
+            return asyncio.run(self._execute_detailed_recall(sdk, bank_id, request))
+        except ImportError:
+            return ExperienceMemoryRecall(MemoryStatus.MISSING_DEPENDENCY)
+        except TimeoutError:
+            return ExperienceMemoryRecall(MemoryStatus.TIMEOUT)
+        except Exception:
+            return ExperienceMemoryRecall(MemoryStatus.UNAVAILABLE)
+
+    async def _execute_detailed_recall(
+        self, sdk: Any, bank_id: str, request: RecallRequest,
+    ) -> ExperienceMemoryRecall:
+        config = self._config
+        timeout = min(config.timeout_seconds, request.timeout_seconds)
+        deadline = asyncio.get_running_loop().time() + timeout
+        async with asyncio.timeout_at(deadline):
+            client = sdk.Hindsight(
+                base_url=config.endpoint,
+                api_key=config.api_key.get_secret_value() if config.api_key else None,
+                timeout=timeout, max_attempts=1,
+            )
+            try:
+                response = await client.arecall(
+                    bank_id=bank_id, query=request.query,
+                    types=["observation", "experience"], prefer_observations=True,
+                    max_tokens=request.max_tokens, budget=request.budget,
+                    include_source_facts=request.source_fact_tokens > 0,
+                    max_source_facts_tokens=max(1, request.source_fact_tokens),
+                    include_chunks=False, trace=False,
+                )
+                results = getattr(response, "results", None)
+                if not isinstance(results, list):
+                    return ExperienceMemoryRecall(MemoryStatus.UNAVAILABLE)
+                facts = getattr(response, "source_facts", None)
+                facts = facts if isinstance(facts, dict) else {}
+                sanitizer = MemorySanitizer(config)
+                remaining = request.max_tokens  # conservative UTF-8 byte ceiling
+                memories: list[RecalledMemory] = []
+                for item in results[:request.max_results]:
+                    kind = getattr(item, "type", None)
+                    raw_text = getattr(item, "text", None)
+                    if kind not in {"observation", "experience"} or not isinstance(raw_text, str):
+                        continue
+                    raw = sanitizer.sanitize_text(raw_text)
+                    encoded = raw.encode("utf-8")[:remaining]
+                    text = encoded.decode("utf-8", errors="ignore").strip()
+                    remaining -= len(encoded)
+                    if not text:
+                        continue
+                    metadata = self._safe_metadata(getattr(item, "metadata", None), sanitizer)
+                    provenance = self._provenance(item, metadata)
+                    source_ids = getattr(item, "source_fact_ids", None)
+                    source_ids = tuple(str(value)[:120] for value in source_ids[:5]) if isinstance(source_ids, list) else ()
+                    sources = []
+                    for source_id in source_ids:
+                        source = facts.get(source_id)
+                        if source is not None:
+                            source_meta = self._safe_metadata(getattr(source, "metadata", None), sanitizer)
+                            sources.append(self._provenance(source, source_meta, source_id))
+                    scores = getattr(item, "scores", None)
+                    final_score = getattr(scores, "final", None)
+                    relevance = float(final_score) if isinstance(final_score, (int, float)) else None
+                    memories.append(RecalledMemory(
+                        text=text, memory_type=kind, provenance=provenance,
+                        source_facts=tuple(sources), source_fact_ids=source_ids,
+                        relevance=relevance, metadata=tuple(sorted(metadata.items())),
+                    ))
+                    if remaining <= 0:
+                        break
+                return ExperienceMemoryRecall(
+                    MemoryStatus.OK, tuple(memories),
+                    bool(getattr(response, "source_facts_truncated", False)),
+                )
+            finally:
+                remaining_time = max(0.001, deadline - asyncio.get_running_loop().time())
+                async with asyncio.timeout(remaining_time):
+                    await client.aclose()
+
+    @staticmethod
+    def _safe_metadata(value: Any, sanitizer: MemorySanitizer) -> dict[str, str]:
+        if not isinstance(value, dict):
+            return {}
+        allowed = {"source", "memory_kind", "branch", "head", "outcome",
+                   "agent_version", "repository_bank_id", "changed_paths"}
+        result = {}
+        for key in allowed:
+            raw = value.get(key)
+            if not isinstance(raw, str) or len(raw) > 1024:
+                continue
+            if key == "head" and re.fullmatch(r"[0-9a-f]{40,64}", raw):
+                result[key] = raw
+            elif key == "repository_bank_id" and re.fullmatch(
+                r"agent47-repo-[0-9a-f]{64}", raw
+            ):
+                result[key] = raw
+            elif sanitizer.sanitize_text(raw) == raw:
+                result[key] = raw
+        if "head" in result and not re.fullmatch(r"[0-9a-f]{40,64}", result["head"]):
+            del result["head"]
+        if "repository_bank_id" in result and not re.fullmatch(
+            r"agent47-repo-[0-9a-f]{64}", result["repository_bank_id"]
+        ):
+            del result["repository_bank_id"]
+        if "changed_paths" in result:
+            try:
+                paths = json.loads(result["changed_paths"])
+            except ValueError:
+                paths = None
+            if not isinstance(paths, list) or len(paths) > 8 or any(
+                not isinstance(path, str) or not re.fullmatch(r"[A-Za-z0-9_./-]{1,160}", path)
+                or path.startswith("/") or ".." in path.split("/")
+                for path in paths
+            ):
+                del result["changed_paths"]
+        return result
+
+    @staticmethod
+    def _provenance(item: Any, metadata: dict[str, str], fallback_id: str = "") -> MemoryProvenance:
+        try:
+            paths = json.loads(metadata.get("changed_paths", "[]"))
+        except ValueError:
+            paths = []
+        return MemoryProvenance(
+            memory_id=str(getattr(item, "id", None) or fallback_id)[:120],
+            document_id=str(getattr(item, "document_id", None) or "")[:160],
+            repository_bank_id=metadata.get("repository_bank_id", ""),
+            head=metadata.get("head", ""), branch=metadata.get("branch", ""),
+            changed_paths=tuple(paths),
+            occurred_at=str(getattr(item, "occurred_start", None) or "")[:40],
+        )
 
     def retain(self, bank_id: str, experience: Experience) -> MemoryResult:
         return self._call("retain", bank_id=bank_id, experience=experience)
@@ -149,6 +294,19 @@ class HindsightExperienceMemoryProvider:
                     if experience.head:
                         metadata["head"] = experience.head
                     if episode:
+                        metadata["repository_bank_id"] = bank_id
+                        try:
+                            episode_payload = json.loads(experience.summary)
+                            paths = episode_payload.get("changed_paths", [])
+                            if isinstance(paths, list):
+                                paths = [path for path in paths[:6] if isinstance(path, str)
+                                         and re.fullmatch(r"[A-Za-z0-9_./-]{1,120}", path)
+                                         and not path.startswith("/")
+                                         and ".." not in path.split("/")]
+                                if paths:
+                                    metadata["changed_paths"] = json.dumps(paths)
+                        except (ValueError, TypeError):
+                            pass
                         metadata.update({
                             "outcome": experience.outcome,
                             "agent_version": experience.agent_version,

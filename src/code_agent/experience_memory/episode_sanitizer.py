@@ -88,6 +88,9 @@ class MemorySanitizer:
             outcome=payload["outcome"], agent_version=payload["agent_version"],
         )
 
+    def sanitize_text(self, value: str) -> str:
+        return self._sanitize(value)
+
     def _sanitize(self, value: Any) -> Any:
         if isinstance(value, dict):
             return {key: self._sanitize(item) for key, item in value.items()}

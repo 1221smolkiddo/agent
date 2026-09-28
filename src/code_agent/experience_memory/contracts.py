@@ -48,6 +48,46 @@ class Experience:
 
 
 @dataclass(frozen=True)
+class RecallRequest:
+    query: str = field(repr=False)
+    max_tokens: int = 1024
+    max_results: int = 5
+    source_fact_tokens: int = 256
+    timeout_seconds: float = 3.0
+    budget: Literal["low", "mid", "high"] = "low"
+
+
+@dataclass(frozen=True)
+class MemoryProvenance:
+    memory_id: str = ""
+    document_id: str = ""
+    repository_bank_id: str = ""
+    head: str = ""
+    branch: str = ""
+    changed_paths: tuple[str, ...] = ()
+    occurred_at: str = ""
+
+
+@dataclass(frozen=True)
+class RecalledMemory:
+    text: str = field(repr=False)
+    memory_type: Literal["observation", "experience"] = "experience"
+    provenance: MemoryProvenance = field(default_factory=MemoryProvenance)
+    source_facts: tuple[MemoryProvenance, ...] = ()
+    source_fact_ids: tuple[str, ...] = ()
+    relevance: float | None = None
+    metadata: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class ExperienceMemoryRecall:
+    status: MemoryStatus
+    memories: tuple[RecalledMemory, ...] = ()
+    source_facts_truncated: bool = False
+    untrusted: bool = field(default=True, init=False)
+
+
+@dataclass(frozen=True)
 class RecalledExperience:
     text: str = field(repr=False)
 
@@ -70,6 +110,7 @@ class ExperienceMemoryProvider(Protocol):
     def health(self) -> MemoryResult: ...
 
     def recall(self, bank_id: str, query: str) -> MemoryResult: ...
+    def recall_detailed(self, bank_id: str, request: RecallRequest) -> ExperienceMemoryRecall: ...
 
     def retain(self, bank_id: str, experience: Experience) -> MemoryResult: ...
 

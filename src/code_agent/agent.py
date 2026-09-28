@@ -4,7 +4,7 @@ import json
 import re
 import hashlib
 from time import perf_counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -12,9 +12,12 @@ from pydantic import TypeAdapter, ValidationError
 
 from .experience_memory import ExperienceMemoryService
 from .experience_memory.retention import EpisodeRetentionCoordinator
+from .experience_memory.recall import (
+    MemoryRecallCoordinator, RecallRunMetrics, record_recall_evaluation,
+)
 from .execution_state import ExecutionState, compact_message_history
 from .durable_execution import AgentExecutionAdapter, DurableExecutionRuntime
-from .execution_host import ExecutionRuntimeHost
+from .execution_host import ExecutionRuntimeHost, PlanningContext
 from .failure_types import (
     CONTEXT_BUDGET_FORCE_COMPACT_RATIO,
     CONTEXT_BUDGET_TIGHT_TARGET_RATIO,
@@ -23,7 +26,7 @@ from .failure_types import (
 from .models import ChatMessage, ModelClient
 from .patches import git_style_unified_diff
 from .platform_runtime import PlatformRuntime
-from .repo_index import affected_test_paths, build_context_pack
+from .repo_index import affected_test_paths, build_context_pack, build_repo_map
 from .prompts import system_prompt
 from .reviewer import ReviewerPassResult, run_reviewer_pass
 from .schema import (
@@ -97,6 +100,7 @@ class CodingAgent:
         experience_memory: ExperienceMemoryService | None = None,
     ) -> None:
         self.experience_memory = experience_memory
+        self._recall_metrics = RecallRunMetrics()
         self.cwd = cwd
         self.dry_run = dry_run
         self.max_steps = max_steps
@@ -160,12 +164,45 @@ class CodingAgent:
             self.tools.approval_callback = _timed_approval
             
         clean_task = self._extract_user_task(task)
+        workspace_task = self._is_workspace_task(task)
+        historical_context = ""
+        self._recall_metrics = RecallRunMetrics()
+        if self.experience_memory is not None and self.experience_memory.enabled:
+            try:
+                historical_context, self._recall_metrics = MemoryRecallCoordinator(
+                    self.experience_memory,
+                ).before_planning(clean_task, workspace_task=workspace_task)
+            except Exception:
+                self._recall_metrics = RecallRunMetrics(reason="recall_error", status="unavailable")
         resuming_durable_execution = bool(self.durable_execution_id)
         durable_goal = self.durable_goal or clean_task
+        contextual_planner = (
+            self.runtime_host is not None
+            and callable(getattr(self.runtime_host.plan_provider, "plan_with_context", None))
+        )
+        repository_planning_context = ""
+        if contextual_planner and historical_context and not resuming_durable_execution:
+            repository_planning_context = self._planning_repository_context()
+        planning_context = PlanningContext(
+            goal=durable_goal,
+            historical_context=(historical_context if contextual_planner and not resuming_durable_execution else ""),
+            repository_context=repository_planning_context,
+        )
+        planner_type = (
+            "none" if self.runtime_host is None
+            else "model" if contextual_planner else "deterministic"
+        )
+        self._recall_metrics = replace(
+            self._recall_metrics,
+            memory_available_to_planner=bool(planning_context.historical_context),
+            planner_type=planner_type,
+            planning_context_chars=planning_context.size_chars if contextual_planner else 0,
+        )
         if self.runtime_host is not None:
             self._durable_adapter = self.runtime_host.begin_legacy_run(
                 durable_goal,
                 execution_id=self.durable_execution_id,
+                planning_context=planning_context,
                 budgets={
                     "tokens": float(self.max_steps * 10_000),
                     "tool_calls": float(self.max_steps),
@@ -181,6 +218,11 @@ class CodingAgent:
             )
             self.durable_execution_id = self._durable_adapter.execution_id
         run_id = self.storage.create_run(task=clean_task, model=self.model_client.model, cwd=self.cwd)
+        if self.experience_memory is not None and self.experience_memory.enabled:
+            try:
+                self.storage.add_step(run_id, "tool", self._recall_metrics.safe_payload())
+            except Exception:
+                pass
         if self._durable_adapter is not None:
             self.storage.add_step(run_id, "tool", {
                 "type": "durable_execution_link",
@@ -199,7 +241,6 @@ class CodingAgent:
             else ExecutionState(task=clean_task, max_steps=self.max_steps)
         )
         self._active_execution_state = execution_state
-        workspace_task = self._is_workspace_task(task)
         consecutive_failures = 0
         loop_recoveries = 0
         redundant_context_recoveries = 0
@@ -236,6 +277,8 @@ class CodingAgent:
             {"role": "system", "content": system_prompt(self.cwd, self.dry_run, platform_context)},
             {"role": "user", "content": task},
         ]
+        if historical_context:
+            messages.append({"role": "user", "content": historical_context})
 
         # Workspace discovery
         if workspace_task and self.reporter:
@@ -1093,6 +1136,8 @@ class CodingAgent:
             except Exception:
                 # Historical retention is advisory and cannot alter accepted work.
                 pass
+        if self.experience_memory is not None and self.experience_memory.enabled:
+            record_recall_evaluation(self.storage, result, self._recall_metrics)
         return result
 
     def _review_final_answer(
@@ -1241,6 +1286,17 @@ class CodingAgent:
             return self.tools.run(action)
         except Exception as exc:
             return ToolResult(ok=False, output=str(exc))
+
+    def _planning_repository_context(self) -> str:
+        """Small current-repository map; the worker preflight reuses its index cache."""
+        if not isinstance(self.tools, ToolRegistry):
+            return ""
+        try:
+            return build_repo_map(
+                self.cwd, max_files=12, cache=self.tools.index_cache,
+            )[:2000]
+        except Exception:
+            return ""
 
     def _run_context_preflight(
         self,

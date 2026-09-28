@@ -17,11 +17,12 @@ class RepositoryScope:
 
 
 def _git(workspace: Path, *args: str) -> str | None:
-    # Inspection only. Git receives no credential/environment values beyond OS needs.
+    # Inspection only. Preserve Git configuration paths so diff uses the same text normalization as the repository.
     env = {key: value for key, value in os.environ.items() if key.upper() in {
         "PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "TEMP", "TMP",
+        "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "XDG_CONFIG_HOME",
     }}
-    env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1"})
+    env.update({"GIT_TERMINAL_PROMPT": "0"})
     try:
         result = subprocess.run(
             ["git", "-C", str(workspace), *args], capture_output=True, text=True,

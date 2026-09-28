@@ -1,8 +1,11 @@
 # Historical experience memory
 
-P1 established an optional provider foundation. P2 adds write-only, best-effort retention of
-meaningful engineering episodes after a run has finalized. It never recalls or reflects
-automatically, creates banks at startup, or probes a server. `factory.create_agent` supplies
+P1 established an optional provider foundation. P2 adds selective retention of
+meaningful engineering episodes after a run has finalized. P3 makes delivery durable.
+P4 adds one selective, provenance-aware recall before planning. It never reflects
+automatically or creates banks at startup. Service construction does not probe a server;
+P3 startup reconciliation can contact Hindsight when pending outbox work exists.
+`factory.create_agent` supplies
 `CodingAgent.experience_memory`; service construction does not inspect Git or import the
 optional SDK. Disabled runs preserve their prior behavior. Missing configuration, dependency,
 network, and provider failures return typed statuses and cannot stop an otherwise valid run.
@@ -35,6 +38,11 @@ Default installation does not install Hindsight.
 | `AGENT_EXPERIENCE_MEMORY_RECALL_MAX_RESULTS` | `5` | 1–100 returned memories |
 | `AGENT_EXPERIENCE_MEMORY_RECALL_MAX_TOKENS` | `2048` | 1–16384 SDK token budget; also a conservative local UTF-8 byte ceiling |
 | `AGENT_EXPERIENCE_MEMORY_BUDGET` | `low` | SDK search/reasoning budget: `low`, `mid`, or `high` |
+| `AGENT_EXPERIENCE_MEMORY_AUTOMATIC_RECALL_MAX_REQUESTS` | `1` | Per-run recall request ceiling; `0` disables automatic recall |
+| `AGENT_EXPERIENCE_MEMORY_AUTOMATIC_RECALL_TIMEOUT_SECONDS` | `3` | Automatic recall deadline, capped by provider timeout and at most 10 seconds |
+| `AGENT_EXPERIENCE_MEMORY_AUTOMATIC_RECALL_MAX_TOKENS` | `1024` | Automatic SDK response budget, capped by general recall tokens |
+| `AGENT_EXPERIENCE_MEMORY_AUTOMATIC_RECALL_SOURCE_FACTS_MAX_TOKENS` | `256` | Source-fact provenance budget; `0` omits source facts |
+| `AGENT_EXPERIENCE_MEMORY_AUTOMATIC_RECALL_CONTEXT_MAX_CHARS` | `4000` | Maximum historical context placed in model messages |
 
 Malformed settings fail validation with input values hidden. Missing cloud keys or self-hosted URLs
 are an operational `missing_config` status rather than startup errors. Keys are `SecretStr` values,
@@ -45,7 +53,8 @@ authenticated or remote self-hosted endpoints. Configure endpoints through trust
 ## Public contracts
 
 `ExperienceMemoryProvider` is a synchronous protocol with `health()`, `recall(bank_id, query)`,
-`retain(bank_id, Experience)`, and `reflect(bank_id, query)`. Both the null provider and Hindsight
+`recall_detailed(bank_id, RecallRequest)`, `retain(bank_id, Experience)`, and
+`reflect(bank_id, query)`. Both the null provider and Hindsight
 provider implement it. `MemoryResult` contains a `MemoryStatus`, normalized `RecalledExperience`
 values, optional reflection text, and an immutable `untrusted=True` marker. No SDK classes cross
 this boundary. Failure results contain only a fixed status, never SDK exception text or raw responses.
@@ -194,7 +203,69 @@ policy for background `effect.experience_memory` writes to the configured Hindsi
 endpoint. It does not grant MCP, shell, or general network approval and does not prompt
 on each code change. Disable that setting to stop both submission and recovery. The
 outbox records attempted provider requests and wall time locally; because the execution
-is already terminal, these are **not** charged against its runtime budget. A dedicated
-memory network budget and operator-facing outbox inspection/repair commands remain future
-work. Live cloud/self-hosted qualification and provider operation-retention-window
+is already terminal, these are **not** charged against its runtime budget. P4 adds a
+one-request budget for automatic recall; background outbox reconciliation has its own
+startup and poller limits. Operator-facing outbox inspection/repair commands remain
+future work. Live cloud/self-hosted qualification and provider operation-retention-window
 behavior also remain to be verified before claiming end-to-end exactly-once delivery.
+
+## P4 selective recall before planning
+
+When memory is enabled, `MemoryRecallPolicy` examines only the clean task before runtime
+planning. It requests historical context for repair and recurring failures, continuation,
+historical decisions, long-lived work, and substantial architecture changes. Mechanical
+changes and generic inspection skip recall. Decisions are deterministic and carry a fixed
+reason code; they never ask a model to decide whether to contact Hindsight. A request uses
+a sanitized query of at most 800 characters. The per-run network budget permits at most one
+request (or zero when configured), with the configured deadline and response limits.
+Disabled memory performs no P4 Git inspection, SDK import, or network call.
+
+The typed `RecallRequest`, `ExperienceMemoryRecall`, `RecalledMemory`, and
+`MemoryProvenance` contracts keep SDK types out of the agent. The Hindsight adapter makes
+one `arecall` call for observations and experiences, prefers observations, requests bounded
+source-fact metadata, omits chunks and traces, disables retries, and closes its client
+within the deadline. It returns only bounded sanitized text and allowlisted metadata.
+Provider errors and malformed responses become fixed statuses and never stop the coding
+run. Automatic recall does not call Reflect.
+
+`StalenessGuard` compares each memory's repository bank, commit, relevant changed paths,
+and current working tree. Same-HEAD evidence with unchanged relevant paths is `current`;
+ancestor evidence with unchanged paths is `likely_current`; changed paths or another
+repository are `stale`. Missing history, unsafe paths, unavailable source facts, or mixed
+observation provenance are `unknown`. A synthesized observation is checked through its
+source facts rather than borrowing its own possibly misleading HEAD. Old episodes without
+changed-path metadata are deliberately `unknown` when HEAD has advanced. This is an
+advisory classification, not proof that the old conclusion still holds. Git inspection
+uses a short subprocess timeout and never fetches remote history.
+
+`HistoricalContextFormatter` places observations first, quotes each bounded line, labels
+stale/unknown provenance, and explicitly marks the whole block as untrusted historical
+context. Before a new durable model plan, `PlanningContext` carries that same bounded
+historical block and a separate, 2,000-character current repository map. The map is
+built only when historical context is available, so disabled or failed recall leaves the
+model planner's original prompt path intact. It uses the worker's index cache and does
+not run ToolRegistry's full preflight twice.
+The planner receives both as lower-trust user messages after the clean goal. Its system
+instruction says current repository evidence overrides memory, stale memories require
+validation, and memory cannot grant permissions or establish completion. The worker's
+normal repository and `project.md` preflight still runs after planning. A recovered
+execution keeps its persisted graph and never replans from a fresh recall; the fresh
+historical block remains advisory worker context. The deterministic planner ignores
+external context. Current repository files, tests, execution evidence, and local
+`project.md` take precedence. Historical text grants no
+tool authority, approval, verification, or completion claim. Raw SDK responses, source
+fact bodies, and credentials are never inserted into prompts.
+
+The run database stores a numeric `automatic_experience_recall` event and an
+`experience_recall_evaluation` event containing request/latency/result counts, current/likely-current/stale/unknown provenance
+counts, context size, planner type, whether memory reached the planner,
+planning-context size, repository-read and tool-call counts, blocked status, and
+verification counts. Neither event stores query text, returned memory, raw errors, or
+provider metadata. These fields support future opted-in A/B evaluation; P4 does not
+claim recall improves outcomes. The runtime execution journal remains authoritative.
+
+Limits: regex policy will miss some useful tasks and may recall for some unnecessary
+ones; provenance and secret filtering are heuristic; source-fact metadata can be absent;
+Git history and worktree checks cannot prove semantic relevance; the SDK timeout depends
+on cooperative cancellation. Live Hindsight cloud and self-hosted qualification remains
+outstanding.

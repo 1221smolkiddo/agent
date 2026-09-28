@@ -1,4 +1,6 @@
-from ..contracts import Experience, MemoryResult, MemoryStatus, OperationLookup
+from ..contracts import (
+    Experience, ExperienceMemoryRecall, MemoryResult, MemoryStatus, OperationLookup, RecallRequest,
+)
 
 
 class NullExperienceMemoryProvider:
@@ -10,6 +12,9 @@ class NullExperienceMemoryProvider:
 
     def recall(self, bank_id: str, query: str) -> MemoryResult:
         return self.health()
+
+    def recall_detailed(self, bank_id: str, request: RecallRequest) -> ExperienceMemoryRecall:
+        return ExperienceMemoryRecall(self.status)
 
     def retain(self, bank_id: str, experience: Experience) -> MemoryResult:
         return self.health()
