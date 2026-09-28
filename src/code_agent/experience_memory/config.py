@@ -27,6 +27,12 @@ class ExperienceMemoryConfig(BaseModel):
     automatic_recall_max_tokens: int = Field(default=1024, ge=128, le=4096)
     automatic_recall_source_facts_max_tokens: int = Field(default=256, ge=0, le=1024)
     automatic_recall_context_max_chars: int = Field(default=4000, ge=500, le=8000)
+    automatic_reflect_enabled: bool = True
+    automatic_reflect_max_requests: int = Field(default=1, ge=0, le=1)
+    automatic_reflect_timeout_seconds: float = Field(default=5.0, gt=0, le=15, allow_inf_nan=False)
+    automatic_reflect_max_tokens: int = Field(default=768, ge=128, le=2048)
+    automatic_reflect_source_facts_max_tokens: int = Field(default=256, ge=32, le=1024)
+    automatic_reflect_context_max_chars: int = Field(default=3000, ge=500, le=6000)
 
     @field_validator("api_key", mode="before")
     @classmethod
@@ -105,6 +111,16 @@ class ExperienceMemorySettings(BaseSettings):
     agent_experience_memory_automatic_recall_max_tokens: int = Field(default=1024, ge=128, le=4096)
     agent_experience_memory_automatic_recall_source_facts_max_tokens: int = Field(default=256, ge=0, le=1024)
     agent_experience_memory_automatic_recall_context_max_chars: int = Field(default=4000, ge=500, le=8000)
+    agent_experience_memory_automatic_reflect_enabled: bool = True
+    agent_experience_memory_automatic_reflect_max_requests: int = Field(default=1, ge=0, le=1)
+    agent_experience_memory_automatic_reflect_timeout_seconds: float = Field(
+        default=5.0, gt=0, le=15, allow_inf_nan=False,
+    )
+    agent_experience_memory_automatic_reflect_max_tokens: int = Field(default=768, ge=128, le=2048)
+    agent_experience_memory_automatic_reflect_source_facts_max_tokens: int = Field(
+        default=256, ge=32, le=1024,
+    )
+    agent_experience_memory_automatic_reflect_context_max_chars: int = Field(default=3000, ge=500, le=6000)
 
     @field_validator("hindsight_api_key", mode="before")
     @classmethod
@@ -140,4 +156,12 @@ class ExperienceMemorySettings(BaseSettings):
                 self.agent_experience_memory_automatic_recall_source_facts_max_tokens
             ),
             automatic_recall_context_max_chars=self.agent_experience_memory_automatic_recall_context_max_chars,
+            automatic_reflect_enabled=self.agent_experience_memory_automatic_reflect_enabled,
+            automatic_reflect_max_requests=self.agent_experience_memory_automatic_reflect_max_requests,
+            automatic_reflect_timeout_seconds=self.agent_experience_memory_automatic_reflect_timeout_seconds,
+            automatic_reflect_max_tokens=self.agent_experience_memory_automatic_reflect_max_tokens,
+            automatic_reflect_source_facts_max_tokens=(
+                self.agent_experience_memory_automatic_reflect_source_facts_max_tokens
+            ),
+            automatic_reflect_context_max_chars=self.agent_experience_memory_automatic_reflect_context_max_chars,
         )

@@ -12,6 +12,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from .experience_memory import ExperienceMemoryService
 from .experience_memory.retention import EpisodeRetentionCoordinator
+from .experience_memory.reflection import MemoryReflectCoordinator
 from .experience_memory.recall import (
     MemoryRecallCoordinator, RecallRunMetrics, record_recall_evaluation,
 )
@@ -167,13 +168,24 @@ class CodingAgent:
         workspace_task = self._is_workspace_task(task)
         historical_context = ""
         self._recall_metrics = RecallRunMetrics()
+        recall_coordinator = None
         if self.experience_memory is not None and self.experience_memory.enabled:
             try:
-                historical_context, self._recall_metrics = MemoryRecallCoordinator(
-                    self.experience_memory,
-                ).before_planning(clean_task, workspace_task=workspace_task)
+                recall_coordinator = MemoryRecallCoordinator(self.experience_memory)
+                historical_context, self._recall_metrics = recall_coordinator.before_planning(
+                    clean_task, workspace_task=workspace_task,
+                )
             except Exception:
                 self._recall_metrics = RecallRunMetrics(reason="recall_error", status="unavailable")
+        reflect_coordinator = (
+            MemoryReflectCoordinator(
+                self.experience_memory,
+                recall_coordinator.memories if recall_coordinator is not None else (),
+            )
+            if self.experience_memory is not None and self.experience_memory.enabled
+            and self.experience_memory.config.automatic_reflect_enabled
+            else None
+        )
         resuming_durable_execution = bool(self.durable_execution_id)
         durable_goal = self.durable_goal or clean_task
         contextual_planner = (
@@ -558,6 +570,8 @@ class CodingAgent:
                             progress=action,
                         )
                 execution_state.update_plan(effective_action)
+                if reflect_coordinator is not None:
+                    reflect_coordinator.record_strategy("update_plan", [])
                 plan_payload = self._plan_payload(step, effective_action)
                 if effective_action is not action:
                     plan_payload["authority"] = "execution_engine"
@@ -892,6 +906,8 @@ class CodingAgent:
                     )
             new_mutation_records = self._mutation_records_from_action(action, result, before_mutation)
             changed_paths = self._successful_mutation_paths(new_mutation_records)
+            if reflect_coordinator is not None and changed_paths:
+                reflect_coordinator.record_strategy(action.type, changed_paths)
             mutation_records.extend(new_mutation_records)
             verification_result = self._verification_result_from_action(action, result)
             command_record = self._command_record_from_action(action, result, tool_elapsed_ms)
@@ -959,6 +975,7 @@ class CodingAgent:
             security_metadata = self._tool_payload_security_metadata(action)
             if security_metadata:
                 tool_payload.update(security_metadata)
+            automatic_results: list[dict[str, Any]] = []
             if changed_paths:
                 tool_payload["changed_paths"] = changed_paths
                 automatic_results = self._run_automatic_verification(
@@ -1043,6 +1060,17 @@ class CodingAgent:
                 self._report_recovery("tool failed; asking model for another attempt")
             messages.append({"role": "assistant", "content": action.model_dump_json()})
             messages.append({"role": "user", "content": json.dumps(tool_payload)})
+            if reflect_coordinator is not None and step < self.max_steps:
+                # Normal diagnosis, evidence recording, and retry-budget checks have already run.
+                reflection_context = self._reflection_recovery_context(
+                    coordinator=reflect_coordinator, run_id=run_id, clean_task=clean_task,
+                    result=result, command_record=command_record,
+                    verification_results=([verification_result] if verification_result else [])
+                    + automatic_results,
+                    remaining_seconds=run_deadline + self._deadline_paused_seconds - perf_counter(),
+                )
+                if reflection_context:
+                    messages.append({"role": "user", "content": reflection_context})
 
         successful_paths = self._successful_mutation_paths(mutation_records)
         goals_achieved = bool(successful_paths) and consecutive_failures == 0
@@ -1286,6 +1314,56 @@ class CodingAgent:
             return self.tools.run(action)
         except Exception as exc:
             return ToolResult(ok=False, output=str(exc))
+
+    def _reflection_recovery_context(
+        self, *, coordinator: MemoryReflectCoordinator, run_id: int, clean_task: str,
+        result: ToolResult, command_record: dict[str, Any] | None,
+        verification_results: list[dict[str, Any]], remaining_seconds: float,
+    ) -> str:
+        """Best-effort historical input after the ordinary diagnoser; no runtime effects."""
+        try:
+            config = coordinator.service.config
+            if remaining_seconds <= min(config.timeout_seconds, config.automatic_reflect_timeout_seconds):
+                return ""
+            failures = [item for item in verification_results if item.get("ok") is False]
+            if not failures:
+                if verification_results and all(item.get("ok") is True for item in verification_results):
+                    coordinator.resolved()
+                if result.ok or command_record is None:
+                    return ""
+            diagnostic = failures[0].get("diagnostics") if failures else command_record.get("diagnostics")
+            if not isinstance(diagnostic, dict):
+                return ""
+            # Commands have the full normalized report; prefer its category/signature over projections.
+            report = command_record.get("diagnostics") if command_record else None
+            if isinstance(report, dict) and not result.ok:
+                diagnostic = {**diagnostic, **report}
+            history = diagnostic.get("history")
+            prior = history.get("prior_occurrences", 0) if isinstance(history, dict) else 0
+            signature = diagnostic.get("signature")
+            if not prior and isinstance(signature, str) and signature:
+                prior = self.storage.diagnostic_occurrence_count(signature, before_run_id=run_id)
+            cancelled_or_denied = bool(
+                (isinstance(self.tools, ToolRegistry) and self.tools.cancellation_token.cancelled)
+                or result.metadata.get("cancelled") or result.metadata.get("error_code") in {
+                    "permission_denied", "cancelled", "provider_failure", "budget_exceeded",
+                } or any(term in output.lower() for output in (
+                    result.output, *(str(item.get("output", "")) for item in failures),
+                ) for term in (
+                    "permission denied", "approval denied", "user cancelled", "user canceled",
+                    "shell command cancelled", "shell command canceled",
+                    "dry-run mode skipped", "provider unavailable", "api key missing",
+                ))
+            )
+            context, metrics = coordinator.after_diagnosis(
+                clean_task, diagnostic, verification_failed=bool(failures),
+                prior_occurrences=prior if isinstance(prior, int) else 0,
+                cancelled_or_denied=cancelled_or_denied,
+            )
+            self.storage.add_step(run_id, "tool", metrics.safe_payload())
+            return context
+        except Exception:
+            return ""
 
     def _planning_repository_context(self) -> str:
         """Small current-repository map; the worker preflight reuses its index cache."""

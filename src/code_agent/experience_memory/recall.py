@@ -105,6 +105,7 @@ class MemoryRecallCoordinator:
         self.policy = MemoryRecallPolicy(service.config)
         self.sanitizer = MemorySanitizer(service.config)
         self.requests_used = 0
+        self.memories: tuple[RecalledMemory, ...] = ()
 
     def before_planning(
         self, clean_task: str, *, workspace_task: bool,
@@ -146,6 +147,7 @@ class MemoryRecallCoordinator:
                     continue
                 cleaned = replace(memory, text=clean_text)
                 assessed.append((cleaned, guard.assess(cleaned)))
+            self.memories = tuple(memory for memory, _ in assessed)
             context = HistoricalContextFormatter.format(
                 assessed, max_chars=config.automatic_recall_context_max_chars,
             )

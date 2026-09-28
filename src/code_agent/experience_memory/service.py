@@ -8,7 +8,7 @@ import uuid
 from .config import ExperienceMemoryConfig
 from .contracts import (
     Experience, ExperienceMemoryProvider, ExperienceMemoryRecall, MemoryResult, MemoryStatus,
-    OperationLookup, RecallRequest, RecalledExperience, RecalledMemory,
+    OperationLookup, RecallRequest, RecalledExperience, RecalledMemory, ReflectRequest, ReflectResult,
 )
 from .privacy import safe_text, valid_experience, valid_query
 from .episode_sanitizer import PreparedEpisode
@@ -108,6 +108,38 @@ class ExperienceMemoryService:
 
     def reflect(self, query: str) -> MemoryResult:
         return self._query(query, reflect=True)
+
+    def reflect_detailed(self, request: ReflectRequest) -> ReflectResult:
+        """Explicit automatic escalation seam, separate from the recall budget."""
+        config = self._config
+        if not config.automatic_reflect_enabled or config.automatic_reflect_max_requests == 0:
+            return ReflectResult(MemoryStatus.DISABLED)
+        if config.availability != MemoryStatus.OK:
+            return ReflectResult(config.availability)
+        try:
+            if (
+                not isinstance(request, ReflectRequest) or not isinstance(request.query, str)
+                or len(request.query) > 1800 or request.budget != "low"
+                or not 1 <= request.max_tokens <= config.automatic_reflect_max_tokens
+                or not 1 <= request.source_fact_tokens <= config.automatic_reflect_source_facts_max_tokens
+                or not 1 <= request.max_supporting_memories <= 5
+                or not 0 < request.timeout_seconds <= min(
+                    config.timeout_seconds, config.automatic_reflect_timeout_seconds,
+                )
+            ):
+                return ReflectResult(MemoryStatus.INVALID_REQUEST)
+            scope = self.scope()
+            if not valid_query(scope.bank_id, request.query, config):
+                return ReflectResult(MemoryStatus.INVALID_REQUEST)
+            method = getattr(self._provider, "reflect_detailed", None)
+            if not callable(method):
+                return ReflectResult(MemoryStatus.UNAVAILABLE)
+            result = method(scope.bank_id, request)
+            return result if isinstance(result, ReflectResult) else ReflectResult(MemoryStatus.UNAVAILABLE)
+        except TimeoutError:
+            return ReflectResult(MemoryStatus.TIMEOUT)
+        except Exception:
+            return ReflectResult(MemoryStatus.UNAVAILABLE)
 
     def _query(self, query: str, *, reflect: bool) -> MemoryResult:
         def operation() -> MemoryResult:

@@ -2,8 +2,9 @@
 
 P1 established an optional provider foundation. P2 adds selective retention of
 meaningful engineering episodes after a run has finalized. P3 makes delivery durable.
-P4 adds one selective, provenance-aware recall before planning. It never reflects
-automatically or creates banks at startup. Service construction does not probe a server;
+P4 adds one selective, provenance-aware recall before planning. P5 adds a selective
+historical Reflect escalation after normal failure diagnosis and recovery. It never
+creates banks at startup. Service construction does not probe a server;
 P3 startup reconciliation can contact Hindsight when pending outbox work exists.
 `factory.create_agent` supplies
 `CodingAgent.experience_memory`; service construction does not inspect Git or import the
@@ -43,6 +44,12 @@ Default installation does not install Hindsight.
 | `AGENT_EXPERIENCE_MEMORY_AUTOMATIC_RECALL_MAX_TOKENS` | `1024` | Automatic SDK response budget, capped by general recall tokens |
 | `AGENT_EXPERIENCE_MEMORY_AUTOMATIC_RECALL_SOURCE_FACTS_MAX_TOKENS` | `256` | Source-fact provenance budget; `0` omits source facts |
 | `AGENT_EXPERIENCE_MEMORY_AUTOMATIC_RECALL_CONTEXT_MAX_CHARS` | `4000` | Maximum historical context placed in model messages |
+| `AGENT_EXPERIENCE_MEMORY_AUTOMATIC_REFLECT_ENABLED` | `true` | Enabled only within the overarching memory opt-in; independently disable with `false` |
+| `AGENT_EXPERIENCE_MEMORY_AUTOMATIC_REFLECT_MAX_REQUESTS` | `1` | Separate per-run ceiling, `0` or `1`; failures consume the attempt |
+| `AGENT_EXPERIENCE_MEMORY_AUTOMATIC_REFLECT_TIMEOUT_SECONDS` | `5` | Deadline including cleanup, capped by provider timeout; positive, at most 15 seconds |
+| `AGENT_EXPERIENCE_MEMORY_AUTOMATIC_REFLECT_MAX_TOKENS` | `768` | SDK answer budget and conservative local UTF-8 hypothesis byte ceiling; 128–2048 |
+| `AGENT_EXPERIENCE_MEMORY_AUTOMATIC_REFLECT_SOURCE_FACTS_MAX_TOKENS` | `256` | SDK observation-search default budget; 32–1024, with the SDK limitation described below |
+| `AGENT_EXPERIENCE_MEMORY_AUTOMATIC_REFLECT_CONTEXT_MAX_CHARS` | `3000` | Entire formatted recovery context ceiling, 500–6000 characters |
 
 Malformed settings fail validation with input values hidden. Missing cloud keys or self-hosted URLs
 are an operational `missing_config` status rather than startup errors. Keys are `SecretStr` values,
@@ -54,13 +61,13 @@ authenticated or remote self-hosted endpoints. Configure endpoints through trust
 
 `ExperienceMemoryProvider` is a synchronous protocol with `health()`, `recall(bank_id, query)`,
 `recall_detailed(bank_id, RecallRequest)`, `retain(bank_id, Experience)`, and
-`reflect(bank_id, query)`. Both the null provider and Hindsight
+`reflect(bank_id, query)`, and `reflect_detailed(bank_id, ReflectRequest)`. Both the null provider and Hindsight
 provider implement it. `MemoryResult` contains a `MemoryStatus`, normalized `RecalledExperience`
 values, optional reflection text, and an immutable `untrusted=True` marker. No SDK classes cross
 this boundary. Failure results contain only a fixed status, never SDK exception text or raw responses.
 
 `ExperienceMemoryService(config, workspace, provider=...)` offers explicit `health()`, `scope()`,
-`recall(query)`, `retain(summary)`, and `reflect(query)` methods. Provider injection supports other
+`recall(query)`, `retain(summary)`, `reflect(query)`, and typed `reflect_detailed(ReflectRequest)` methods. Provider injection supports other
 backends without changing core code. Disabled operations are no-ops and never inspect Git.
 `scope()` is an explicit local Git inspection and can be used independently of provider availability.
 
@@ -269,3 +276,74 @@ ones; provenance and secret filtering are heuristic; source-fact metadata can be
 Git history and worktree checks cannot prove semantic relevance; the SDK timeout depends
 on cooperative cancellation. Live Hindsight cloud and self-hosted qualification remains
 outstanding.
+
+## P5 selective Reflect during recovery
+
+The normal diagnoser, repository evidence gathering, recovery instructions, and retry
+checks run first. `ReflectPolicy` then decides deterministically whether historical
+reasoning may help. No model decides whether to call Reflect. Eligible code failures
+escalate for a repeated normalized diagnostic, verification failure after a recorded
+repair or replan, or matching diagnostic history from earlier local runs. After a
+previous unresolved diagnosis, conflicting outcomes for the same recalled document or
+bounded recalled summaries can also trigger escalation. Passing verification clears
+recovery tracking but never replenishes the Reflect request budget.
+
+The first ordinary failure, a resolved failure, missing diagnosis, obvious syntax/style
+fix, available safe autofix, provider/network/environment/infrastructure failure,
+permission denial, cancellation, and disabled configuration skip Reflect. These skipped
+failures do not count as ordinary code recovery attempts. Exhausted failure, step, or
+run-time budgets cannot gain another recovery step through reflection.
+
+`ReflectRequest`, `ReflectDecision`, `ReflectResult`, `ReflectionHypothesis`, and
+`ReflectionSupport` are immutable Agent47 types. One per-run coordinator owns an
+independent zero-or-one Reflect budget; recall is neither repeated nor charged for
+Reflect. The clean task, normalized diagnostic, last three attempted strategies,
+verification outcome, and at most two short recalled summaries become a sanitized JSON
+question capped at 1,800 characters. Source declarations/fences, credentials,
+environment assignments, oversized dumps, and the interactive transcript wrapper are
+removed or rejected before dispatch. No transcript, source file, unrestricted tool
+output, environment export, or hidden reasoning is used as the question.
+
+The locked Python SDK 0.10.1 receives one `areflect` call with `budget="low"`,
+`max_tokens=768` by default, a bounded response schema, observation/experience fact
+types, mental models excluded, entities omitted, and observation-search budget 256.
+Fact bodies, tool calls, and tool-call outputs are omitted; SDK retries and applying
+all directives are disabled. The schema permits one hypothesis and at most five
+120-character fact identifiers with their type. Only sanitized, conservatively bounded
+hypothesis text and references cross the adapter. Older servers returning plain text
+receive unknown provenance; malformed structured output fails safely.
+
+SDK limits: `reflect_search_observations_max_tokens` is a default for observation search
+when the Reflect model does not name its own budget, **not a strict cap on every
+internal fact or source chunk**. SDK 0.10.1 has no per-request total supporting-facts/
+chunks cap or skepticism/literalism disposition settings. Agent47 requests skeptical,
+literal historical reasoning in the question and context and does not mutate bank
+dispositions. Strict internal evidence/context limits require trusted server
+configuration; Agent47 does not enforce those server internals. Returned references,
+hypothesis, and inserted context have strict local limits. See the
+[Reflect API](https://hindsight.vectorize.io/developer/api/reflect) and
+[server configuration](https://hindsight.vectorize.io/developer/configuration).
+
+A successful hypothesis is appended only to the next worker recovery message as
+**UNTRUSTED ADVISORY CONTEXT**, with every line quoted. It cannot execute tools, modify
+files, grant permissions, weaken security, skip tests, establish VERIFIED, or complete
+a task. Current files, tests, configuration, execution evidence, and local `project.md`
+override historical claims. Repairs and replans still use normal tools, approval
+callbacks, confidence checks, retry budgets, and lifecycle rules.
+
+References matching the already recalled fact and type reuse `StalenessGuard` and
+its provenance checks. Stale support is explicitly labeled stale; unmatched or absent
+support is unknown. Even checked support yields only a historical inference requiring
+current validation. Model-supplied identifiers are advisory references, not new
+verification evidence. No extra retrieval upgrades their authority.
+
+Timeout, missing dependency/configuration, unavailable provider, malformed result, and
+sanitizer/staleness failures produce no reflection context and leave normal recovery
+running. The consumed request is never retried automatically. The run database records
+only `automatic_experience_reflect` attempted flag, fixed reason/status, latency,
+supporting-reference count, and formatted context size. Query, hypothesis, raw provider
+responses, error text, and credentials are excluded from this telemetry.
+
+Live cloud/self-hosted Reflect and its effect on reasoning remain unqualified. Local
+fake-provider and SDK-contract tests establish wiring and authority boundaries, not a
+model-quality or deployment-success claim.

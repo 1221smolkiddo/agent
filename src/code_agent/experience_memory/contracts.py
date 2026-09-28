@@ -88,6 +88,42 @@ class ExperienceMemoryRecall:
 
 
 @dataclass(frozen=True)
+class ReflectRequest:
+    query: str = field(repr=False)
+    max_tokens: int = 768
+    source_fact_tokens: int = 256
+    timeout_seconds: float = 5.0
+    max_supporting_memories: int = 5
+    budget: Literal["low"] = "low"
+
+
+@dataclass(frozen=True)
+class ReflectionSupport:
+    memory_id: str
+    memory_type: Literal["observation", "experience"]
+
+
+@dataclass(frozen=True)
+class ReflectionHypothesis:
+    text: str = field(repr=False)
+
+
+@dataclass(frozen=True)
+class ReflectResult:
+    status: MemoryStatus
+    hypothesis: ReflectionHypothesis | None = field(default=None, repr=False)
+    supporting_memories: tuple[ReflectionSupport, ...] = ()
+    untrusted: bool = field(default=True, init=False)
+
+
+@dataclass(frozen=True)
+class ReflectDecision:
+    should_reflect: bool
+    reason: str
+    query: str = field(default="", repr=False)
+
+
+@dataclass(frozen=True)
 class RecalledExperience:
     text: str = field(repr=False)
 
@@ -115,4 +151,5 @@ class ExperienceMemoryProvider(Protocol):
     def retain(self, bank_id: str, experience: Experience) -> MemoryResult: ...
 
     def reflect(self, bank_id: str, query: str) -> MemoryResult: ...
+    def reflect_detailed(self, bank_id: str, request: ReflectRequest) -> ReflectResult: ...
     def get_operation(self, bank_id: str, operation_id: str) -> OperationLookup: ...

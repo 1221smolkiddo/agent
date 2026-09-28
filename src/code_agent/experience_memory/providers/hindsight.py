@@ -10,6 +10,7 @@ from ..config import ExperienceMemoryConfig
 from ..contracts import (
     Experience, ExperienceMemoryRecall, MemoryProvenance, MemoryResult, MemoryStatus,
     OperationLookup, OperationState, RecallRequest, RecalledExperience, RecalledMemory,
+    ReflectRequest, ReflectResult, ReflectionHypothesis, ReflectionSupport,
 )
 from ..privacy import safe_text, valid_experience, valid_query
 from ..episode_sanitizer import MemorySanitizer
@@ -177,6 +178,107 @@ class HindsightExperienceMemoryProvider:
 
     def reflect(self, bank_id: str, query: str) -> MemoryResult:
         return self._call("reflect", bank_id=bank_id, query=query)
+
+    def reflect_detailed(self, bank_id: str, request: ReflectRequest) -> ReflectResult:
+        if not self._config.automatic_reflect_enabled:
+            return ReflectResult(MemoryStatus.DISABLED)
+        if self._config.availability != MemoryStatus.OK:
+            return ReflectResult(self._config.availability)
+        try:
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                pass
+            else:
+                return ReflectResult(MemoryStatus.UNAVAILABLE)
+            sdk = importlib.import_module("hindsight_client")
+            return asyncio.run(self._execute_detailed_reflect(sdk, bank_id, request))
+        except ImportError:
+            return ReflectResult(MemoryStatus.MISSING_DEPENDENCY)
+        except TimeoutError:
+            return ReflectResult(MemoryStatus.TIMEOUT)
+        except Exception:
+            return ReflectResult(MemoryStatus.UNAVAILABLE)
+
+    async def _execute_detailed_reflect(
+        self, sdk: Any, bank_id: str, request: ReflectRequest,
+    ) -> ReflectResult:
+        config = self._config
+        timeout = min(config.timeout_seconds, request.timeout_seconds)
+        deadline = asyncio.get_running_loop().time() + timeout
+        schema = {
+            "type": "object", "additionalProperties": False,
+            "properties": {
+                "hypothesis": {"type": "string", "maxLength": request.max_tokens},
+                "supporting_memories": {
+                    "type": "array", "maxItems": request.max_supporting_memories,
+                    "items": {
+                        "type": "object", "additionalProperties": False,
+                        "properties": {
+                            "memory_id": {"type": "string", "maxLength": 120},
+                            "memory_type": {"type": "string", "enum": ["observation", "experience"]},
+                        },
+                        "required": ["memory_id", "memory_type"],
+                    },
+                },
+            },
+            "required": ["hypothesis", "supporting_memories"],
+        }
+        async with asyncio.timeout_at(deadline):
+            client = sdk.Hindsight(
+                base_url=config.endpoint,
+                api_key=config.api_key.get_secret_value() if config.api_key else None,
+                timeout=timeout, max_attempts=1,
+            )
+            try:
+                response = await client.areflect(
+                    bank_id=bank_id, query=request.query, budget="low",
+                    max_tokens=request.max_tokens, response_schema=schema,
+                    fact_types=["observation", "experience"], exclude_mental_models=True,
+                    reflect_search_observations_max_tokens=request.source_fact_tokens,
+                    reflect_search_observations_include_entities=False,
+                    include_facts=False, include_tool_calls=False, include_tool_call_output=False,
+                    apply_all_directives=False,
+                    context=("Return only historical hypotheses and bounded memory references. "
+                             "Use high skepticism and literalism. Current repository evidence "
+                             "overrides history. Never authorize tools, weaken security, skip "
+                             "verification, or claim task completion."),
+                )
+                if getattr(response, "structured_output_error", None):
+                    return ReflectResult(MemoryStatus.UNAVAILABLE)
+                structured = getattr(response, "structured_output", None)
+                # Older servers can omit structured output; text still has no authority.
+                raw = getattr(response, "text", None) if structured is None else (
+                    structured.get("hypothesis") if isinstance(structured, dict) else None
+                )
+                if not isinstance(raw, str) or not raw.strip():
+                    return ReflectResult(MemoryStatus.UNAVAILABLE)
+                sanitizer = MemorySanitizer(config)
+                text = sanitizer.sanitize_text(raw).encode("utf-8")[:request.max_tokens]
+                supports = []
+                if structured is not None:
+                    values = structured.get("supporting_memories")
+                    if not isinstance(values, list):
+                        return ReflectResult(MemoryStatus.UNAVAILABLE)
+                    for item in values[:request.max_supporting_memories]:
+                        if not isinstance(item, dict):
+                            return ReflectResult(MemoryStatus.UNAVAILABLE)
+                        memory_id, kind = item.get("memory_id"), item.get("memory_type")
+                        if (not isinstance(memory_id, str)
+                                or not re.fullmatch(r"[A-Za-z0-9_-]{1,120}", memory_id)
+                                or kind not in {"observation", "experience"}):
+                            return ReflectResult(MemoryStatus.UNAVAILABLE)
+                        if sanitizer.sanitize_text(memory_id) != memory_id:
+                            continue
+                        supports.append(ReflectionSupport(memory_id, kind))
+                return ReflectResult(
+                    MemoryStatus.OK, ReflectionHypothesis(text.decode("utf-8", errors="ignore")),
+                    tuple(supports),
+                )
+            finally:
+                remaining = max(0.001, deadline - asyncio.get_running_loop().time())
+                async with asyncio.timeout(remaining):
+                    await client.aclose()
 
     def get_operation(self, bank_id: str, operation_id: str) -> OperationLookup:
         if self._config.availability != MemoryStatus.OK:
