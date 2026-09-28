@@ -1,0 +1,502 @@
+{
+  "conclusion": "No superiority claim; inspect measured per-scenario outcomes.",
+  "design": "paired_fresh_fixture_ab",
+  "metric_definitions": [
+    "verified_completion",
+    "first_pass_verification",
+    "steps_to_verified_solution",
+    "model_calls",
+    "tool_calls",
+    "repository_reads",
+    "verification_commands",
+    "repeated_failed_strategies",
+    "recall_latency_seconds",
+    "memory_context_bytes",
+    "stale_recalls",
+    "irrelevant_recalls",
+    "total_run_latency_seconds",
+    "recall_requests",
+    "input_tokens",
+    "output_tokens",
+    "reflect_requests",
+    "reflect_latency_seconds"
+  ],
+  "reflect_enabled": false,
+  "results": [
+    {
+      "arms": {
+        "A": {
+          "error": "",
+          "exit_code": 0,
+          "metrics": {
+            "first_pass_verification": true,
+            "input_tokens": null,
+            "irrelevant_recalls": 0,
+            "memory_context_bytes": 0,
+            "model_calls": 3,
+            "output_tokens": null,
+            "recall_latency_seconds": 0.0,
+            "recall_requests": 0,
+            "reflect_latency_seconds": 0.0,
+            "reflect_requests": 0,
+            "repeated_failed_strategies": 0,
+            "repository_reads": 2,
+            "stale_recalls": 0,
+            "steps_to_verified_solution": 3,
+            "tool_calls": 8,
+            "total_run_latency_seconds": 2.764748600005987,
+            "verification_commands": 1,
+            "verified_completion": true
+          }
+        },
+        "B": {
+          "error": "",
+          "exit_code": 0,
+          "metrics": {
+            "first_pass_verification": true,
+            "input_tokens": null,
+            "irrelevant_recalls": 0,
+            "memory_context_bytes": 607,
+            "model_calls": 3,
+            "output_tokens": null,
+            "recall_latency_seconds": 0.309,
+            "recall_requests": 1,
+            "reflect_latency_seconds": 0.0,
+            "reflect_requests": 0,
+            "repeated_failed_strategies": 0,
+            "repository_reads": 2,
+            "stale_recalls": 0,
+            "steps_to_verified_solution": 3,
+            "tool_calls": 8,
+            "total_run_latency_seconds": 3.7050732000061544,
+            "verification_commands": 1,
+            "verified_completion": true
+          }
+        }
+      },
+      "expected_recall": true,
+      "order": [
+        "A",
+        "B"
+      ],
+      "scenario": "repeated_bug_class",
+      "trial": 1
+    },
+    {
+      "arms": {
+        "A": {
+          "error": "",
+          "exit_code": 0,
+          "metrics": {
+            "first_pass_verification": true,
+            "input_tokens": null,
+            "irrelevant_recalls": 0,
+            "memory_context_bytes": 0,
+            "model_calls": 3,
+            "output_tokens": null,
+            "recall_latency_seconds": 0.0,
+            "recall_requests": 0,
+            "reflect_latency_seconds": 0.0,
+            "reflect_requests": 0,
+            "repeated_failed_strategies": 0,
+            "repository_reads": 2,
+            "stale_recalls": 0,
+            "steps_to_verified_solution": 3,
+            "tool_calls": 8,
+            "total_run_latency_seconds": 2.7371813999925507,
+            "verification_commands": 1,
+            "verified_completion": true
+          }
+        },
+        "B": {
+          "error": "",
+          "exit_code": 0,
+          "metrics": {
+            "first_pass_verification": true,
+            "input_tokens": null,
+            "irrelevant_recalls": 0,
+            "memory_context_bytes": 606,
+            "model_calls": 3,
+            "output_tokens": null,
+            "recall_latency_seconds": 0.294,
+            "recall_requests": 1,
+            "reflect_latency_seconds": 0.0,
+            "reflect_requests": 0,
+            "repeated_failed_strategies": 0,
+            "repository_reads": 2,
+            "stale_recalls": 0,
+            "steps_to_verified_solution": 3,
+            "tool_calls": 8,
+            "total_run_latency_seconds": 3.501077199995052,
+            "verification_commands": 1,
+            "verified_completion": true
+          }
+        }
+      },
+      "expected_recall": true,
+      "order": [
+        "B",
+        "A"
+      ],
+      "scenario": "recurring_ci_failure",
+      "trial": 1
+    },
+    {
+      "arms": {
+        "A": {
+          "error": "",
+          "exit_code": 0,
+          "metrics": {
+            "first_pass_verification": true,
+            "input_tokens": null,
+            "irrelevant_recalls": 0,
+            "memory_context_bytes": 0,
+            "model_calls": 3,
+            "output_tokens": null,
+            "recall_latency_seconds": 0.0,
+            "recall_requests": 0,
+            "reflect_latency_seconds": 0.0,
+            "reflect_requests": 0,
+            "repeated_failed_strategies": 0,
+            "repository_reads": 2,
+            "stale_recalls": 0,
+            "steps_to_verified_solution": 3,
+            "tool_calls": 8,
+            "total_run_latency_seconds": 3.470547599994461,
+            "verification_commands": 1,
+            "verified_completion": true
+          }
+        },
+        "B": {
+          "error": "",
+          "exit_code": 0,
+          "metrics": {
+            "first_pass_verification": true,
+            "input_tokens": null,
+            "irrelevant_recalls": 0,
+            "memory_context_bytes": 603,
+            "model_calls": 3,
+            "output_tokens": null,
+            "recall_latency_seconds": 0.329,
+            "recall_requests": 1,
+            "reflect_latency_seconds": 0.0,
+            "reflect_requests": 0,
+            "repeated_failed_strategies": 0,
+            "repository_reads": 2,
+            "stale_recalls": 0,
+            "steps_to_verified_solution": 3,
+            "tool_calls": 8,
+            "total_run_latency_seconds": 3.91086789999099,
+            "verification_commands": 1,
+            "verified_completion": true
+          }
+        }
+      },
+      "expected_recall": true,
+      "order": [
+        "A",
+        "B"
+      ],
+      "scenario": "rejected_approach_later",
+      "trial": 1
+    },
+    {
+      "arms": {
+        "A": {
+          "error": "",
+          "exit_code": 0,
+          "metrics": {
+            "first_pass_verification": true,
+            "input_tokens": null,
+            "irrelevant_recalls": 0,
+            "memory_context_bytes": 0,
+            "model_calls": 3,
+            "output_tokens": null,
+            "recall_latency_seconds": 0.0,
+            "recall_requests": 0,
+            "reflect_latency_seconds": 0.0,
+            "reflect_requests": 0,
+            "repeated_failed_strategies": 0,
+            "repository_reads": 2,
+            "stale_recalls": 0,
+            "steps_to_verified_solution": 3,
+            "tool_calls": 6,
+            "total_run_latency_seconds": 2.7857583000004524,
+            "verification_commands": 1,
+            "verified_completion": true
+          }
+        },
+        "B": {
+          "error": "",
+          "exit_code": 0,
+          "metrics": {
+            "first_pass_verification": true,
+            "input_tokens": null,
+            "irrelevant_recalls": 0,
+            "memory_context_bytes": 617,
+            "model_calls": 3,
+            "output_tokens": null,
+            "recall_latency_seconds": 0.311,
+            "recall_requests": 1,
+            "reflect_latency_seconds": 0.0,
+            "reflect_requests": 0,
+            "repeated_failed_strategies": 0,
+            "repository_reads": 2,
+            "stale_recalls": 0,
+            "steps_to_verified_solution": 3,
+            "tool_calls": 6,
+            "total_run_latency_seconds": 3.800553499997477,
+            "verification_commands": 1,
+            "verified_completion": true
+          }
+        }
+      },
+      "expected_recall": true,
+      "order": [
+        "B",
+        "A"
+      ],
+      "scenario": "multi_session_migration",
+      "trial": 1
+    },
+    {
+      "arms": {
+        "A": {
+          "error": "",
+          "exit_code": 0,
+          "metrics": {
+            "first_pass_verification": true,
+            "input_tokens": null,
+            "irrelevant_recalls": 0,
+            "memory_context_bytes": 0,
+            "model_calls": 3,
+            "output_tokens": null,
+            "recall_latency_seconds": 0.0,
+            "recall_requests": 0,
+            "reflect_latency_seconds": 0.0,
+            "reflect_requests": 0,
+            "repeated_failed_strategies": 0,
+            "repository_reads": 2,
+            "stale_recalls": 0,
+            "steps_to_verified_solution": 3,
+            "tool_calls": 8,
+            "total_run_latency_seconds": 2.8588613000029,
+            "verification_commands": 1,
+            "verified_completion": true
+          }
+        },
+        "B": {
+          "error": "",
+          "exit_code": 0,
+          "metrics": {
+            "first_pass_verification": true,
+            "input_tokens": null,
+            "irrelevant_recalls": 0,
+            "memory_context_bytes": 616,
+            "model_calls": 3,
+            "output_tokens": null,
+            "recall_latency_seconds": 0.289,
+            "recall_requests": 1,
+            "reflect_latency_seconds": 0.0,
+            "reflect_requests": 0,
+            "repeated_failed_strategies": 0,
+            "repository_reads": 2,
+            "stale_recalls": 0,
+            "steps_to_verified_solution": 3,
+            "tool_calls": 8,
+            "total_run_latency_seconds": 3.8224136999924667,
+            "verification_commands": 1,
+            "verified_completion": true
+          }
+        }
+      },
+      "expected_recall": true,
+      "order": [
+        "A",
+        "B"
+      ],
+      "scenario": "release_rollback_lesson",
+      "trial": 1
+    },
+    {
+      "arms": {
+        "A": {
+          "error": "",
+          "exit_code": 0,
+          "metrics": {
+            "first_pass_verification": true,
+            "input_tokens": null,
+            "irrelevant_recalls": 0,
+            "memory_context_bytes": 0,
+            "model_calls": 3,
+            "output_tokens": null,
+            "recall_latency_seconds": 0.0,
+            "recall_requests": 0,
+            "reflect_latency_seconds": 0.0,
+            "reflect_requests": 0,
+            "repeated_failed_strategies": 0,
+            "repository_reads": 2,
+            "stale_recalls": 0,
+            "steps_to_verified_solution": 3,
+            "tool_calls": 8,
+            "total_run_latency_seconds": 2.495234000001801,
+            "verification_commands": 1,
+            "verified_completion": true
+          }
+        },
+        "B": {
+          "error": "",
+          "exit_code": 0,
+          "metrics": {
+            "first_pass_verification": true,
+            "input_tokens": null,
+            "irrelevant_recalls": 0,
+            "memory_context_bytes": 608,
+            "model_calls": 3,
+            "output_tokens": null,
+            "recall_latency_seconds": 0.311,
+            "recall_requests": 1,
+            "reflect_latency_seconds": 0.0,
+            "reflect_requests": 0,
+            "repeated_failed_strategies": 0,
+            "repository_reads": 2,
+            "stale_recalls": 0,
+            "steps_to_verified_solution": 3,
+            "tool_calls": 8,
+            "total_run_latency_seconds": 3.639230300002964,
+            "verification_commands": 1,
+            "verified_completion": true
+          }
+        }
+      },
+      "expected_recall": true,
+      "order": [
+        "B",
+        "A"
+      ],
+      "scenario": "architecture_decision_recall",
+      "trial": 1
+    },
+    {
+      "arms": {
+        "A": {
+          "error": "",
+          "exit_code": 0,
+          "metrics": {
+            "first_pass_verification": true,
+            "input_tokens": null,
+            "irrelevant_recalls": 0,
+            "memory_context_bytes": 0,
+            "model_calls": 3,
+            "output_tokens": null,
+            "recall_latency_seconds": 0.0,
+            "recall_requests": 0,
+            "reflect_latency_seconds": 0.0,
+            "reflect_requests": 0,
+            "repeated_failed_strategies": 0,
+            "repository_reads": 2,
+            "stale_recalls": 0,
+            "steps_to_verified_solution": 3,
+            "tool_calls": 6,
+            "total_run_latency_seconds": 2.8842914999986533,
+            "verification_commands": 1,
+            "verified_completion": true
+          }
+        },
+        "B": {
+          "error": "",
+          "exit_code": 0,
+          "metrics": {
+            "first_pass_verification": true,
+            "input_tokens": null,
+            "irrelevant_recalls": 0,
+            "memory_context_bytes": 0,
+            "model_calls": 3,
+            "output_tokens": null,
+            "recall_latency_seconds": 0.0,
+            "recall_requests": 0,
+            "reflect_latency_seconds": 0.0,
+            "reflect_requests": 0,
+            "repeated_failed_strategies": 0,
+            "repository_reads": 2,
+            "stale_recalls": 0,
+            "steps_to_verified_solution": 3,
+            "tool_calls": 6,
+            "total_run_latency_seconds": 3.038468600003398,
+            "verification_commands": 1,
+            "verified_completion": true
+          }
+        }
+      },
+      "expected_recall": false,
+      "order": [
+        "A",
+        "B"
+      ],
+      "scenario": "simple_rename",
+      "trial": 1
+    },
+    {
+      "arms": {
+        "A": {
+          "error": "",
+          "exit_code": 0,
+          "metrics": {
+            "first_pass_verification": true,
+            "input_tokens": null,
+            "irrelevant_recalls": 0,
+            "memory_context_bytes": 0,
+            "model_calls": 3,
+            "output_tokens": null,
+            "recall_latency_seconds": 0.0,
+            "recall_requests": 0,
+            "reflect_latency_seconds": 0.0,
+            "reflect_requests": 0,
+            "repeated_failed_strategies": 0,
+            "repository_reads": 2,
+            "stale_recalls": 0,
+            "steps_to_verified_solution": 3,
+            "tool_calls": 8,
+            "total_run_latency_seconds": 2.2467480000050273,
+            "verification_commands": 1,
+            "verified_completion": true
+          }
+        },
+        "B": {
+          "error": "",
+          "exit_code": 0,
+          "metrics": {
+            "first_pass_verification": true,
+            "input_tokens": null,
+            "irrelevant_recalls": 0,
+            "memory_context_bytes": 0,
+            "model_calls": 3,
+            "output_tokens": null,
+            "recall_latency_seconds": 0.0,
+            "recall_requests": 0,
+            "reflect_latency_seconds": 0.0,
+            "reflect_requests": 0,
+            "repeated_failed_strategies": 0,
+            "repository_reads": 2,
+            "stale_recalls": 0,
+            "steps_to_verified_solution": 3,
+            "tool_calls": 8,
+            "total_run_latency_seconds": 2.428879200000665,
+            "verification_commands": 1,
+            "verified_completion": true
+          }
+        }
+      },
+      "expected_recall": false,
+      "order": [
+        "B",
+        "A"
+      ],
+      "scenario": "isolated_simple_bug",
+      "trial": 1
+    }
+  ],
+  "runner_kind": "offline_scripted_synthetic",
+  "schema_version": 1,
+  "trials": 1
+}

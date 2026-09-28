@@ -45,9 +45,11 @@ python -m code_agent memory evaluate --include-reflect --manifest docs/qualifica
 ```
 
 The instrumented real runner/model/provider, frozen bank snapshots, verified provider cost control remain to be supplied/reviewed.
-The manifest now records final core `3a6be181d99b6ef813b119b2076c90eb73783b47`,
-but the mandatory short-bearer and standalone-JWT gates failed; execution is held
-until the core owner fixes them and a replacement core is qualified. Nothing here invokes
+The manifest records final core base `3a6be181d99b6ef813b119b2076c90eb73783b47`
+and the qualified shared-redaction source blob. Both redaction gates now pass.
+Before paid use, record the containing final fix commit as the approved SHA and
+verify the runner, bank snapshots, seed review, provider configuration, and actual
+spending ceiling. Execution remains held because those prerequisites are unavailable. Nothing here invokes
 or authorizes expensive model trials before those prerequisites. Fixture test results
 can establish correctness on these narrow tasks; they do not establish general model
 quality or a historical-memory performance advantage.

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import json
 import re
 import shlex
 import ipaddress
@@ -36,8 +38,10 @@ SENSITIVE_FILE_SUFFIXES = {
 }
 
 SECRET_VALUE_PATTERNS = [
-    re.compile(r"(?i)\b(authorization\s*[:=]\s*bearer\s+)([A-Za-z0-9._~+/=-]{16,})"),
-    re.compile(r"(?i)\b(bearer\s+)([A-Za-z0-9._~+/=-]{16,})"),
+    re.compile(r"(?i)\b(authorization[ \t]*[:=][ \t]*bearer[ \t]+)([A-Za-z0-9._~+/=-]+)"),
+    # Retain canonical Bearer scheme shorthand for existing long credentials.
+    # Lowercase prose needs an Authorization header before it is treated as secret.
+    re.compile(r"\b(Bearer[ \t]+)([A-Za-z0-9._~+/=-]{16,})"),
     re.compile(
         r"(?i)\b([A-Z0-9_]*(?:api[_-]?key|token|secret|password|passwd|credential))\b"
         r"(\s*[:=]\s*)"
@@ -45,6 +49,30 @@ SECRET_VALUE_PATTERNS = [
     ),
     re.compile(r"\b(sk-[A-Za-z0-9_-]{16,})\b"),
 ]
+
+
+# Compact JWT candidates have three separate base64url fields. Bounds and token
+# boundaries prevent partial matches inside oversized fields; the disjoint field
+# alphabet/dot separators avoid nested or ambiguous regex repetition.
+_JWT_TOKEN = re.compile(
+    r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_-]{8,1024})\."
+    r"[A-Za-z0-9_-]{2,8192}\.[A-Za-z0-9_-]{1,2048}(?![A-Za-z0-9_.-])"
+)
+
+
+def _redact_jwt(match: re.Match[str]) -> str:
+    # Inspect only the bounded JOSE header, not the payload or signature. Requiring
+    # a JSON object with an algorithm distinguishes JWTs from versions/domains.
+    # This recognizes secret material; it does not authenticate the token.
+    encoded = match[1]
+    try:
+        header = json.loads(base64.b64decode(
+            encoded + "=" * (-len(encoded) % 4), altchars=b"-_", validate=True,
+        ).decode("utf-8"))
+    except (ValueError, UnicodeError, RecursionError):
+        return match[0]
+    return "[REDACTED]" if isinstance(header, dict) and isinstance(header.get("alg"), str) else match[0]
+
 
 DESTRUCTIVE_PATTERNS = [
     re.compile(r"(?i)\brm\s+.*-(?:r|f|rf|fr)\b"),
@@ -127,13 +155,13 @@ def redact_secrets(value: str) -> str:
     for pattern in SECRET_VALUE_PATTERNS:
         if pattern.pattern.lower().startswith("(?i)\\b(authorization"):
             redacted = pattern.sub(r"\1[REDACTED]", redacted)
-        elif pattern.pattern.lower().startswith("(?i)\\b(bearer"):
+        elif pattern.pattern.startswith("\\b(Bearer"):
             redacted = pattern.sub(r"\1[REDACTED]", redacted)
         elif pattern.pattern.startswith("\\b(sk-"):
             redacted = pattern.sub("[REDACTED]", redacted)
         else:
             redacted = pattern.sub(r"\1\2[REDACTED]", redacted)
-    return redacted
+    return _JWT_TOKEN.sub(_redact_jwt, redacted)
 
 
 def classify_shell_command(command: str) -> ShellPolicy:

@@ -1,26 +1,39 @@
-# Core-owner handoff — final redaction gate FAILED
+# Release-blocker handoff — redaction regressions RESOLVED
 
-Final core: `3a6be181d99b6ef813b119b2076c90eb73783b47`.
-Qualification source SHA: `7a186e4d95a055f6cfdc7de9a72cff0a6ea281f7`.
+Original final core: `3a6be181d99b6ef813b119b2076c90eb73783b47`.
+Previously stopped qualification HEAD: `2fdcd90f35414049fe13aff6c1ff948d84905114`.
 Branch: `qual/hindsight-production-20260928`.
-Rebase succeeded without core changes. The loaded sanitizer is the qualification
-checkout's source and matches final core, ignoring Windows line-ending conversion.
 
-The following exact cases still fail:
+The user authorized a narrow sanitizer/security fix after the failed handoff.
+Both unchanged regression cases now pass:
 
-- `tests/test_hindsight_final_qualification.py::test_core_sanitizer_removes_fake_credentials[short_bearer]`: short Authorization bearer tail survives.
-- `tests/test_hindsight_final_qualification.py::test_core_sanitizer_removes_fake_credentials[jwt]`: standalone JWT survives.
+- `tests/test_hindsight_final_qualification.py::test_core_sanitizer_removes_fake_credentials[short_bearer]`
+- `tests/test_hindsight_final_qualification.py::test_core_sanitizer_removes_fake_credentials[jwt]`
 
-API-key, environment-assignment, and password cases pass. The selected critical gate
-reported 10 passed, 2 failed, 23 deselected in 4.69 seconds. Values and sanitized output
-are deliberately omitted from evidence. See `FINAL_CORE_SECURITY_GATE.json` for safe
-category flags. Tests remain strict; no core sanitizer was edited.
+The bearer matcher previously required 16 characters; the later memory credential
+matcher consumed the scheme word while retaining the short token tail. Explicit
+Authorization bearer headers now redact every nonempty credential length with casing
+and horizontal-spacing variations. Canonical long Bearer scheme shorthand is retained;
+lowercase prose without a header is preserved.
 
-Final qualification stopped immediately as instructed. Negative/positive recall,
-authority, complete focused/operator/fixture and full-suite gates were not run after
-that failure. Do not interpret historical P6 results as final-core approval.
-The prior isolated-bug result remains PRE-CORE-FIX; it has not been rerun on final core.
+Standalone JWTs previously had no matcher, and short dot-separated fields avoided the
+opaque-value rule. The shared redactor now recognizes bounded three-field base64url
+candidates with a decoded JSON JOSE header containing an algorithm string. Token
+boundaries reject partial oversized-field matches. This is heuristic secret detection,
+not cryptographic verification; versions, filenames, domains, and ordinary bearer prose
+have false-positive controls. No literal fixture value is special-cased.
 
-Core owner: fix both regressions and supply a replacement final SHA. Rebase the
-qualification branch and restart critical gates before any complete suite. No main
-merge or push occurred. Verdict: NOT PRODUCTION READY.
+The exact two gates passed (1.43 seconds). The broader security/operator suite passed
+134 tests (10.64 seconds). The complete 18-file focused suite passed 520 tests
+(83.14 seconds), including memory authority, outbox, and disabled-memory coverage.
+The isolated-bug B control makes zero recalls; the recurring-bug B control makes one.
+All 16 scripted fixture runs verify with zero irrelevant recalls and zero Reflect
+requests. The offline runner builds configuration directly; successful repairs do
+not trigger Reflect. Independent Reflect disablement/recovery is covered by focused
+tests, rather than claimed from these successful fixture runs.
+
+See `FINAL_CORE_SECURITY_GATE.json`, `FINAL_RECALL_CONTROLS.json`,
+`FINAL_FIXTURE_RESULTS.json`, and `HINDSIGHT_FINAL_REPORT.md` for final evidence.
+The sole behavior change is shared secret redaction in `src/code_agent/safety.py`;
+recall/Reflect policy, planner, runtime, outbox, and terminal code are unchanged.
+No main merge or push occurred.

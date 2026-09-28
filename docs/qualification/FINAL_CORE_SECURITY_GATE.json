@@ -1,10 +1,9 @@
 {
-  "final_core_sha": "3a6be181d99b6ef813b119b2076c90eb73783b47",
-  "qualification_source_sha": "7a186e4d95a055f6cfdc7de9a72cff0a6ea281f7",
-  "import_from_qualification_checkout": true,
-  "sanitizer_identical_to_final_core_ignoring_checkout_line_endings": true,
-  "protected_core_diff_empty": true,
-  "passed": false,
+  "final_core_base_sha": "3a6be181d99b6ef813b119b2076c90eb73783b47",
+  "qualification_base_sha": "2fdcd90f35414049fe13aff6c1ff948d84905114",
+  "shared_redaction_source_blob": "b33920c9d7c3832f5d5bc9b1fc866481c8f90b9e",
+  "new_security_tests_sha256": "38dbab31eca2742e26524243a92937d3c84ba0d87dcc16a9553b1742ec2307ec",
+  "passed": true,
   "probes": [
     {
       "category": "api_key",
@@ -12,7 +11,7 @@
     },
     {
       "category": "short_bearer",
-      "redacted": false
+      "redacted": true
     },
     {
       "category": "environment",
@@ -24,8 +23,18 @@
     },
     {
       "category": "jwt",
-      "redacted": false
+      "redacted": true
     }
   ],
-  "contains_sensitive_values": false
+  "contains_sensitive_values": false,
+  "exact_previous_blockers": {
+    "passed": 2,
+    "failed": 0,
+    "seconds": 1.43
+  },
+  "security_operator_suite": {
+    "passed": 134,
+    "failed": 0,
+    "seconds": 10.64
+  }
 }

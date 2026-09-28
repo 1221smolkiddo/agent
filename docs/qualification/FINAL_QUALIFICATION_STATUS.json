@@ -1,5 +1,5 @@
 {
-  "status": "STOPPED_AT_SECURITY_GATE",
+  "status": "FINAL",
   "qualification_branch": "qual/hindsight-production-20260928",
   "p6_base_sha": "5b3622a2a60613a84a1a72893a032c0151e2910a",
   "final_core_sha": "3a6be181d99b6ef813b119b2076c90eb73783b47",
@@ -8,25 +8,40 @@
     "failed": 2,
     "seconds": 44.53
   },
-  "failed_categories": [
-    "short_authorization_bearer",
-    "standalone_jwt"
-  ],
   "final_focused_tests": {
-    "status": "NOT RUN",
-    "reason": "mandatory security stop"
+    "tests": 520,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "passed": 520,
+    "seconds": 83.14,
+    "scope": "18-file memory/security/authority/outbox/operator/recovery/configuration focused suite"
   },
   "final_full_suite": {
-    "status": "NOT RUN",
-    "reason": "critical gates failed"
+    "tests": 1223,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 5,
+    "passed": 1217,
+    "seconds": 224.16,
+    "deselected": 4,
+    "runs": 1,
+    "failure_nodeid": "tests/test_interactive_diff.py::test_terminal_width_fallback_when_narrow",
+    "failure_classification": "known pre-existing Windows terminal rendering baseline/environment issue",
+    "all_hindsight_tests_passed": true
   },
-  "final_abc_results": null,
+  "final_abc_results": {
+    "status": "NOT RUN",
+    "reason": "provider/configuration unavailable"
+  },
   "negative_control_after_handoff": {
-    "status": "NOT RUN",
-    "reason": "mandatory security stop"
+    "status": "passed",
+    "isolated_bug_B_recalls": 0,
+    "recurring_bug_B_recalls": 1,
+    "verified_arms": 4
   },
-  "false_positive_fix_verified": null,
-  "core_redaction_fixes_verified": false,
+  "false_positive_fix_verified": true,
+  "core_redaction_fixes_verified": true,
   "full_suite_rerun_before_handoff": false,
   "live_hindsight": {
     "status": "NOT RUN",
@@ -35,12 +50,11 @@
   "real_model_abc": {
     "status": "NOT RUN",
     "reason": "provider/configuration unavailable",
-    "additional_blockers": [
-      "mandatory redaction stop",
+    "additional_limitations": [
       "reviewed runner/seeds and externally enforced spend limit unavailable"
     ]
   },
-  "ruff": "passed (uv run --no-sync --active ruff check src tests; existing shared environment)",
+  "ruff": "passed",
   "diff_check": "passed",
   "pre_core_operator_security_gate": {
     "passed": 52,
@@ -48,26 +62,55 @@
     "seconds": 10.47
   },
   "new_qualification_cases": 35,
-  "last_provider_smoke_regression": {
+  "critical_gate": {
+    "passed": 2,
+    "failed": 0,
+    "seconds": 1.43
+  },
+  "final_fixture_results": {
+    "verified_runs": 16,
+    "runner_errors": 0,
+    "irrelevant_recalls": 0,
+    "automatic_reflect_requests": 0,
+    "reflect_scope": "Successful repairs never escalate; direct scripted config uses enabled-memory Reflect default. Independent disablement/recovery covered by focused Reflect tests."
+  },
+  "final_authority_results": {
+    "status": "passed",
+    "scope": "Included in 520-pass focused suite"
+  },
+  "production_verdict": "PRODUCTION READY WITH DOCUMENTED LIMITATIONS",
+  "ready_for_human_merge": true,
+  "qualified_base_sha": "2fdcd90f35414049fe13aff6c1ff948d84905114",
+  "shared_redaction_source_blob": "b33920c9d7c3832f5d5bc9b1fc866481c8f90b9e",
+  "security_operator_suite": {
+    "passed": 134,
+    "failed": 0,
+    "seconds": 10.64
+  },
+  "docker": {
+    "command_available": true,
+    "live_docker_tests_run": false,
+    "daemon_available": false,
+    "status": "unavailable",
+    "reason": "daemon unavailable"
+  },
+  "limitations": [
+    "live Hindsight configuration unavailable",
+    "real-model A/B/C provider/configuration unavailable",
+    "Docker daemon unavailable",
+    "known terminal-width baseline failure",
+    "bounded heuristic redaction/recall/staleness limits; no general performance claim",
+    "Successful scripted fixtures do not independently exercise Reflect escalation/disablement; focused tests cover those boundaries."
+  ],
+  "qualification_commit_identity": "Containing final fix/evidence commit; resolve with git rev-parse HEAD",
+  "new_security_cases": 48,
+  "pre_core_failed_categories": [
+    "short_authorization_bearer",
+    "standalone_jwt"
+  ],
+  "pre_core_provider_smoke_regression": {
     "passed": 6,
     "failed": 0,
     "seconds": 1.71
-  },
-  "qualification_source_sha": "7a186e4d95a055f6cfdc7de9a72cff0a6ea281f7",
-  "critical_gate": {
-    "passed": 10,
-    "failed": 2,
-    "deselected": 23,
-    "seconds": 4.69
-  },
-  "final_fixture_results": {
-    "status": "NOT RUN",
-    "reason": "mandatory security stop"
-  },
-  "final_authority_results": {
-    "status": "NOT RUN",
-    "reason": "mandatory security stop"
-  },
-  "production_verdict": "NOT PRODUCTION READY",
-  "ready_for_human_merge": false
+  }
 }

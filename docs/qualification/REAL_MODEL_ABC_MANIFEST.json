@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "status": "HELD — final core security gate failed",
+  "status": "HELD — provider/configuration unavailable",
   "runner_kind": "real_model",
   "final_core_sha": "3a6be181d99b6ef813b119b2076c90eb73783b47",
   "historical_seed_snapshot_reviewed": false,
@@ -42,5 +42,7 @@
       "task": "Rename the local variable in this project from old to result.",
       "fixture": "real_fixtures/simple_rename"
     }
-  ]
+  ],
+  "redaction_gates_passed": true,
+  "shared_redaction_source_blob": "b33920c9d7c3832f5d5bc9b1fc866481c8f90b9e"
 }
