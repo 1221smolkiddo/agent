@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "status": "DRAFT",
+  "status": "HELD — final core security gate failed",
   "runner_kind": "real_model",
-  "final_core_sha": null,
+  "final_core_sha": "3a6be181d99b6ef813b119b2076c90eb73783b47",
   "historical_seed_snapshot_reviewed": false,
   "limits": {
     "max_steps": 6,

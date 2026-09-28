@@ -1,228 +1,166 @@
-# Agent47 + Hindsight final qualification — DRAFT
+# Agent47 + Hindsight final qualification — STOPPED AT SECURITY GATE
 
-**Draft verdict: NOT PRODUCTION READY.** Final core handoff has not happened.
-Two confirmed sanitizer regressions on the P6 base are correctness/security blockers.
-Missing real-model A/B/C alone is not treated as a correctness failure. No live or
-model-quality success is claimed, and no final-core results are invented.
+**NOT PRODUCTION READY.** Both mandatory redaction regressions still fail on the
+supplied final core. Final qualification stopped as instructed; the tests were not
+weakened and no core code was changed. The branch is preserved for the core owner's
+fix and another handoff, and is not ready for merge approval.
 
-## Pending final evidence
+## 1. Final core SHA
 
-| Evidence | Status |
-| --- | --- |
-| Final core SHA | PENDING — Session A handoff |
-| Isolated/simple-bug false-positive fix | PENDING — must measure zero automatic recall |
-| Short bearer / standalone JWT fixes | PENDING — core owner |
-| Final focused qualification tests | PENDING — after core handoff |
-| Final exact-state non-Docker suite | PENDING — once, if required by changed code state |
-| Final real-model A/B/C results | NOT RUN — pending core, reviewed runner/seeds, enforced cost limit |
+`3a6be181d99b6ef813b119b2076c90eb73783b47` from
+`feat/hindsight-production-final`. Rebase completed without conflicts. Protected core
+files and `docs/EXPERIENCE_MEMORY.md` match this commit. The loaded sanitizer was
+confirmed to come from this qualification checkout and to match the core source,
+allowing only Windows checkout line-ending conversion.
 
-## 1. Qualification isolation
+## 2. Qualification branch and SHA
 
 Branch: `qual/hindsight-production-20260928`.
 Worktree: `.code-agent/hindsight-qualification`.
-Preserved committed P6 base: `5b3622a2a60613a84a1a72893a032c0151e2910a`.
-Session A's `.code-agent/hindsight-final` worktree was not operated in.
-No core planning/recall/Reflect/runtime/outbox lifecycle file was edited, and
-`docs/EXPERIENCE_MEMORY.md` was left untouched. No merge into main, push, staging,
-or qualification commit was performed. Original P6 artifacts remain historical evidence.
+Qualification source/test commit evaluated: `7a186e4d95a055f6cfdc7de9a72cff0a6ea281f7`.
+Its parent is the final core. The uncommitted preparation was first preserved as
+checkpoint `d9445e9`, then rebased. A subsequent documentation/evidence-only commit
+records this stopped handoff; use `git rev-parse HEAD` for that commit's identity.
+P6 `5b3622a` remains in the final core's ancestry. No older core files were restored.
 
-## 2. Operator tooling verification
+## 3. Architecture summary
 
-The CLI exposes memory status, health, bounded outbox list, inspect, and bounded retry.
-Health tests distinguish disabled, missing configuration, missing optional SDK,
-provider unavailable/timeout, and healthy. Status reports configuration availability
-and local queue information; use the explicit health command to check the provider.
-Queued/prepared, submitted, processing, completed, failed, cancelled, and
-unknown/operator-review states remain distinguishable. Retry reconciles first and
-preserves the same operation identity; acknowledged-but-missing, review-only, terminal,
-and exhausted operations are refused. No purge/delete command exists.
+Agent47's SQLite run/evidence storage remains authoritative. Optional Hindsight
+provides sanitized engineering experiences, selective provenance-aware recall, and
+bounded Reflect recovery advice. Recalled/Reflect content is untrusted historical
+advice; current repository evidence, runtime authorization, tests, and reviewer
+outcomes retain their authority. Retention uses deterministic operation identity and
+durable outbox reconciliation. Qualification changes cover operator display/privacy,
+provider smoke, metrics, benchmark guards, and held A/B/C definitions.
+This summary describes the supplied core; it does not claim all final gates passed.
 
-Qualification-only fixes: inspection now sanitizes even structurally valid identifiers
-against the configured key; malformed health statuses become fixed unavailable output;
-malformed or huge numeric runner metrics fail closed. CLI/provider errors discard raw
-payload/error text. These changes do not modify outbox lifecycle semantics.
+## 4. Recall negative control
 
-## 3. Security qualification
+**NOT RUN after handoff — mandatory security stop.** The historical P6 isolated-bug
+result was one automatic recall and remains explicitly PRE-CORE-FIX. Session A reports
+the fix landed; this branch has not yet independently verified zero recall on final
+core. The recurring-bug positive control and authority gates are also not newly run.
 
-Five fake-credential categories were tested against CLI error/exception/log output,
-qualification JSON/human reports, agent telemetry and saved work reports. These
-operator/artifact surfaces passed. Retained episode content, branch, and HEAD remain
-absent from inspection. Normal coding tests observed two scripted model calls with no
-extra eligibility-classification call. Guarded disabled runs import no Hindsight SDK
-and make no network or automatic memory call.
+## 5. Security/redaction gate
 
-Core sanitizer probes fail for a short authorization bearer tail and a standalone JWT.
-API-key, environment-assignment, and password cases pass. The two failures are kept as
-strict regression tests rather than skipped/waived. Their values are omitted from
-reports, exception messages, and qualification JSON. Session A owns the fixes:
-[CORE_HANDOFF_NOTES.md](CORE_HANDOFF_NOTES.md) and
-[category-only probe results](FINAL_SECURITY_PROBE.json).
+**FAILED.** Exact failing cases:
 
-## 4. Disabled-path benchmark
+- `tests/test_hindsight_final_qualification.py::test_core_sanitizer_removes_fake_credentials[short_bearer]`
+- `tests/test_hindsight_final_qualification.py::test_core_sanitizer_removes_fake_credentials[jwt]`
 
-Seven real factory/runtime construction samples and seven scripted read-only agent
-runs used the real storage/tools/preflight with a stub model. Seven fresh CLI processes
-per startup arm guarded socket/DNS and SDK imports. 10,000 service/decision hot-path
-iterations were also measured. Database cleanup and collection are outside timed
-intervals. No real model or provider request was made.
+A short Authorization bearer tail and a standalone JWT remain in the sanitized
+result. API-key, environment-assignment, and password redaction cases passed. All five
+selected operator/provider-error secrecy cases and configured-key inspection passed.
+The selected disabled factory/benchmark test also passed.
 
-| Measurement | Median | Min | Max |
-| --- | ---: | ---: | ---: |
-| Agent construction | 83.74 ms | 82.11 ms | 92.45 ms |
-| Scripted read-only run | 352.47 ms | 338.70 ms | 359.60 ms |
-| Baseline CLI import | 1166.02 ms | 1135.16 ms | 1353.25 ms |
-| Qualification CLI import | 1175.03 ms | 1125.60 ms | 1207.54 ms |
-
-Observed startup median delta: 9.02 ms.
-Network/DNS attempts, Hindsight SDK import attempts, automatic recalls, and automatic
-Reflect attempts were all **zero**. The startup baseline removes only P6 CLI
-import/registration from current source; it is not an earlier-version production
-baseline. Other machine work can affect these observations. No acceptance threshold
-was predefined and no precision/superiority guarantee is claimed.
-[Raw benchmark](FINAL_DISABLED_BENCHMARK.json).
-
-## 5. Deterministic fixture evaluation
-
-**16/16 verified, zero runner errors.** A/B use identical scripted responses on fresh
-fixture copies and local databases. This measures wiring/counters, not real-model
-reasoning or live provider behavior. Token counts and automatic Reflect counts are
-unavailable on this P6-only base. Both arms explicitly disable Reflect.
-
-| Scenario | A/B verified | A/B recalls | A/B model calls | A/B tools | A/B repo reads | B irrelevant recalls |
-| --- | --- | --- | --- | --- | --- | --- |
-| repeated_bug_class | True/True | 0/1 | 3/3 | 8/8 | 2/2 | 0 |
-| recurring_ci_failure | True/True | 0/1 | 3/3 | 8/8 | 2/2 | 0 |
-| rejected_approach_later | True/True | 0/1 | 3/3 | 8/8 | 2/2 | 0 |
-| multi_session_migration | True/True | 0/1 | 3/3 | 6/6 | 2/2 | 0 |
-| release_rollback_lesson | True/True | 0/1 | 3/3 | 8/8 | 2/2 | 0 |
-| architecture_decision_recall | True/True | 0/1 | 3/3 | 8/8 | 2/2 | 0 |
-| simple_rename | True/True | 0/0 | 3/3 | 6/6 | 2/2 | 0 |
-| isolated_simple_bug | True/True | 0/1 | 3/3 | 8/8 | 2/2 | 1 |
-
-The isolated arithmetic bug still makes one B recall: **EXPECTED PRE-CORE-FIX**.
-Rename makes zero recalls. No recall policy was changed to alter these results.
-Per-run latency and other numeric observations are retained in the
-[raw fixture results](FINAL_PRE_CORE_SMOKE_RESULTS.json) and
-[human summary](FINAL_PRE_CORE_SMOKE_RESULTS.md).
-
-## 6. Live Hindsight qualification
-
-**LIVE HINDSIGHT: NOT RUN — configuration unavailable.**
-Supported Settings/environment/dotenv checks found memory disabled and no Hindsight
-key. No secret values were printed, requested, or persisted. No live write occurred.
-[Configuration flags](FINAL_CONFIGURATION_STATUS.json) and
-[held live status](LIVE_HINDSIGHT_STATUS.json).
-
-The prepared CLI live smoke defaults to Reflect and performs health -> one synthetic
-retain -> bounded operation polling -> recall with matching document/bank provenance
--> explicit low-budget provider Reflect. It reports only fixed statuses, generated IDs,
-latencies, and returned counts. SDK deadlines share the whole-run deadline. It never
-prints returned memory/reflection text and does not resubmit ambiguous retain.
-Fake-provider tests verify ordering, identity, Reflect timeout, and output privacy.
-`--no-reflect` preserves the earlier provider-only subset. A pass would qualify the
-provider flow, not Agent47's integrated recovery. Synthetic memory is not deleted.
-
-## 7. Real-model A/B/C preparation
-
-**NOT RUN.** Six synthetic scenarios and fixtures are prepared in
-[REAL_MODEL_ABC_MANIFEST.json](REAL_MODEL_ABC_MANIFEST.json), with
-[seed/golden review inventory](REAL_MODEL_SEED_REVIEW.json).
-A=disabled, B=recall enabled/Reflect disabled, C=recall+Reflect; ordering rotates by scenario.
-The external harness supports C and numeric Reflect request/latency measurements.
-Legacy A/B behavior is preserved. The offline scripted runner is deliberately refused
-for C so it cannot be mistaken for a real-model Reflect result.
-
-One trial has 18 runs, six steps per run, 1024 output tokens, 8000 context characters,
-90 seconds per run, no reviewer/model retries/fallbacks, and deterministic planning.
-Paid execution is rejected before launch unless the approved full core SHA is present
-and core files match it, seeds are reviewed, and an externally enforced provider
-spending ceiling of at most USD 5 is attested. Step/token/wall limits do not substitute
-for the provider spend control. The real runner/model, independently frozen equivalent
-B/C banks, seed review, and actual cost-control evidence remain unconfigured.
-The definition is a concrete held preparation, not trial results.
-[Runner contract and limitations](REAL_MODEL_EVALUATION.md).
-
-## 8. Final core SHA used
-
-Final SHA: **PENDING**. All observations above are pre-handoff on committed P6
-`5b3622a` plus uncommitted qualification-only changes. They are not final-core evidence.
-
-## 9. Negative control after core handoff
-
-**PENDING.** Rebase/merge the isolated qualification branch onto Session A's supplied
-core SHA, resolving core policy/Reflect/planner/runtime/outbox conflicts in favor of
-Session A and preserving non-conflicting qualification tooling. First run the
-isolated/simple-bug case and require zero automatic recall. If it still recalls,
-stop final qualification and return the finding to Session A. Do not fix policy here.
-Then verify the two redaction regressions and rerun final qualification.
-
-## 10. Focused qualification tests
-
-The 14-file operator/security/disabled/memory/recovery/configuration/CLI focused gate:
-**304 passed, 2 failed in 44.53 seconds**. Both failures are the strict core sanitizer
-regressions described above; all 19 original P6 qualification cases pass. There are
-35 added parametrized qualification cases, including five classes across actual agent
-telemetry/work reports/logs and two deliberately failing core-gap checks.
-The final dedicated operator/security gate: **52 passed, 2 failed in 10.47 seconds**;
-these are the same two core sanitizer gaps. Six added paid-trial guard cases refuse
-execution before any command launches. No existing test was weakened, suppressed, or edited.
-After adding a synthetic engineering lesson to the provider smoke payload, its six
-regression checks passed (1.71 seconds); the final Ruff and whitespace checks passed.
-
-## 11. Full-suite evidence
-
-Not rerun before final core handoff, as requested. Historical committed P6 evidence:
-1008 passed, 1 known unrelated narrow-terminal failure, 5 skipped, 4 deselected.
-This is not a new exact-state full-suite result. Docker was previously unavailable
-and no Docker/live sandbox qualification is claimed. After handoff, run the full
-non-Docker suite once if Session A has not supplied a clean result on identical code
-or the qualification rebase/code changes require it. Final result: **PENDING**.
-
-## 12. Static checks
-
-Ruff over `src tests`: **passed**. `git diff --check`: **passed**.
-A protected-path diff confirms no changes to core behavior or the memory documentation
-owned by Session A. Additional artifact scans reject the five fake-secret markers.
-
-## 13. Remaining limitations
-
-Confirmed short bearer/JWT sanitizer failures; pending core handoff and negative-control
-fix verification; no live provider credentials/results; no reviewed real-model runner,
-seeded independent B/C banks or cost-enforcement evidence; no final exact-state full
-suite; the historical unrelated terminal test; Docker unavailable. Startup numbers
-are local observations without a predeclared performance threshold. Historical
-provenance/privacy and cooperative cancellation retain their documented limits.
-
-## 14. Production verdict
-
-**NOT PRODUCTION READY — DRAFT, pending core security fixes and final qualification.**
-This verdict reflects observed sanitizer failures and missing final core validation,
-not merely absence of real-model trials. Do not treat preparatory wiring/fixture
-success as final production or model-quality approval.
-
-## 15. git status
-
-No main merge or push. Changes remain uncommitted in the isolated qualification
-worktree. The following is a snapshot taken at report generation:
+The command was run with the shared existing Python environment and `PYTHONPATH=src`:
 
 ```text
- M src/code_agent/memory_benchmark.py
- M src/code_agent/memory_eval.py
- M src/code_agent/memory_eval_runner.py
- M src/code_agent/memory_operator.py
-?? docs/qualification/CORE_HANDOFF_NOTES.md
-?? docs/qualification/FINAL_ARTIFACT_SECURITY.json
-?? docs/qualification/FINAL_CONFIGURATION_STATUS.json
-?? docs/qualification/FINAL_DISABLED_BENCHMARK.json
-?? docs/qualification/FINAL_PRE_CORE_SMOKE_RESULTS.json
-?? docs/qualification/FINAL_PRE_CORE_SMOKE_RESULTS.md
-?? docs/qualification/FINAL_QUALIFICATION_STATUS.json
-?? docs/qualification/FINAL_SECURITY_PROBE.json
-?? docs/qualification/HINDSIGHT_FINAL_REPORT.md
-?? docs/qualification/LIVE_HINDSIGHT_STATUS.json
-?? docs/qualification/REAL_MODEL_ABC_MANIFEST.json
-?? docs/qualification/REAL_MODEL_EVALUATION.md
-?? docs/qualification/REAL_MODEL_SEED_REVIEW.json
-?? docs/qualification/real_fixtures/
-?? tests/test_hindsight_final_qualification.py
+python -m pytest tests/test_hindsight_final_qualification.py -k "core_sanitizer or provider_error or inspection or benchmark" -q --tb=short
 ```
+
+Result: **10 passed, 2 failed, 23 deselected in 4.69 seconds**. Fake values are omitted
+from failure messages and these reports. A category-only diagnostic confirms the same
+failures in source identical to the final core:
+[FINAL_CORE_SECURITY_GATE.json](FINAL_CORE_SECURITY_GATE.json).
+The required stop applies even though the supplied core's other security tests passed.
+[Core-owner handoff notes](CORE_HANDOFF_NOTES.md).
+
+## 6. Operator tooling
+
+The critical subset passed provider-error secrecy and inspection privacy. The complete
+operator suite was not rerun after the security stop. Historical pre-core evidence:
+19 original P6 tests passed; CLI status/health, outbox states, stable retry identity,
+acknowledged-but-missing retry refusal, and absence of purge/delete were covered.
+Those historical results are not final-core operator approval.
+
+## 7. Fixture evaluation
+
+**NOT RUN on final core — security stop.** Historical scripted A/B results were 16/16
+verified with zero runner errors, with the isolated-bug recall marked PRE-CORE-FIX.
+Reflect counters were unavailable on that older base. Final counts and negative-control
+fix verification remain pending. Fixture-only evidence makes no performance claim.
+[Historical fixture results](FINAL_PRE_CORE_SMOKE_RESULTS.json).
+
+## 8. Live Hindsight
+
+**LIVE HINDSIGHT: NOT RUN — configuration unavailable**
+
+The supported configuration probe before handoff found no Hindsight credentials and
+memory disabled; this was not re-probed after the mandatory stop. The user also supplied
+configuration unavailability in the final handoff. No credentials were requested,
+printed, or persisted, and no live request or synthetic provider write occurred.
+Missing live credentials alone is not the reason for the failed verdict.
+
+## 9. Real-model A/B/C
+
+**REAL MODEL A/B/C: NOT RUN — provider/configuration unavailable**
+
+The six synthetic scenarios and A=disabled, B=recall, C=recall+Reflect definition remain
+prepared. The definition now records the supplied final core SHA, but the redaction
+gate blocks execution. Reviewed runner/model selection, frozen equivalent B/C banks,
+seed review, and externally enforced spend-limit evidence also remain unavailable.
+No paid trials or model-quality conclusions are claimed. Missing A/B/C alone is not
+the reason for the failed verdict.
+
+## 10. Disabled-path benchmark
+
+The selected guarded real-factory benchmark regression passed on final core: SDK,
+network, recall, and Reflect counters stayed zero. The full seven-sample measurement
+was not rerun after the stop. Historical construction median was 83.74 ms, scripted
+read-only run 352.47 ms, and observed CLI startup delta 9.02 ms, with zero forbidden
+attempts. These are pre-core observations, not final-core timing or superiority claims.
+[Historical benchmark](FINAL_DISABLED_BENCHMARK.json).
+
+## 11. Focused qualification
+
+Critical subset: **10 passed, 2 failed, 23 deselected (4.69 seconds)**. Full final focused
+suite: **NOT RUN — mandatory redaction stop**. Session A's supplied 429 focused passes
+are handoff evidence, not a new result from this qualification branch. Historical
+pre-core gates were 304 passed/2 failed and dedicated 52 passed/2 failed. Their failures
+were the same two redaction cases now confirmed on final core.
+
+## 12. Full suite
+
+**NOT RUN — critical gates failed.** The one-time full-suite run must wait for green
+critical/focused gates. Session A supplied 1,134 passed, 1 known baseline failure,
+5 skipped, and 4 Docker deselected on its core; this is not a new exact-state full-suite
+result including this branch's additional qualification changes.
+
+## 13. Ruff/diff-check
+
+**Passed:** `uv run --no-sync --active ruff check src tests` using the existing shared
+environment, and `git diff --check`. No source or test was modified after the failed
+gate. The 44-file qualification artifact scan found zero fake-credential marker hits;
+protected core/document diff remains empty. See `FINAL_QUALIFICATION_STATUS.json`
+and `FINAL_ARTIFACT_SECURITY.json`.
+
+## 14. Docker
+
+Docker qualification remains unavailable/unrun. No live sandbox qualification is
+claimed. The full suite was not launched in this stopped handoff.
+
+## 15. Known baseline failure
+
+Session A reports `test_terminal_width_fallback_when_narrow` as the known
+pre-existing environment/baseline failure. It was not rerun here. Terminal code was
+not modified, and this issue does not explain the two Hindsight redaction failures.
+
+## 16. Remaining limitations and next handoff
+
+The core owner must fix both exact redaction cases without waiving tests and supply a
+new final core SHA. Rebase this branch onto that SHA, verify these gates, then run the
+isolated-bug zero-recall and recurring-bug positive controls, authority/disabled gates,
+operator suite, fixtures, focused tests, and one full non-Docker suite. Live/real-model
+qualification remains conditional on already available supported configuration and
+bounded cost. Historical performance and fixture results are limited to their scope.
+No core fix, main merge, or push was made by qualification work.
+
+## 17. Final production verdict
+
+**NOT PRODUCTION READY**
+
+The observed final-core redaction failures block approval. This is not a verdict based
+solely on missing live credentials, real-model evaluation, or the unrelated terminal
+failure. Final Git status and evidence commit identity are reported after committing
+these qualification records; clean Git state does not imply readiness to merge.

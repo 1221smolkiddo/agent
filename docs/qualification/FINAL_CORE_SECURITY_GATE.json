@@ -1,0 +1,31 @@
+{
+  "final_core_sha": "3a6be181d99b6ef813b119b2076c90eb73783b47",
+  "qualification_source_sha": "7a186e4d95a055f6cfdc7de9a72cff0a6ea281f7",
+  "import_from_qualification_checkout": true,
+  "sanitizer_identical_to_final_core_ignoring_checkout_line_endings": true,
+  "protected_core_diff_empty": true,
+  "passed": false,
+  "probes": [
+    {
+      "category": "api_key",
+      "redacted": true
+    },
+    {
+      "category": "short_bearer",
+      "redacted": false
+    },
+    {
+      "category": "environment",
+      "redacted": true
+    },
+    {
+      "category": "password",
+      "redacted": true
+    },
+    {
+      "category": "jwt",
+      "redacted": false
+    }
+  ],
+  "contains_sensitive_values": false
+}

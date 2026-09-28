@@ -1,4 +1,4 @@
-# Real-model A/B/C definition — DRAFT / NOT RUN
+# Real-model A/B/C definition — HELD / NOT RUN
 
 Six synthetic, non-sensitive engineering fixtures are prepared in
 `REAL_MODEL_ABC_MANIFEST.json`. They cover recurring bug, CI failure, migration
@@ -44,8 +44,10 @@ After handoff and verified prerequisites, the command shape is:
 python -m code_agent memory evaluate --include-reflect --manifest docs/qualification/REAL_MODEL_ABC_MANIFEST.json --runner "PATH_TO_REVIEWED_INSTRUMENTED_REAL_RUNNER" --timeout-seconds 90 --trials 1 --output docs/qualification/FINAL_REAL_MODEL_ABC_RESULTS.json
 ```
 
-The instrumented real runner/model/provider, frozen bank snapshots, final core SHA,
-and verified provider cost control remain to be supplied/reviewed. Nothing here invokes
+The instrumented real runner/model/provider, frozen bank snapshots, verified provider cost control remain to be supplied/reviewed.
+The manifest now records final core `3a6be181d99b6ef813b119b2076c90eb73783b47`,
+but the mandatory short-bearer and standalone-JWT gates failed; execution is held
+until the core owner fixes them and a replacement core is qualified. Nothing here invokes
 or authorizes expensive model trials before those prerequisites. Fixture test results
 can establish correctness on these narrow tasks; they do not establish general model
 quality or a historical-memory performance advantage.

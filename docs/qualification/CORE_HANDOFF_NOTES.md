@@ -1,24 +1,26 @@
-# Core handoff notes — DRAFT
+# Core-owner handoff — final redaction gate FAILED
 
-Qualification branch: `qual/hindsight-production-20260928`, based on P6 `5b3622a`.
-No core integration, policy, planner, runtime, or outbox lifecycle file was edited.
+Final core: `3a6be181d99b6ef813b119b2076c90eb73783b47`.
+Qualification source SHA: `7a186e4d95a055f6cfdc7de9a72cff0a6ea281f7`.
+Branch: `qual/hindsight-production-20260928`.
+Rebase succeeded without core changes. The loaded sanitizer is the qualification
+checkout's source and matches final core, ignoring Windows line-ending conversion.
 
-Session A must review two confirmed redaction gaps before final qualification:
+The following exact cases still fail:
 
-- A short authorization bearer value survives `MemorySanitizer.sanitize_text`.
-  Shared bearer filtering uses a minimum length; the later credential matcher
-  replaces the bearer word while retaining the short credential tail.
-- A standalone JWT survives the same boundary. Its individual segments are shorter
-  than the opaque-value filter and there is no standalone JWT pattern.
+- `tests/test_hindsight_final_qualification.py::test_core_sanitizer_removes_fake_credentials[short_bearer]`: short Authorization bearer tail survives.
+- `tests/test_hindsight_final_qualification.py::test_core_sanitizer_removes_fake_credentials[jwt]`: standalone JWT survives.
 
-Reproducer: `tests/test_hindsight_final_qualification.py::test_core_sanitizer_removes_fake_credentials`.
-The `short_bearer` and `jwt` cases fail on the committed P6 base. Values are deliberately
-omitted from this report. `FINAL_SECURITY_PROBE.json` contains labels and pass flags only.
-Do not waive these tests or fix core redaction in the qualification branch.
+API-key, environment-assignment, and password cases pass. The selected critical gate
+reported 10 passed, 2 failed, 23 deselected in 4.69 seconds. Values and sanitized output
+are deliberately omitted from evidence. See `FINAL_CORE_SECURITY_GATE.json` for safe
+category flags. Tests remain strict; no core sanitizer was edited.
 
-The isolated/simple-bug recall false positive remains EXPECTED PRE-CORE-FIX.
-After handoff, it must make zero automatic recalls. If it still recalls, stop final
-qualification and return the finding to Session A without changing recall policy.
+Final qualification stopped immediately as instructed. Negative/positive recall,
+authority, complete focused/operator/fixture and full-suite gates were not run after
+that failure. Do not interpret historical P6 results as final-core approval.
+The prior isolated-bug result remains PRE-CORE-FIX; it has not been rerun on final core.
 
-Pending: final core commit SHA, the false-positive fix, redaction fixes, merge/rebase,
-and final exact-state qualification. No final production approval is implied.
+Core owner: fix both regressions and supply a replacement final SHA. Rebase the
+qualification branch and restart critical gates before any complete suite. No main
+merge or push occurred. Verdict: NOT PRODUCTION READY.
