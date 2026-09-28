@@ -115,6 +115,13 @@ as this branch: the 50-column Rich capture truncates the expected `fallback` lab
 No test was changed or suppressed. These are pre-existing environmental/flaky
 verification issues, not evidence of a Hindsight startup or network dependency.
 
+After the P5/P6 merge and core recall-policy correction, 429 focused memory, retention,
+outbox, planner, Reflect, durable execution, recovery, adapter, migration, and local-memory
+tests passed. The full non-Docker suite ran once: 1,134 passed, 1 failed, 5 skipped,
+and 4 Docker tests deselected. Its sole failure was the same narrow-terminal test above;
+the renderer and its test were unchanged. Ruff and diff checks passed. These local
+regression results do not qualify a live Hindsight deployment or establish memory benefit.
+
 ## P2 engineering episodes
 
 On a non-dry-run finalization, a single call after durable state advancement and work-report
@@ -217,10 +224,18 @@ startup and poller limits. Operator inspection and bounded manual reconciliation
 ## P4 selective recall before planning
 
 When memory is enabled, `MemoryRecallPolicy` examines only the clean task before runtime
-planning. It requests historical context for repair and recurring failures, continuation,
-historical decisions, long-lived work, and substantial architecture changes. Mechanical
-changes and generic inspection skip recall. Decisions are deterministic and carry a fixed
-reason code; they never ask a model to decide whether to contact Hindsight. A request uses
+planning. It requests historical context for explicit history or recurrence, continuation,
+migration/upgrade/release/rollback/incident work, historical decisions or rationale, and
+substantial architecture or cross-cutting changes. A repair requires a separate
+cross-cutting signal; words such as fix, bug, error, or failing alone are insufficient.
+First-time local repairs, mechanical renames, formatting-only changes, and generic questions
+skip recall. Mechanical controls take precedence even when recurrence is mentioned.
+A caller can supply a positive, structured `prior_diagnostic_occurrences` count to the
+policy/coordinator; it is execution history, never a claim from returned memory. The
+current pre-planning agent call has no diagnosed signature and does not populate that
+optional count. During recovery, Reflect uses recorded diagnostic history as described
+below. Classification adds no model call or repository/database inspection.
+Decisions are deterministic and carry a fixed reason code. A request uses
 a sanitized query of at most 800 characters. The per-run network budget permits at most one
 request (or zero when configured), with the configured deadline and response limits.
 Disabled memory performs no P4 Git inspection, SDK import, or network call.
@@ -475,11 +490,14 @@ times disabled service construction and deterministic recall decisions and recor
 fresh-process CLI import samples, alternating order. Its baseline removes only P6's
 CLI import/registration from the current source. It declares no acceptance threshold.
 Timing variation is reported directly rather than converted into a production pass.
-The negative controls record the existing P4 policy: local rename skips recall, while
-an isolated bug matches the broad repair rule and can trigger an irrelevant recall.
-No new classification model call is introduced.
+The historical P6 checkpoint recorded that local rename skipped recall while an isolated
+bug matched the broad repair rule and could trigger an irrelevant recall. Core integration
+corrects that rule: first-time local bugs now skip unless a separate historical, recurrence,
+or cross-cutting signal exists. Regression tests check both policy decisions and zero
+provider/scope calls for those negative controls. The historical measurements remain
+unchanged; a fresh evaluation belongs to qualification work.
 
 The [P5 report](qualification/P5_REPORT.md) and [P6 report](qualification/P6_REPORT.md)
-are historical checkpoint observations, including the policy behavior measured then. See them for
-release checks. Live cloud/self-hosted results remain unqualified until the opt-in
-smoke command succeeds against a real deployment.
+are historical checkpoint observations, including the policy behavior measured then and
+the checks performed at each checkpoint. Live cloud/self-hosted results remain unqualified
+until the opt-in smoke command succeeds against a real deployment.

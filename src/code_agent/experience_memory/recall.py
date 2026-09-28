@@ -109,8 +109,12 @@ class MemoryRecallCoordinator:
 
     def before_planning(
         self, clean_task: str, *, workspace_task: bool,
+        prior_diagnostic_occurrences: int = 0,
     ) -> tuple[str, RecallRunMetrics]:
-        decision = self.policy.decide(clean_task, workspace_task=workspace_task)
+        decision = self.policy.decide(
+            clean_task, workspace_task=workspace_task,
+            prior_diagnostic_occurrences=prior_diagnostic_occurrences,
+        )
         if not decision.should_recall:
             return "", RecallRunMetrics(reason=decision.reason)
         if self.requests_used >= self.service.config.automatic_recall_max_requests:
