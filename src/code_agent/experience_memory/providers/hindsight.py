@@ -5,7 +5,9 @@ import importlib
 from typing import Any, Literal
 
 from ..config import ExperienceMemoryConfig
-from ..contracts import Experience, MemoryResult, MemoryStatus, RecalledExperience
+from ..contracts import (
+    Experience, MemoryResult, MemoryStatus, OperationLookup, OperationState, RecalledExperience,
+)
 from ..privacy import safe_text, valid_experience, valid_query
 
 
@@ -30,6 +32,57 @@ class HindsightExperienceMemoryProvider:
 
     def reflect(self, bank_id: str, query: str) -> MemoryResult:
         return self._call("reflect", bank_id=bank_id, query=query)
+
+    def get_operation(self, bank_id: str, operation_id: str) -> OperationLookup:
+        if self._config.availability != MemoryStatus.OK:
+            return OperationLookup(self._config.availability)
+        try:
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                pass
+            else:
+                return OperationLookup(MemoryStatus.UNAVAILABLE)
+            sdk = importlib.import_module("hindsight_client")
+            return asyncio.run(self._lookup_operation(sdk, bank_id, operation_id))
+        except ImportError:
+            return OperationLookup(MemoryStatus.MISSING_DEPENDENCY)
+        except TimeoutError:
+            return OperationLookup(MemoryStatus.TIMEOUT)
+        except Exception:
+            return OperationLookup(MemoryStatus.UNAVAILABLE)
+
+    async def _lookup_operation(
+        self, sdk: Any, bank_id: str, operation_id: str,
+    ) -> OperationLookup:
+        config = self._config
+        deadline = asyncio.get_running_loop().time() + config.timeout_seconds
+        async with asyncio.timeout_at(deadline):
+            client = sdk.Hindsight(
+                base_url=config.endpoint,
+                api_key=config.api_key.get_secret_value() if config.api_key else None,
+                timeout=config.timeout_seconds, max_attempts=1,
+            )
+            try:
+                try:
+                    response = await client.operations.get_operation_status(
+                        bank_id, operation_id, include_payload=False,
+                        _request_timeout=config.timeout_seconds,
+                    )
+                except Exception as exc:
+                    if getattr(exc, "status", None) == 404:
+                        return OperationLookup(MemoryStatus.OK, OperationState.NOT_FOUND)
+                    raise
+                if response.operation_id != operation_id:
+                    return OperationLookup(MemoryStatus.UNAVAILABLE)
+                return OperationLookup(
+                    MemoryStatus.OK, OperationState(response.status),
+                    "provider_failed" if response.status == "failed" else "",
+                )
+            finally:
+                remaining = max(0.001, deadline - asyncio.get_running_loop().time())
+                async with asyncio.timeout(remaining):
+                    await client.aclose()
 
     def _call(
         self, operation: Literal["health", "recall", "retain", "reflect"], *,

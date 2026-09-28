@@ -16,6 +16,23 @@ class MemoryStatus(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
+class OperationState(StrEnum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    NOT_FOUND = "not_found"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class OperationLookup:
+    status: MemoryStatus
+    state: OperationState = OperationState.UNKNOWN
+    error_code: str = ""
+
+
 @dataclass(frozen=True)
 class Experience:
     """A bounded, reviewed prose summary, never a source file or environment dump."""
@@ -57,3 +74,4 @@ class ExperienceMemoryProvider(Protocol):
     def retain(self, bank_id: str, experience: Experience) -> MemoryResult: ...
 
     def reflect(self, bank_id: str, query: str) -> MemoryResult: ...
+    def get_operation(self, bank_id: str, operation_id: str) -> OperationLookup: ...

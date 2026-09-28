@@ -148,8 +148,53 @@ An `ok` result means Hindsight acknowledged the asynchronous operation, **not** 
 extraction and indexing finished. P2 does not poll or reconcile operations.
 
 Provider and sanitizer failures yield fixed local step telemetry (`status`, reason code,
-document ID) without episode text, credentials, or SDK exception messages. They cannot
-change a run's final result. P2 does not yet journal the outbound operation as a durable
-runtime effect, enforce a dedicated network budget or approval gate, reconcile ambiguous
-outcomes, handle deletion/retention policy centrally, or qualify live hosted deployments.
-Those are required before claiming end-to-end delivery guarantees.
+document and operation IDs) without episode text, credentials, or SDK exception messages.
+They cannot change a run's final result. P3 adds durable delivery and reconciliation below.
+
+## P3 durable delivery and reconciliation
+
+The execution engine rejects every new command after an execution becomes terminal and its
+recovery scans active executions only. A post-verification `RequestEffect` would require
+weakening that invariant. P3 therefore uses a separate SQLite `experience_memory_outbox`
+table in Agent47's local run database. It is an infrastructure-owned side effect, not MCP
+or a model-visible tool. The execution journal remains authoritative for coding work;
+the outbox is authoritative only for historical-memory delivery.
+
+The finalization path now sanitizes the selected episode, verifies its deterministic
+operation ID, and commits the prepared row **before any provider call**. The row contains
+only the bounded sanitized episode, the hashed repository bank ID, document/operation IDs,
+allowlisted metadata, a fingerprint over those values, state, timestamps, a lease, a safe
+error code, retry count, and local request/wall-time counters. It contains no API key,
+authorization header, environment, raw conversation, diff, or unsanitized run result.
+One logical document version is dispatched at a time; a revised episode waits behind an
+unfinished earlier version of the same document.
+
+The first submission sends the existing deterministic Hindsight operation UUID using
+async retain and records **submitted**, not indexed, on acknowledgement. A timeout or lost
+response becomes **unknown**. Recovery first queries the stored operation ID. Provider
+`pending` maps to local `submitted`, `processing` to `processing`, `completed` to
+`completed`, `failed` to `failed`, and `cancelled` to `cancelled`. If an ambiguous,
+unacknowledged operation is not found, retry uses the **same** operation ID and document
+ID. If a previously acknowledged operation disappears from Hindsight, the outbox stops
+automatic resubmission and records `operation_missing_after_ack` for operator review.
+Raw provider error messages and payloads are discarded; only fixed error codes are stored.
+
+SQLite leases prevent two local workers from dispatching the same row simultaneously.
+A crashed process leaves a lease that expires; the next worker reconciles before it sends.
+`create_agent` performs at most three startup reconciliations with a two-second provider
+deadline per call, then starts a daemon poller if work remains. The poller also starts
+after a new submission, checks due rows every five seconds, and stops after one hour or
+when the queue empties. Retrying is capped at six failed local attempts with exponential
+backoff. Ambiguous unacknowledged submissions older than one day stop automatically rather
+than relying on indefinite provider idempotency retention. None of this changes coding
+success or waits for remote indexing before returning the task result.
+
+`AGENT_EXPERIENCE_MEMORY_ENABLED=true` is the explicit, narrowly scoped operator trust
+policy for background `effect.experience_memory` writes to the configured Hindsight
+endpoint. It does not grant MCP, shell, or general network approval and does not prompt
+on each code change. Disable that setting to stop both submission and recovery. The
+outbox records attempted provider requests and wall time locally; because the execution
+is already terminal, these are **not** charged against its runtime budget. A dedicated
+memory network budget and operator-facing outbox inspection/repair commands remain future
+work. Live cloud/self-hosted qualification and provider operation-retention-window
+behavior also remain to be verified before claiming end-to-end exactly-once delivery.

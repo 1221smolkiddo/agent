@@ -1083,7 +1083,9 @@ class CodingAgent:
                 except Exception:
                     pass
             try:
-                EpisodeRetentionCoordinator(self.experience_memory, self.storage).after_run(
+                EpisodeRetentionCoordinator(
+                    self.experience_memory, self.storage, background_recovery=True,
+                ).after_run(
                     result, runtime_state,
                     self._durable_adapter.task_id if self._durable_adapter else None,
                     dry_run=self.dry_run,

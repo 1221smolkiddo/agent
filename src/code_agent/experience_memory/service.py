@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+import re
+import uuid
 
 from .config import ExperienceMemoryConfig
 from .contracts import (
-    Experience, ExperienceMemoryProvider, MemoryResult, MemoryStatus, RecalledExperience,
+    Experience, ExperienceMemoryProvider, MemoryResult, MemoryStatus, OperationLookup, RecalledExperience,
 )
 from .privacy import safe_text, valid_experience, valid_query
 from .episode_sanitizer import PreparedEpisode
@@ -36,6 +38,10 @@ class ExperienceMemoryService:
             from .providers.hindsight import HindsightExperienceMemoryProvider
 
             self._provider = HindsightExperienceMemoryProvider(config)
+
+    @property
+    def workspace(self) -> Path:
+        return self._workspace
 
     @property
     def config(self) -> ExperienceMemoryConfig:
@@ -86,7 +92,14 @@ class ExperienceMemoryService:
         return self._safe(operation)
 
     def retain_episode(self, prepared: PreparedEpisode) -> MemoryResult:
-        """Submit one sanitized, idempotently identified episode for async processing."""
+        """Compatibility path for an explicitly prepared episode."""
+        try:
+            return self.submit_retention(self.scope().bank_id, prepared)
+        except Exception:
+            return MemoryResult(MemoryStatus.UNAVAILABLE)
+
+    def submit_retention(self, bank_id: str, prepared: PreparedEpisode) -> MemoryResult:
+        """Submit the outbox's sanitized request to its recorded repository bank."""
         def operation() -> MemoryResult:
             if self._config.availability != MemoryStatus.OK:
                 return MemoryResult(self._config.availability)
@@ -96,11 +109,24 @@ class ExperienceMemoryService:
                 operation_id=prepared.operation_id, outcome=prepared.outcome,
                 agent_version=prepared.agent_version,
             )
-            scope = self.scope()
-            if not valid_experience(scope.bank_id, experience, self._config):
+            if not valid_experience(bank_id, experience, self._config):
                 return MemoryResult(MemoryStatus.INVALID_REQUEST)
-            return self._provider.retain(scope.bank_id, experience)
+            return self._provider.retain(bank_id, experience)
         return self._safe(operation)
+
+    def get_operation(self, bank_id: str, operation_id: str) -> OperationLookup:
+        """Look up provider truth without exposing SDK responses or exception text."""
+        if self._config.availability != MemoryStatus.OK:
+            return OperationLookup(self._config.availability)
+        if not re.fullmatch(r"agent47-repo-[0-9a-f]{64}", bank_id):
+            return OperationLookup(MemoryStatus.INVALID_REQUEST)
+        try:
+            uuid.UUID(operation_id)
+            return self._provider.get_operation(bank_id, operation_id)
+        except TimeoutError:
+            return OperationLookup(MemoryStatus.TIMEOUT)
+        except Exception:
+            return OperationLookup(MemoryStatus.UNAVAILABLE)
 
     def _safe(self, operation: Callable[[], MemoryResult]) -> MemoryResult:
         try:

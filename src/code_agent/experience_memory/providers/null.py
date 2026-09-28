@@ -1,4 +1,4 @@
-from ..contracts import Experience, MemoryResult, MemoryStatus
+from ..contracts import Experience, MemoryResult, MemoryStatus, OperationLookup
 
 
 class NullExperienceMemoryProvider:
@@ -16,3 +16,6 @@ class NullExperienceMemoryProvider:
 
     def reflect(self, bank_id: str, query: str) -> MemoryResult:
         return self.health()
+
+    def get_operation(self, bank_id: str, operation_id: str) -> OperationLookup:
+        return OperationLookup(self.status)

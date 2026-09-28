@@ -10,6 +10,7 @@ import pytest
 from code_agent.agent import AgentRunResult, CodingAgent
 from code_agent.durable_execution import CriterionProjection, ExecutionProjection, ExecutionStatus
 from code_agent.experience_memory import ExperienceMemoryConfig, ExperienceMemoryService, MemoryResult, MemoryStatus
+from code_agent.experience_memory.contracts import OperationLookup, OperationState
 from code_agent.experience_memory.episode_sanitizer import MAX_EPISODE_BYTES, MemorySanitizer
 from code_agent.experience_memory.episodes import EngineeringEpisodeBuilder, EpisodeOutcome
 from code_agent.experience_memory.providers.null import NullExperienceMemoryProvider
@@ -33,6 +34,9 @@ class CaptureProvider(NullExperienceMemoryProvider):
     def retain(self, bank_id, experience):
         self.retained.append((bank_id, experience))
         return MemoryResult(self.status)
+
+    def get_operation(self, bank_id, operation_id):
+        return OperationLookup(MemoryStatus.OK, OperationState.COMPLETED)
 
     def recall(self, *args):
         raise AssertionError("P2 cannot recall")
@@ -105,7 +109,7 @@ def test_meaningful_verified_run_retained_with_causal_structure(rig):
     assert payload["started_at"] and payload["ended_at"]
     assert "raw transcript" not in experience.summary
     telemetry = storage.run_steps_payloads(1)[0]["payload"]
-    assert telemetry["status"] == "ok" and telemetry["reason"] == "verified_change"
+    assert telemetry["status"] == "submitted" and telemetry["reason"] == "verified_change"
     assert "content" not in telemetry and KEY not in str(telemetry)
 
 
@@ -175,7 +179,8 @@ def test_disabled_dry_run_and_missing_provider_do_not_change_run(rig, tmp_path, 
     monkeypatch.setattr("code_agent.experience_memory.providers.hindsight.importlib.import_module", missing)
     missing_service = ExperienceMemoryService(configuration(), tmp_path)
     EpisodeRetentionCoordinator(missing_service, storage).after_run(result, make_state(), "task", dry_run=False)
-    assert storage.run_steps_payloads(1)[0]["payload"]["status"] == "missing_dependency"
+    assert storage.run_steps_payloads(1)[0]["payload"]["status"] == "prepared"
+    assert storage.run_steps_payloads(1)[0]["payload"]["reason"] == "missing_dependency"
     assert KEY not in str(storage.run_steps_payloads(1))
 
 
@@ -186,7 +191,8 @@ def test_provider_failure_is_best_effort(rig, status):
     result = make_result()
     coordinator.after_run(result, make_state(), "task", dry_run=False)
     assert result.blocked is False
-    assert storage.run_steps_payloads(1)[0]["payload"]["status"] == status.value
+    assert storage.run_steps_payloads(1)[0]["payload"]["status"] == "unknown"
+    assert storage.run_steps_payloads(1)[0]["payload"]["reason"] == status.value
 
 
 def test_deterministic_document_and_operation_identity(rig):
@@ -194,13 +200,21 @@ def test_deterministic_document_and_operation_identity(rig):
     result = make_result()
     coordinator.after_run(result, make_state(), "task", dry_run=False)
     coordinator.after_run(result, make_state(), "task", dry_run=False)
-    first, second = [item[1] for item in provider.retained]
-    assert first.document_id == second.document_id
-    assert first.operation_id == second.operation_id
-    assert first.summary == second.summary
+    assert len(provider.retained) == 1  # repeated finalization reconciles, never resubmits
+    first = provider.retained[0][1]
+    from code_agent.experience_memory.outbox import ExperienceMemoryOutbox
+    outbox = ExperienceMemoryOutbox(coordinator.storage.db_path, coordinator.service)
+    with outbox._connect() as conn:
+        conn.execute("update experience_memory_outbox set next_attempt_at = 0 where operation_id = ?", (first.operation_id,))
+    outbox.process(first.operation_id)
+    entry = outbox.get(first.operation_id)
+    assert entry is not None and entry.state == "completed"
+    assert entry.prepared.document_id == first.document_id
+    assert entry.prepared.operation_id == first.operation_id
+    assert entry.prepared.content == first.summary
     changed = replace(result, message="Fixed the parser with an additional check.")
     coordinator.after_run(changed, make_state(), "task", dry_run=False)
-    third = provider.retained[2][1]
+    third = provider.retained[1][1]
     assert third.document_id == first.document_id
     assert third.operation_id != first.operation_id
 
@@ -355,6 +369,7 @@ def test_unavailable_runtime_records_safe_telemetry(rig):
     assert storage.run_steps_payloads(1)[0]["payload"] == {
         "type": "experience_memory_retention", "status": "unavailable",
         "reason": "runtime_state_unavailable", "document_id": "",
+        "operation_id": "",
     }
 
 
