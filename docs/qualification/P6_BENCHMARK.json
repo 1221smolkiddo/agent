@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "environment": {
+    "platform": "win32",
+    "python": "3.14.3"
+  },
+  "iterations": 10000,
+  "construction_mean_microseconds": 0.8241600007750094,
+  "disabled_recall_mean_microseconds": 3.3670400007395074,
+  "network_attempts": 0,
+  "sdk_import_attempts": 0,
+  "disabled_context_bytes": 0,
+  "disabled_recall_selected": false,
+  "trivial_rename_recall_selected": false,
+  "isolated_bug_recall_selected": true,
+  "eligibility_model_calls": 0,
+  "startup_samples_seconds": {
+    "baseline": [
+      2.2060683999879984,
+      1.369565800006967,
+      1.25623950001318,
+      1.1613658999995096,
+      1.1335982000018703,
+      1.1446717000071658,
+      1.141341900001862
+    ],
+    "p6": [
+      2.0031253000051947,
+      1.4893452999967849,
+      1.2649894000060158,
+      1.1653405999968527,
+      1.1537175999983447,
+      1.1539695999963442,
+      1.1381762999953935
+    ]
+  },
+  "baseline_startup_median_seconds": 1.1613658999995096,
+  "p6_startup_median_seconds": 1.1653405999968527,
+  "startup_delta_median_seconds": 0.003974699997343123,
+  "startup_baseline": "current CLI with only P6 import and registration removed",
+  "acceptance_threshold": null,
+  "conclusion": "Observed timings only; no predeclared startup acceptance threshold."
+}

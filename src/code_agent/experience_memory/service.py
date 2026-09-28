@@ -163,7 +163,15 @@ class ExperienceMemoryService:
             return OperationLookup(MemoryStatus.INVALID_REQUEST)
         try:
             uuid.UUID(operation_id)
-            return self._provider.get_operation(bank_id, operation_id)
+            result = self._provider.get_operation(bank_id, operation_id)
+            status = MemoryStatus(result.status)
+            if status != MemoryStatus.OK:
+                return OperationLookup(status)
+            from .contracts import OperationState
+            state = OperationState(result.state)
+            return OperationLookup(
+                status, state, "provider_failed" if result.error_code else "",
+            )
         except TimeoutError:
             return OperationLookup(MemoryStatus.TIMEOUT)
         except Exception:

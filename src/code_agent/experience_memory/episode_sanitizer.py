@@ -34,10 +34,8 @@ class PreparedEpisode:
     agent_version: str
 
     def __repr__(self) -> str:
-        return (
-            f"PreparedEpisode(document_id={self.document_id!r}, "
-            f"operation_id={self.operation_id!r}, content=<redacted>)"
-        )
+        return "PreparedEpisode(<redacted>)"
+
 
 
 class MemorySanitizer:

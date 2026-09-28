@@ -57,7 +57,7 @@ class RecallRequest:
     budget: Literal["low", "mid", "high"] = "low"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class MemoryProvenance:
     memory_id: str = ""
     document_id: str = ""
@@ -67,6 +67,9 @@ class MemoryProvenance:
     changed_paths: tuple[str, ...] = ()
     occurred_at: str = ""
 
+    def __repr__(self) -> str:
+        return "MemoryProvenance(<redacted>)"
+
 
 @dataclass(frozen=True)
 class RecalledMemory:
@@ -74,9 +77,9 @@ class RecalledMemory:
     memory_type: Literal["observation", "experience"] = "experience"
     provenance: MemoryProvenance = field(default_factory=MemoryProvenance)
     source_facts: tuple[MemoryProvenance, ...] = ()
-    source_fact_ids: tuple[str, ...] = ()
+    source_fact_ids: tuple[str, ...] = field(default=(), repr=False)
     relevance: float | None = None
-    metadata: tuple[tuple[str, str], ...] = ()
+    metadata: tuple[tuple[str, str], ...] = field(default=(), repr=False)
 
 
 @dataclass(frozen=True)
