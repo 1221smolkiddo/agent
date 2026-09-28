@@ -1,0 +1,65 @@
+{
+  "status": "DRAFT",
+  "scenarios": [
+    {
+      "scenario": "repeated_bug_class",
+      "synthetic_lesson": "Earlier parser failures required ignoring empty fields, with a regression test.",
+      "reviewed": false,
+      "bank_snapshots": {
+        "B": null,
+        "C": null
+      },
+      "golden_payload": "def parse(text):\n    return [int(token) for token in text.split(',') if token.strip()]\n"
+    },
+    {
+      "scenario": "recurring_ci_failure",
+      "synthetic_lesson": "CI changes the working directory. Resolve package data relative to the module.",
+      "reviewed": false,
+      "bank_snapshots": {
+        "B": null,
+        "C": null
+      },
+      "golden_payload": "from pathlib import Path\n\ndef load():\n    return Path(__file__).with_name('config.txt').read_text().strip()\n"
+    },
+    {
+      "scenario": "multi_session_migration",
+      "synthetic_lesson": "The earlier migration session introduced version but legacy_version must remain readable.",
+      "reviewed": false,
+      "bank_snapshots": {
+        "B": null,
+        "C": null
+      },
+      "golden_payload": "def migrate(record):\n    return {'version': record.get('version', record.get('legacy_version'))}\n"
+    },
+    {
+      "scenario": "architecture_decision_recall",
+      "synthetic_lesson": "The architecture decision requires a stable sorted order for repeatable outputs.",
+      "reviewed": false,
+      "bank_snapshots": {
+        "B": null,
+        "C": null
+      },
+      "golden_payload": "def ordered(items):\n    return sorted(items)\n"
+    },
+    {
+      "scenario": "isolated_simple_bug",
+      "synthetic_lesson": "An unrelated historical migration changed package configuration.",
+      "reviewed": false,
+      "bank_snapshots": {
+        "B": null,
+        "C": null
+      },
+      "golden_payload": "def add(a, b):\n    return a + b\n"
+    },
+    {
+      "scenario": "simple_rename",
+      "synthetic_lesson": "An unrelated historical migration changed package configuration.",
+      "reviewed": false,
+      "bank_snapshots": {
+        "B": null,
+        "C": null
+      },
+      "golden_payload": "def double(value):\n    result = value * 2\n    return result\n"
+    }
+  ]
+}

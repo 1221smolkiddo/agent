@@ -5,6 +5,8 @@ from collections.abc import Callable
 import warnings
 
 from .agent import CodingAgent
+from .experience_memory import ExperienceMemoryService
+from .experience_memory.outbox import ExperienceMemoryOutbox, start_recovery_worker
 from .execution_host import ExecutionRuntimeHost, ModelPlanProvider
 from .config import Settings
 from .model_profiles import ModelProfile, resolve_model_profile
@@ -192,6 +194,19 @@ def create_agent(
         )
         resolved_reviewer = create_openai_compatible_client(provider, reviewer_profile)
 
+    experience_memory = ExperienceMemoryService(settings.experience_memory_config, workspace)
+    if experience_memory.enabled and not dry_run:
+        try:
+            # Bounded startup reconciliation; recovery cannot delay coding indefinitely.
+            recovery_config = settings.experience_memory_config.model_copy(update={
+                "timeout_seconds": min(settings.experience_memory_config.timeout_seconds, 2.0),
+            })
+            recovery_service = ExperienceMemoryService(recovery_config, workspace)
+            ExperienceMemoryOutbox(storage.db_path, recovery_service).recover(max_items=3)
+            start_recovery_worker(storage.db_path, recovery_service)
+        except Exception:
+            pass
+
     return CodingAgent(
         cwd=workspace,
         dry_run=dry_run,
@@ -214,6 +229,7 @@ def create_agent(
         shadow_runtime=shadow_runtime,
         runtime_host=runtime_host,
         durable_goal=durable_goal,
+        experience_memory=experience_memory,
     )
 
 

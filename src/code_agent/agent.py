@@ -4,15 +4,21 @@ import json
 import re
 import hashlib
 from time import perf_counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 
+from .experience_memory import ExperienceMemoryService
+from .experience_memory.retention import EpisodeRetentionCoordinator
+from .experience_memory.reflection import MemoryReflectCoordinator
+from .experience_memory.recall import (
+    MemoryRecallCoordinator, RecallRunMetrics, record_recall_evaluation,
+)
 from .execution_state import ExecutionState, compact_message_history
 from .durable_execution import AgentExecutionAdapter, DurableExecutionRuntime
-from .execution_host import ExecutionRuntimeHost
+from .execution_host import ExecutionRuntimeHost, PlanningContext
 from .failure_types import (
     CONTEXT_BUDGET_FORCE_COMPACT_RATIO,
     CONTEXT_BUDGET_TIGHT_TARGET_RATIO,
@@ -21,7 +27,7 @@ from .failure_types import (
 from .models import ChatMessage, ModelClient
 from .patches import git_style_unified_diff
 from .platform_runtime import PlatformRuntime
-from .repo_index import affected_test_paths, build_context_pack
+from .repo_index import affected_test_paths, build_context_pack, build_repo_map
 from .prompts import system_prompt
 from .reviewer import ReviewerPassResult, run_reviewer_pass
 from .schema import (
@@ -92,7 +98,10 @@ class CodingAgent:
         shadow_runtime: Any | None = None,
         runtime_host: ExecutionRuntimeHost | None = None,
         durable_goal: str | None = None,
+        experience_memory: ExperienceMemoryService | None = None,
     ) -> None:
+        self.experience_memory = experience_memory
+        self._recall_metrics = RecallRunMetrics()
         self.cwd = cwd
         self.dry_run = dry_run
         self.max_steps = max_steps
@@ -156,12 +165,56 @@ class CodingAgent:
             self.tools.approval_callback = _timed_approval
             
         clean_task = self._extract_user_task(task)
+        workspace_task = self._is_workspace_task(task)
+        historical_context = ""
+        self._recall_metrics = RecallRunMetrics()
+        recall_coordinator = None
+        if self.experience_memory is not None and self.experience_memory.enabled:
+            try:
+                recall_coordinator = MemoryRecallCoordinator(self.experience_memory)
+                historical_context, self._recall_metrics = recall_coordinator.before_planning(
+                    clean_task, workspace_task=workspace_task,
+                )
+            except Exception:
+                self._recall_metrics = RecallRunMetrics(reason="recall_error", status="unavailable")
+        reflect_coordinator = (
+            MemoryReflectCoordinator(
+                self.experience_memory,
+                recall_coordinator.memories if recall_coordinator is not None else (),
+            )
+            if self.experience_memory is not None and self.experience_memory.enabled
+            and self.experience_memory.config.automatic_reflect_enabled
+            else None
+        )
         resuming_durable_execution = bool(self.durable_execution_id)
         durable_goal = self.durable_goal or clean_task
+        contextual_planner = (
+            self.runtime_host is not None
+            and callable(getattr(self.runtime_host.plan_provider, "plan_with_context", None))
+        )
+        repository_planning_context = ""
+        if contextual_planner and historical_context and not resuming_durable_execution:
+            repository_planning_context = self._planning_repository_context()
+        planning_context = PlanningContext(
+            goal=durable_goal,
+            historical_context=(historical_context if contextual_planner and not resuming_durable_execution else ""),
+            repository_context=repository_planning_context,
+        )
+        planner_type = (
+            "none" if self.runtime_host is None
+            else "model" if contextual_planner else "deterministic"
+        )
+        self._recall_metrics = replace(
+            self._recall_metrics,
+            memory_available_to_planner=bool(planning_context.historical_context),
+            planner_type=planner_type,
+            planning_context_chars=planning_context.size_chars if contextual_planner else 0,
+        )
         if self.runtime_host is not None:
             self._durable_adapter = self.runtime_host.begin_legacy_run(
                 durable_goal,
                 execution_id=self.durable_execution_id,
+                planning_context=planning_context,
                 budgets={
                     "tokens": float(self.max_steps * 10_000),
                     "tool_calls": float(self.max_steps),
@@ -177,6 +230,11 @@ class CodingAgent:
             )
             self.durable_execution_id = self._durable_adapter.execution_id
         run_id = self.storage.create_run(task=clean_task, model=self.model_client.model, cwd=self.cwd)
+        if self.experience_memory is not None and self.experience_memory.enabled:
+            try:
+                self.storage.add_step(run_id, "tool", self._recall_metrics.safe_payload())
+            except Exception:
+                pass
         if self._durable_adapter is not None:
             self.storage.add_step(run_id, "tool", {
                 "type": "durable_execution_link",
@@ -195,7 +253,6 @@ class CodingAgent:
             else ExecutionState(task=clean_task, max_steps=self.max_steps)
         )
         self._active_execution_state = execution_state
-        workspace_task = self._is_workspace_task(task)
         consecutive_failures = 0
         loop_recoveries = 0
         redundant_context_recoveries = 0
@@ -232,6 +289,8 @@ class CodingAgent:
             {"role": "system", "content": system_prompt(self.cwd, self.dry_run, platform_context)},
             {"role": "user", "content": task},
         ]
+        if historical_context:
+            messages.append({"role": "user", "content": historical_context})
 
         # Workspace discovery
         if workspace_task and self.reporter:
@@ -511,6 +570,8 @@ class CodingAgent:
                             progress=action,
                         )
                 execution_state.update_plan(effective_action)
+                if reflect_coordinator is not None:
+                    reflect_coordinator.record_strategy("update_plan", [])
                 plan_payload = self._plan_payload(step, effective_action)
                 if effective_action is not action:
                     plan_payload["authority"] = "execution_engine"
@@ -845,6 +906,8 @@ class CodingAgent:
                     )
             new_mutation_records = self._mutation_records_from_action(action, result, before_mutation)
             changed_paths = self._successful_mutation_paths(new_mutation_records)
+            if reflect_coordinator is not None and changed_paths:
+                reflect_coordinator.record_strategy(action.type, changed_paths)
             mutation_records.extend(new_mutation_records)
             verification_result = self._verification_result_from_action(action, result)
             command_record = self._command_record_from_action(action, result, tool_elapsed_ms)
@@ -912,6 +975,7 @@ class CodingAgent:
             security_metadata = self._tool_payload_security_metadata(action)
             if security_metadata:
                 tool_payload.update(security_metadata)
+            automatic_results: list[dict[str, Any]] = []
             if changed_paths:
                 tool_payload["changed_paths"] = changed_paths
                 automatic_results = self._run_automatic_verification(
@@ -996,6 +1060,17 @@ class CodingAgent:
                 self._report_recovery("tool failed; asking model for another attempt")
             messages.append({"role": "assistant", "content": action.model_dump_json()})
             messages.append({"role": "user", "content": json.dumps(tool_payload)})
+            if reflect_coordinator is not None and step < self.max_steps:
+                # Normal diagnosis, evidence recording, and retry-budget checks have already run.
+                reflection_context = self._reflection_recovery_context(
+                    coordinator=reflect_coordinator, run_id=run_id, clean_task=clean_task,
+                    result=result, command_record=command_record,
+                    verification_results=([verification_result] if verification_result else [])
+                    + automatic_results,
+                    remaining_seconds=run_deadline + self._deadline_paused_seconds - perf_counter(),
+                )
+                if reflection_context:
+                    messages.append({"role": "user", "content": reflection_context})
 
         successful_paths = self._successful_mutation_paths(mutation_records)
         goals_achieved = bool(successful_paths) and consecutive_failures == 0
@@ -1071,6 +1146,26 @@ class CodingAgent:
         if should_show_work_report(result):
             payload = build_work_report_payload(result)
             self.storage.save_work_report(result.run_id, payload["body"], payload)
+        if self.experience_memory is not None and self.experience_memory.enabled:
+            runtime_state = None
+            if self.durable_runtime is not None and result.durable_execution_id:
+                try:
+                    runtime_state = self.durable_runtime.engine.state(result.durable_execution_id)
+                except Exception:
+                    pass
+            try:
+                EpisodeRetentionCoordinator(
+                    self.experience_memory, self.storage, background_recovery=True,
+                ).after_run(
+                    result, runtime_state,
+                    self._durable_adapter.task_id if self._durable_adapter else None,
+                    dry_run=self.dry_run,
+                )
+            except Exception:
+                # Historical retention is advisory and cannot alter accepted work.
+                pass
+        if self.experience_memory is not None and self.experience_memory.enabled:
+            record_recall_evaluation(self.storage, result, self._recall_metrics)
         return result
 
     def _review_final_answer(
@@ -1219,6 +1314,67 @@ class CodingAgent:
             return self.tools.run(action)
         except Exception as exc:
             return ToolResult(ok=False, output=str(exc))
+
+    def _reflection_recovery_context(
+        self, *, coordinator: MemoryReflectCoordinator, run_id: int, clean_task: str,
+        result: ToolResult, command_record: dict[str, Any] | None,
+        verification_results: list[dict[str, Any]], remaining_seconds: float,
+    ) -> str:
+        """Best-effort historical input after the ordinary diagnoser; no runtime effects."""
+        try:
+            config = coordinator.service.config
+            if remaining_seconds <= min(config.timeout_seconds, config.automatic_reflect_timeout_seconds):
+                return ""
+            failures = [item for item in verification_results if item.get("ok") is False]
+            if not failures:
+                if verification_results and all(item.get("ok") is True for item in verification_results):
+                    coordinator.resolved()
+                if result.ok or command_record is None:
+                    return ""
+            diagnostic = failures[0].get("diagnostics") if failures else command_record.get("diagnostics")
+            if not isinstance(diagnostic, dict):
+                return ""
+            # Commands have the full normalized report; prefer its category/signature over projections.
+            report = command_record.get("diagnostics") if command_record else None
+            if isinstance(report, dict) and not result.ok:
+                diagnostic = {**diagnostic, **report}
+            history = diagnostic.get("history")
+            prior = history.get("prior_occurrences", 0) if isinstance(history, dict) else 0
+            signature = diagnostic.get("signature")
+            if not prior and isinstance(signature, str) and signature:
+                prior = self.storage.diagnostic_occurrence_count(signature, before_run_id=run_id)
+            cancelled_or_denied = bool(
+                (isinstance(self.tools, ToolRegistry) and self.tools.cancellation_token.cancelled)
+                or result.metadata.get("cancelled") or result.metadata.get("error_code") in {
+                    "permission_denied", "cancelled", "provider_failure", "budget_exceeded",
+                } or any(term in output.lower() for output in (
+                    result.output, *(str(item.get("output", "")) for item in failures),
+                ) for term in (
+                    "permission denied", "approval denied", "user cancelled", "user canceled",
+                    "shell command cancelled", "shell command canceled",
+                    "dry-run mode skipped", "provider unavailable", "api key missing",
+                ))
+            )
+            context, metrics = coordinator.after_diagnosis(
+                clean_task, diagnostic, verification_failed=bool(failures),
+                prior_occurrences=prior if isinstance(prior, int) else 0,
+                cancelled_or_denied=cancelled_or_denied,
+            )
+            self.storage.add_step(run_id, "tool", metrics.safe_payload())
+            return context
+        except Exception:
+            return ""
+
+    def _planning_repository_context(self) -> str:
+        """Small current-repository map; the worker preflight reuses its index cache."""
+        if not isinstance(self.tools, ToolRegistry):
+            return ""
+        try:
+            return build_repo_map(
+                self.cwd, max_files=12, cache=self.tools.index_cache,
+            )[:2000]
+        except Exception:
+            return ""
 
     def _run_context_preflight(
         self,

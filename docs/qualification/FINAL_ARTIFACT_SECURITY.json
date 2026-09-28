@@ -1,0 +1,10 @@
+{
+  "artifact_files_scanned": 49,
+  "credential_marker_hits": 0,
+  "protected_core_behavior_changes": 0,
+  "owned_memory_document_changes": 0,
+  "approved_shared_security_change": "src/code_agent/safety.py",
+  "shared_redaction_source_blob": "b33920c9d7c3832f5d5bc9b1fc866481c8f90b9e",
+  "tested_source_and_test_fingerprints_unchanged": true,
+  "final_core_base_sha": "3a6be181d99b6ef813b119b2076c90eb73783b47"
+}

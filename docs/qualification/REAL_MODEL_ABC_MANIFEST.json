@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "status": "HELD — provider/configuration unavailable",
+  "runner_kind": "real_model",
+  "final_core_sha": "3a6be181d99b6ef813b119b2076c90eb73783b47",
+  "historical_seed_snapshot_reviewed": false,
+  "limits": {
+    "max_steps": 6,
+    "max_output_tokens": 1024,
+    "max_context_chars": 8000,
+    "provider_budget_usd": 5,
+    "provider_budget_enforced": false
+  },
+  "scenarios": [
+    {
+      "name": "repeated_bug_class",
+      "task": "Fix the recurring blank-token parser bug in this project.",
+      "fixture": "real_fixtures/repeated_bug_class"
+    },
+    {
+      "name": "recurring_ci_failure",
+      "task": "Fix the recurring CI failure caused by changed working directory in this project.",
+      "fixture": "real_fixtures/recurring_ci_failure"
+    },
+    {
+      "name": "multi_session_migration",
+      "task": "Continue the earlier config migration in this project while preserving the legacy key.",
+      "fixture": "real_fixtures/multi_session_migration"
+    },
+    {
+      "name": "architecture_decision_recall",
+      "task": "Implement the previous architecture decision for deterministic ordering in this project.",
+      "fixture": "real_fixtures/architecture_decision_recall"
+    },
+    {
+      "name": "isolated_simple_bug",
+      "task": "Fix the isolated arithmetic bug in this project.",
+      "fixture": "real_fixtures/isolated_simple_bug"
+    },
+    {
+      "name": "simple_rename",
+      "task": "Rename the local variable in this project from old to result.",
+      "fixture": "real_fixtures/simple_rename"
+    }
+  ],
+  "redaction_gates_passed": true,
+  "shared_redaction_source_blob": "b33920c9d7c3832f5d5bc9b1fc866481c8f90b9e"
+}

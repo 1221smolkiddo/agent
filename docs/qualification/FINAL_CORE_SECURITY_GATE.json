@@ -1,0 +1,40 @@
+{
+  "final_core_base_sha": "3a6be181d99b6ef813b119b2076c90eb73783b47",
+  "qualification_base_sha": "2fdcd90f35414049fe13aff6c1ff948d84905114",
+  "shared_redaction_source_blob": "b33920c9d7c3832f5d5bc9b1fc866481c8f90b9e",
+  "new_security_tests_sha256": "38dbab31eca2742e26524243a92937d3c84ba0d87dcc16a9553b1742ec2307ec",
+  "passed": true,
+  "probes": [
+    {
+      "category": "api_key",
+      "redacted": true
+    },
+    {
+      "category": "short_bearer",
+      "redacted": true
+    },
+    {
+      "category": "environment",
+      "redacted": true
+    },
+    {
+      "category": "password",
+      "redacted": true
+    },
+    {
+      "category": "jwt",
+      "redacted": true
+    }
+  ],
+  "contains_sensitive_values": false,
+  "exact_previous_blockers": {
+    "passed": 2,
+    "failed": 0,
+    "seconds": 1.43
+  },
+  "security_operator_suite": {
+    "passed": 134,
+    "failed": 0,
+    "seconds": 10.64
+  }
+}

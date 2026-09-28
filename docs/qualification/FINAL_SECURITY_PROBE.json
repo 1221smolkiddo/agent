@@ -1,0 +1,26 @@
+{
+  "core_base": "5b3622a",
+  "results": [
+    {
+      "category": "api_key",
+      "redacted": true
+    },
+    {
+      "category": "short_authorization_bearer",
+      "redacted": false
+    },
+    {
+      "category": "environment_assignment",
+      "redacted": true
+    },
+    {
+      "category": "password_assignment",
+      "redacted": true
+    },
+    {
+      "category": "standalone_jwt",
+      "redacted": false
+    }
+  ],
+  "contains_sensitive_values": false
+}
