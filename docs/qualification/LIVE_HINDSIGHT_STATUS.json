@@ -1,0 +1,11 @@
+{
+  "status": "NOT RUN",
+  "reason": "configuration unavailable",
+  "provider_qualification_only": true,
+  "health_status": null,
+  "retain_submission_latency_seconds": null,
+  "indexing_completion_latency_seconds": null,
+  "recall_latency_seconds": null,
+  "reflect_latency_seconds": null,
+  "returned_counts": null
+}

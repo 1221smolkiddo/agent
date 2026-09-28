@@ -1,0 +1,44 @@
+{
+  "status": "DRAFT",
+  "qualification_branch": "qual/hindsight-production-20260928",
+  "p6_base_sha": "5b3622a2a60613a84a1a72893a032c0151e2910a",
+  "final_core_sha": null,
+  "pre_core_focused": {
+    "passed": 304,
+    "failed": 2,
+    "seconds": 44.53
+  },
+  "failed_categories": [
+    "short_authorization_bearer",
+    "standalone_jwt"
+  ],
+  "final_focused_tests": null,
+  "final_full_suite": null,
+  "final_abc_results": null,
+  "negative_control_after_handoff": null,
+  "false_positive_fix_verified": null,
+  "core_redaction_fixes_verified": null,
+  "full_suite_rerun_before_handoff": false,
+  "live_hindsight": {
+    "status": "NOT RUN",
+    "reason": "configuration unavailable"
+  },
+  "real_model_abc": {
+    "status": "NOT RUN",
+    "reason": "pending final core, reviewed runner/seeds, and enforced provider budget"
+  },
+  "ruff": "passed",
+  "diff_check": "passed",
+  "draft_production_verdict": "NOT PRODUCTION READY",
+  "pre_core_operator_security_gate": {
+    "passed": 52,
+    "failed": 2,
+    "seconds": 10.47
+  },
+  "new_qualification_cases": 35,
+  "last_provider_smoke_regression": {
+    "passed": 6,
+    "failed": 0,
+    "seconds": 1.71
+  }
+}

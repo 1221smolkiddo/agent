@@ -1,0 +1,7 @@
+{
+  "availability": "disabled",
+  "enabled": false,
+  "credentials_configured": false,
+  "endpoint_configured": true,
+  "deployment": "cloud"
+}

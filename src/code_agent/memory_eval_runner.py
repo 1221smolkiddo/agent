@@ -186,6 +186,9 @@ def run_scenario() -> dict[str, object]:
                 context_bytes += len(text.encode("utf-8"))
     failed_signatures = [signature for _, ok, signature in calls if not ok]
     metrics = agent._recall_metrics
+    reflect_available = "automatic_reflect_enabled" in ExperienceMemoryConfig.model_fields
+    reflection_events = [item["payload"] for item in storage.run_steps_payloads(result.run_id)
+                         if item["payload"].get("type") == "automatic_experience_reflect"]
     return {
         "verified_completion": verified,
         "first_pass_verification": bool(checks) and all(check.get("ok") is True for check in checks),
@@ -202,6 +205,10 @@ def run_scenario() -> dict[str, object]:
         "total_run_latency_seconds": latency,
         "input_tokens": None, "output_tokens": None,
         "recall_requests": provider.recall_calls,
+        "reflect_requests": sum(event.get("reflect_attempted") is True for event in reflection_events)
+        if reflect_available else None,
+        "reflect_latency_seconds": sum(event.get("reflect_latency_ms", 0) for event in reflection_events) / 1000
+        if reflect_available else None,
         "latest_checks_passed": bool(latest) and all(check.get("ok") is True for check in latest.values()),
     }
 

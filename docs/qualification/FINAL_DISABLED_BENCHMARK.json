@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "environment": {
+    "platform": "win32",
+    "python": "3.14.3"
+  },
+  "iterations": 10000,
+  "construction_mean_microseconds": 0.5796600002213381,
+  "disabled_recall_mean_microseconds": 2.3103800005628727,
+  "network_attempts": 0,
+  "sdk_import_attempts": 0,
+  "disabled_context_bytes": 0,
+  "disabled_recall_selected": false,
+  "trivial_rename_recall_selected": false,
+  "isolated_bug_recall_selected": true,
+  "eligibility_model_calls": 0,
+  "automatic_recall_calls": 0,
+  "automatic_reflect_calls": 0,
+  "agent_construction_samples_seconds": [
+    0.08645980000437703,
+    0.09245190001092851,
+    0.08210800000233576,
+    0.08728120000159834,
+    0.08330410000053234,
+    0.08373790000041481,
+    0.08304330000828486
+  ],
+  "agent_run_samples_seconds": [
+    0.3386979000060819,
+    0.35959720000391826,
+    0.3524704000010388,
+    0.3577057000075001,
+    0.3517009999923175,
+    0.35159249999560416,
+    0.3537776000011945
+  ],
+  "agent_construction_median_seconds": 0.08373790000041481,
+  "agent_construction_min_seconds": 0.08210800000233576,
+  "agent_construction_max_seconds": 0.09245190001092851,
+  "agent_run_median_seconds": 0.3524704000010388,
+  "agent_run_min_seconds": 0.3386979000060819,
+  "agent_run_max_seconds": 0.35959720000391826,
+  "baseline_startup_min_seconds": 1.1351597999891965,
+  "baseline_startup_max_seconds": 1.3532493999955477,
+  "p6_startup_min_seconds": 1.1256046000053175,
+  "p6_startup_max_seconds": 1.207537999987835,
+  "measurement_scope": "Factory/runtime construction and scripted read-only run; no real model request. Fresh CLI child processes guard network and SDK imports.",
+  "startup_samples_seconds": {
+    "baseline": [
+      1.1469141999987187,
+      1.3532493999955477,
+      1.324401999998372,
+      1.1660162000043783,
+      1.1983693999936804,
+      1.1423053000034997,
+      1.1351597999891965
+    ],
+    "p6": [
+      1.1327795999968657,
+      1.1256046000053175,
+      1.207537999987835,
+      1.1550810000044294,
+      1.1750317999976687,
+      1.1958173000020906,
+      1.194543200006592
+    ]
+  },
+  "baseline_startup_median_seconds": 1.1660162000043783,
+  "p6_startup_median_seconds": 1.1750317999976687,
+  "startup_delta_median_seconds": 0.00901559999329038,
+  "startup_baseline": "current CLI with only P6 import and registration removed",
+  "acceptance_threshold": null,
+  "conclusion": "Observed timings only; no predeclared startup acceptance threshold.",
+  "qualification_phase": "pre_core_handoff",
+  "core_base": "5b3622a"
+}
