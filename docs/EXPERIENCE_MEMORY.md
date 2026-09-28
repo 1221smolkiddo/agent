@@ -1,10 +1,11 @@
-# Historical experience memory (P1)
+# Historical experience memory
 
-P1 establishes an optional provider foundation. It does not automatically recall, retain, reflect,
-create banks, or probe a server. `factory.create_agent` supplies `CodingAgent.experience_memory`,
-but no agent lifecycle or extension hook invokes it. Service construction does not inspect Git or
-import the optional SDK. Missing configuration, dependency, network, and provider failures return
-typed statuses and cannot stop an otherwise valid run.
+P1 established an optional provider foundation. P2 adds write-only, best-effort retention of
+meaningful engineering episodes after a run has finalized. It never recalls or reflects
+automatically, creates banks at startup, or probes a server. `factory.create_agent` supplies
+`CodingAgent.experience_memory`; service construction does not inspect Git or import the
+optional SDK. Disabled runs preserve their prior behavior. Missing configuration, dependency,
+network, and provider failures return typed statuses and cannot stop an otherwise valid run.
 
 `.code-agent/memory/project.md` remains curated, local, human-readable project memory.
 SQLite execution events remain authoritative for execution state, recovery, effects, approvals,
@@ -65,12 +66,12 @@ moving a no-origin repository changes its bank. Branch and HEAD are allowlisted 
 
 ## Security and future integration
 
-Retention accepts only a reviewed single-paragraph prose summary of at most 1000 characters;
+The original explicit summary API accepts only a reviewed single-paragraph prose summary of at most 1000 characters;
 queries are at most 2000 characters. Shared Agent47 secret checks/redaction are reused, including
 literal removal of the configured Hindsight key. Obvious source fences, Python declarations,
 environment assignments, private keys, and multiline dumps are rejected before dispatch.
 No arbitrary metadata, environment exports, source-file uploads, or unrestricted source dumps are
-supported. Metadata contains only source, historical-memory kind, validated branch, and HEAD.
+supported. Summary metadata contains only source, historical-memory kind, validated branch, and HEAD. Episode metadata additionally includes validated outcome and Agent47 package version.
 Responses are redacted before truncation; only text is exposed, never provider metadata or traces.
 
 Pattern checks cannot establish that arbitrary prose contains no unknown secret or encoded data.
@@ -84,13 +85,11 @@ than patching the host loop. Cleanup is included in the deadline; uncooperative 
 cannot be hard-preempted by asyncio. Async hosts should dispatch this synchronous API on their
 own bounded worker infrastructure.
 
-A retain timeout or transport failure may occur after the server stored data. There is no automatic
-retry, and `ok` requires confirmed synchronous success. This facade provides no durable outbox,
-idempotency, deletion, reconciliation, or approval workflow. Before any later phase adds automatic
-or model-invoked memory operations, integrate authorization, network budgets, effect journaling,
-retention policy, and ambiguous-write reconciliation through the existing runtime contracts.
-Historical memory must never become recovery state or completion evidence. P1 intentionally has
-no such dispatch path. Live cloud and self-hosted server qualification remains future work.
+For explicit summary retains, a timeout or transport failure may occur after the server stored
+data. There is no automatic retry, and `ok` requires confirmed synchronous success. The P2
+path uses a stable document and operation ID and an asynchronous acknowledgement instead.
+Historical memory never becomes recovery state or completion evidence. Live cloud and
+self-hosted server qualification remains future work.
 
 ## P1 release-gate observations
 
@@ -100,3 +99,57 @@ as this branch: the 50-column Rich capture truncates the expected `fallback` lab
 `ConnectionAbortedError` during a full-suite run, then passed six isolated runs.
 No test was changed or suppressed. These are pre-existing environmental/flaky
 verification issues, not evidence of a Hindsight startup or network dependency.
+
+## P2 engineering episodes
+
+On a non-dry-run finalization, a single call after durable state advancement and work-report
+storage passes `AgentRunResult` plus the current execution projection to
+`EpisodeRetentionCoordinator`. It does no work when memory is disabled. Its pipeline is:
+
+```text
+recorded run/runtime evidence -> EngineeringEpisodeBuilder -> RetentionPolicy
+  -> MemorySanitizer -> ExperienceMemoryService.retain_episode -> Hindsight
+```
+
+The builder reads bounded, structured fields: clean goal, execution/run/task IDs, runtime
+start/end timestamps, changed paths, latest plan, diagnostic summaries, failed action
+summaries, verification commands/results, reviewer status, blockers, final result, Git
+branch/HEAD, Agent47 package version, and episode schema version. It does not read
+conversation messages, hidden reasoning, raw source, diffs, full stdout/stderr, or environment
+values. Each list and field has a fixed cap, with explicit truncation markers. The complete
+serialized episode is capped at 16,384 UTF-8 bytes.
+
+`EpisodeOutcome` has `verified`, `partially_verified`, `failed`, `blocked`, and `unverified`.
+`verified` requires a completed execution, at least one passing recorded verification,
+no failing latest check, no rejected/unavailable reviewer, and at least one successful
+verified workspace mutation. Every current per-criterion runtime decision must also be present and verified
+when the execution has criteria. A successful final message or `blocked=False` alone never grants verified
+status. Historical, model-generated, and shadow-projector claims cannot substitute for
+recorded command and mutation evidence.
+
+Policy retains verified changes, diagnosed failed strategies, recurring diagnostic
+failures, failed changes, and concrete blockers. It skips trivial read/search/list work,
+generic success, and unverified speculation. A failed attempt remains a failed attempt in
+the episode even if a later verified strategy succeeds.
+
+The sanitizer reuses Agent47 redaction, strips key/value assignments, credential phrases,
+URL queries, suspicious opaque values, source fences, and `.env` paths from every text
+field, including branch metadata. Invalid branch/HEAD values fail closed at the service
+boundary. Only allowlisted metadata is sent. Heuristic filtering cannot prove arbitrary
+prose is secret-free; operators should still review retention settings on sensitive repos.
+
+The document ID is `agent47:{execution_id}:{task_id-or-run_id}:episode:v1`.
+The operation ID is UUIDv5 of the document ID and SHA-256 of the sanitized episode. The
+Hindsight call uses `retain_async=True`, `update_mode="replace"`, and both IDs. Repeating
+an uncertain submission with the same sanitized content reuses the same operation ID;
+revising content uses a new operation ID but replaces the same logical document.
+Hindsight documents [document upserts and async operation idempotency](https://github.com/vectorize-io/hindsight/blob/main/hindsight-docs/docs/developer/api/retain.mdx).
+An `ok` result means Hindsight acknowledged the asynchronous operation, **not** that
+extraction and indexing finished. P2 does not poll or reconcile operations.
+
+Provider and sanitizer failures yield fixed local step telemetry (`status`, reason code,
+document ID) without episode text, credentials, or SDK exception messages. They cannot
+change a run's final result. P2 does not yet journal the outbound operation as a durable
+runtime effect, enforce a dedicated network budget or approval gate, reconcile ambiguous
+outcomes, handle deletion/retention policy centrally, or qualify live hosted deployments.
+Those are required before claiming end-to-end delivery guarantees.

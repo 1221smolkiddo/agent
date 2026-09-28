@@ -11,6 +11,7 @@ from typing import Any
 from pydantic import TypeAdapter, ValidationError
 
 from .experience_memory import ExperienceMemoryService
+from .experience_memory.retention import EpisodeRetentionCoordinator
 from .execution_state import ExecutionState, compact_message_history
 from .durable_execution import AgentExecutionAdapter, DurableExecutionRuntime
 from .execution_host import ExecutionRuntimeHost
@@ -1074,6 +1075,22 @@ class CodingAgent:
         if should_show_work_report(result):
             payload = build_work_report_payload(result)
             self.storage.save_work_report(result.run_id, payload["body"], payload)
+        if self.experience_memory is not None and self.experience_memory.enabled:
+            runtime_state = None
+            if self.durable_runtime is not None and result.durable_execution_id:
+                try:
+                    runtime_state = self.durable_runtime.engine.state(result.durable_execution_id)
+                except Exception:
+                    pass
+            try:
+                EpisodeRetentionCoordinator(self.experience_memory, self.storage).after_run(
+                    result, runtime_state,
+                    self._durable_adapter.task_id if self._durable_adapter else None,
+                    dry_run=self.dry_run,
+                )
+            except Exception:
+                # Historical retention is advisory and cannot alter accepted work.
+                pass
         return result
 
     def _review_final_answer(

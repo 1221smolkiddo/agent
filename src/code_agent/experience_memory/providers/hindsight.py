@@ -86,18 +86,31 @@ class HindsightExperienceMemoryProvider:
                     return MemoryResult(MemoryStatus.OK)
                 if operation == "retain":
                     assert experience is not None
+                    episode = experience.kind == "engineering_episode"
                     metadata = {
-                        "source": "agent47", "memory_kind": "historical_experience",
+                        "source": "agent47",
+                        "memory_kind": "engineering_episode" if episode else "historical_experience",
                     }
                     if experience.branch:
                         metadata["branch"] = experience.branch
                     if experience.head:
                         metadata["head"] = experience.head
+                    if episode:
+                        metadata.update({
+                            "outcome": experience.outcome,
+                            "agent_version": experience.agent_version,
+                        })
                     response = await client.aretain(
                         bank_id=bank_id, content=experience.summary,
-                        metadata=metadata, retain_async=False,
+                        metadata=metadata, document_id=experience.document_id,
+                        update_mode="replace" if episode else None,
+                        retain_async=episode, operation_id=experience.operation_id,
                     )
-                    success = response.success is True and response.var_async is False
+                    success = response.success is True and (
+                        response.var_async is True
+                        and response.operation_id == experience.operation_id
+                        if episode else response.var_async is False
+                    )
                     return MemoryResult(MemoryStatus.OK if success else MemoryStatus.UNAVAILABLE)
                 if operation == "recall":
                     response = await client.arecall(

@@ -8,6 +8,7 @@ from .contracts import (
     Experience, ExperienceMemoryProvider, MemoryResult, MemoryStatus, RecalledExperience,
 )
 from .privacy import safe_text, valid_experience, valid_query
+from .episode_sanitizer import PreparedEpisode
 from .providers import NullExperienceMemoryProvider
 from .scope import RepositoryScope, repository_scope
 
@@ -35,6 +36,18 @@ class ExperienceMemoryService:
             from .providers.hindsight import HindsightExperienceMemoryProvider
 
             self._provider = HindsightExperienceMemoryProvider(config)
+
+    @property
+    def config(self) -> ExperienceMemoryConfig:
+        return self._config
+
+    @property
+    def enabled(self) -> bool:
+        return self._config.enabled and self._config.provider != "none"
+
+    @property
+    def availability(self) -> MemoryStatus:
+        return self._config.availability
 
     def scope(self) -> RepositoryScope:
         """Explicit Git inspection; not invoked during service construction."""
@@ -67,6 +80,23 @@ class ExperienceMemoryService:
                 return MemoryResult(self._config.availability)
             scope = self.scope()
             experience = Experience(summary, scope.branch, scope.head)
+            if not valid_experience(scope.bank_id, experience, self._config):
+                return MemoryResult(MemoryStatus.INVALID_REQUEST)
+            return self._provider.retain(scope.bank_id, experience)
+        return self._safe(operation)
+
+    def retain_episode(self, prepared: PreparedEpisode) -> MemoryResult:
+        """Submit one sanitized, idempotently identified episode for async processing."""
+        def operation() -> MemoryResult:
+            if self._config.availability != MemoryStatus.OK:
+                return MemoryResult(self._config.availability)
+            experience = Experience(
+                summary=prepared.content, branch=prepared.branch, head=prepared.head,
+                kind="engineering_episode", document_id=prepared.document_id,
+                operation_id=prepared.operation_id, outcome=prepared.outcome,
+                agent_version=prepared.agent_version,
+            )
+            scope = self.scope()
             if not valid_experience(scope.bank_id, experience, self._config):
                 return MemoryResult(MemoryStatus.INVALID_REQUEST)
             return self._provider.retain(scope.bank_id, experience)

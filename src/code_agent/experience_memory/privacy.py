@@ -1,7 +1,9 @@
 """Bounded summary boundary, using Agent47's existing secret checks/redaction."""
 from __future__ import annotations
 
+import json
 import re
+import uuid
 
 from ..memory import reject_sensitive_memory
 from ..safety import redact_secrets
@@ -30,11 +32,32 @@ def valid_query(bank_id: str, query: str, config: ExperienceMemoryConfig) -> boo
 
 def valid_experience(bank_id: str, experience: Experience, config: ExperienceMemoryConfig) -> bool:
     value = experience.summary
-    if (
-        not _BANK.fullmatch(bank_id) or not value.strip() or len(value) > 1000
-        or "\n" in value or "\r" in value or _DUMP.search(value)
-        or safe_text(value, config) != value
-    ):
+    if not _BANK.fullmatch(bank_id) or not value.strip() or safe_text(value, config) != value:
+        return False
+    if experience.kind == "engineering_episode":
+        if len(value.encode("utf-8")) > 16_384 or not experience.document_id or not experience.operation_id:
+            return False
+        if not re.fullmatch(r"agent47:[A-Za-z0-9_-]{1,100}:[A-Za-z0-9_-]{1,100}:episode:v1", experience.document_id):
+            return False
+        try:
+            uuid.UUID(experience.operation_id)
+            payload = json.loads(value)
+        except (ValueError, TypeError):
+            return False
+        if (
+            not isinstance(payload, dict) or payload.get("kind") != "engineering_episode"
+            or _DUMP.search(value)
+        ):
+            return False
+        if experience.outcome not in {
+            "verified", "partially_verified", "failed", "blocked", "unverified",
+        }:
+            return False
+        if not experience.agent_version or not re.fullmatch(
+            r"[A-Za-z0-9.+_-]{1,40}", experience.agent_version
+        ):
+            return False
+    elif len(value) > 1000 or "\n" in value or "\r" in value or _DUMP.search(value):
         return False
     try:
         reject_sensitive_memory(value)

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 
 class MemoryStatus(StrEnum):
@@ -23,6 +23,11 @@ class Experience:
     summary: str = field(repr=False)
     branch: str | None = field(default=None, repr=False)
     head: str | None = None
+    kind: Literal["summary", "engineering_episode"] = "summary"
+    document_id: str | None = None
+    operation_id: str | None = None
+    outcome: str | None = None
+    agent_version: str | None = None
 
 
 @dataclass(frozen=True)
