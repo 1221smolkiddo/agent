@@ -1,0 +1,199 @@
+{
+  "status": "FINAL",
+  "candidate_base_sha": "7b04c8f20da7dbc1496300486d95386557c3513e",
+  "branch": "qual/hindsight-production-20260928",
+  "package_name": "agent47",
+  "module_name": "code_agent",
+  "version": "0.1.0",
+  "python": "3.14.3",
+  "requires_python": ">=3.11",
+  "build_backend": "hatchling.build",
+  "build_command": "uv build --out-dir dist/0.1.0-r2",
+  "artifact_audit": {
+    "wheel": "agent47-0.1.0-py3-none-any.whl",
+    "sdist": "agent47-0.1.0.tar.gz",
+    "version": "0.1.0",
+    "package_name": "agent47",
+    "wheel_files": 138,
+    "sdist_files": 286,
+    "required_package_files": 134,
+    "missing_package_files": 0,
+    "unwanted_or_sensitive_paths": 0,
+    "sdist_public_empty_credential_template_included": true,
+    "wheel_sha256": "675ad94bb3c2115f96799d34fe50c653b6f65a9532eb8270d71b07f4f9b52a81",
+    "sdist_sha256": "62bd7b248cab91b2152a2e167b1369d35a32261151fc57eaeb4e78b957498e6b",
+    "all_package_files_match_current_tracked_source_ignoring_line_endings": true,
+    "console_scripts": [
+      "agent47 = code_agent.interactive:main",
+      "code-agent = code_agent.cli:app"
+    ]
+  },
+  "wheel_gate": {
+    "artifact_kind": "wheel",
+    "status": "PASS",
+    "clean_directory": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-0.1.0-release-sqwb5o6q\\candidate-wheel",
+    "venv": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-0.1.0-release-sqwb5o6q\\candidate-wheel\\.venv",
+    "checks_passed": [
+      "fresh_venv",
+      "install",
+      "pip_check",
+      "pip_show_version",
+      "installed_import_isolation",
+      "help",
+      "version",
+      "automation-help",
+      "startup"
+    ],
+    "installed": {
+      "module_path": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-0.1.0-release-sqwb5o6q\\candidate-wheel\\.venv\\Lib\\site-packages\\code_agent\\__init__.py",
+      "interactive_path": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-0.1.0-release-sqwb5o6q\\candidate-wheel\\.venv\\Lib\\site-packages\\code_agent\\interactive.py",
+      "cli_path": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-0.1.0-release-sqwb5o6q\\candidate-wheel\\.venv\\Lib\\site-packages\\code_agent\\cli.py",
+      "version": "0.1.0",
+      "module_version": "0.1.0",
+      "typer_version": "0.27.2",
+      "python_version": "3.14.3",
+      "prefix": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-0.1.0-release-sqwb5o6q\\candidate-wheel\\.venv",
+      "base_prefix": "C:\\Users\\Sirius\\AppData\\Local\\Python\\pythoncore-3.14-64",
+      "sys_path": [
+        "C:\\Users\\Sirius\\AppData\\Local\\Python\\pythoncore-3.14-64\\python314.zip",
+        "C:\\Users\\Sirius\\AppData\\Local\\Python\\pythoncore-3.14-64\\DLLs",
+        "C:\\Users\\Sirius\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib",
+        "C:\\Users\\Sirius\\AppData\\Local\\Python\\pythoncore-3.14-64",
+        "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-0.1.0-release-sqwb5o6q\\candidate-wheel\\.venv",
+        "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-0.1.0-release-sqwb5o6q\\candidate-wheel\\.venv\\Lib\\site-packages"
+      ]
+    },
+    "source_path_or_editable_install_used": false,
+    "repository_on_pythonpath": false,
+    "system_site_packages": false,
+    "real_credentials_used": false,
+    "normal_unauthenticated_startup_reached": true,
+    "interactive_termination": "controlled closed stdin; natural exit 0",
+    "full_install_log": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-0.1.0-release-sqwb5o6q\\logs\\wheel-install.log"
+  },
+  "sdist_gate": {
+    "artifact_kind": "sdist",
+    "status": "PASS",
+    "clean_directory": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-0.1.0-release-sqwb5o6q\\candidate-sdist",
+    "venv": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-0.1.0-release-sqwb5o6q\\candidate-sdist\\.venv",
+    "checks_passed": [
+      "fresh_venv",
+      "install",
+      "pip_check",
+      "pip_show_version",
+      "installed_import_isolation",
+      "help",
+      "version",
+      "automation-help",
+      "startup"
+    ],
+    "installed": {
+      "module_path": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-0.1.0-release-sqwb5o6q\\candidate-sdist\\.venv\\Lib\\site-packages\\code_agent\\__init__.py",
+      "interactive_path": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-0.1.0-release-sqwb5o6q\\candidate-sdist\\.venv\\Lib\\site-packages\\code_agent\\interactive.py",
+      "cli_path": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-0.1.0-release-sqwb5o6q\\candidate-sdist\\.venv\\Lib\\site-packages\\code_agent\\cli.py",
+      "version": "0.1.0",
+      "module_version": "0.1.0",
+      "typer_version": "0.27.2",
+      "python_version": "3.14.3",
+      "prefix": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-0.1.0-release-sqwb5o6q\\candidate-sdist\\.venv",
+      "base_prefix": "C:\\Users\\Sirius\\AppData\\Local\\Python\\pythoncore-3.14-64",
+      "sys_path": [
+        "C:\\Users\\Sirius\\AppData\\Local\\Python\\pythoncore-3.14-64\\python314.zip",
+        "C:\\Users\\Sirius\\AppData\\Local\\Python\\pythoncore-3.14-64\\DLLs",
+        "C:\\Users\\Sirius\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib",
+        "C:\\Users\\Sirius\\AppData\\Local\\Python\\pythoncore-3.14-64",
+        "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-0.1.0-release-sqwb5o6q\\candidate-sdist\\.venv",
+        "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-0.1.0-release-sqwb5o6q\\candidate-sdist\\.venv\\Lib\\site-packages"
+      ]
+    },
+    "source_path_or_editable_install_used": false,
+    "repository_on_pythonpath": false,
+    "system_site_packages": false,
+    "real_credentials_used": false,
+    "normal_unauthenticated_startup_reached": true,
+    "interactive_termination": "controlled closed stdin; natural exit 0",
+    "full_install_log": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-0.1.0-release-sqwb5o6q\\logs\\sdist-install.log"
+  },
+  "old_beta_reproduction": {
+    "published_version": "0.1.0b4",
+    "default_beta_help_pass": false,
+    "minimum_typer_version": "0.15.0",
+    "minimum_typer_help_pass": false,
+    "missing_abort_reproduced": true,
+    "minimum_failure_tail": "Traceback (most recent call last):\n  File \"<frozen runpy>\", line 198, in _run_module_as_main\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-0.1.0-release-sqwb5o6q\\published-beta\\.venv\\Scripts\\agent47.exe\\__main__.py\", line 2, in <module>\n    from code_agent.interactive import main\n  File \"C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-0.1.0-release-sqwb5o6q\\published-beta\\.venv\\Lib\\site-packages\\code_agent\\interactive.py\", line 19, in <module>\n    from typer._click.exceptions import Abort\nModuleNotFoundError: No module named 'typer._click'\n",
+    "default_typer_version": "0.27.2",
+    "default_failure": "ImportError: cannot import name Abort from typer._click.exceptions",
+    "root_cause": "Private Typer internal import removed/moved; public typer.Abort is supported"
+  },
+  "release_source_sha256": {
+    "pyproject.toml": "b9abc0e05511df735f8f5cda9ffa6f895a5c1393e3aef8b85b14cdf542d65613",
+    "src/code_agent/__init__.py": "d5274d97066442f7476ec990cb29bd977df25c1f1617249515c01f58990347f1",
+    "src/code_agent/interactive.py": "609f3dcb8dd7e3ae7bb2c2b1009719af75b85fe386565374247049decdc78285",
+    "tests/test_terminal_ui.py": "a2d53d72bb2635d18011385b639736170e6c0253bb4a0d12dfb25e8fe63763b5",
+    "uv.lock": "7cc24f0cc3ad7cfed7bff3374c4b2ade9cd81f38c121c6ec9d7328e0fb9cd9e0"
+  },
+  "focused_cli_tests": {
+    "passed": 95,
+    "failures": 0,
+    "seconds": 5.33
+  },
+  "full_suite": {
+    "tests": 1223,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 5,
+    "passed": 1217,
+    "deselected": 4,
+    "seconds": 197.76,
+    "runs": 1,
+    "known_failure": "tests/test_interactive_diff.py::test_terminal_width_fallback_when_narrow",
+    "classification": "pre-existing Windows terminal rendering baseline/environment issue",
+    "new_failures": 0
+  },
+  "ruff": "passed",
+  "diff_check": "passed",
+  "lock_check": "passed (uv lock --check --offline)",
+  "real_credentials_used": false,
+  "paid_model_calls": 0,
+  "published": false,
+  "pushed": false,
+  "merged_main": false,
+  "build_attempts": 2,
+  "first_build_issue": "Sdist included ignored .code-agent scratch files; fixed with explicit Hatch exclusions",
+  "failed_beta_environment_removed": true,
+  "installation_log_sha256": {
+    "wheel": "7957a10488038869208db400f0bf55632ae6a7eca9c5f1cf85df0cc46ed201f7",
+    "sdist": "25185a4b82e56babd0627146afae6ae7bf8a8e33f7f8a5d5153ea6383349933d"
+  },
+  "static_release_metadata": {
+    "name": "agent47",
+    "version": "0.1.0",
+    "module_version": "0.1.0",
+    "requires_python": ">=3.11",
+    "wheel_packages": [
+      "src/code_agent"
+    ],
+    "scripts": {
+      "agent47": "code_agent.interactive:main",
+      "code-agent": "code_agent.cli:app"
+    },
+    "runtime_dependencies": [
+      "openai>=1.84.0",
+      "keyring>=25.0.0",
+      "prompt_toolkit>=3.0.0",
+      "pydantic-settings>=2.8.0",
+      "python-dotenv>=1.0.1",
+      "rich>=15.0.0",
+      "typer>=0.15.0"
+    ]
+  },
+  "release_gate": "PASS",
+  "ready_to_merge": true,
+  "ready_to_publish_after_human_release_process": true,
+  "remaining_limitations": [
+    "Known unrelated terminal-width baseline failure",
+    "Clean installs exercised Windows/Python 3.14.3 with current resolved runtime dependencies",
+    "No live provider or paid model call; previous Hindsight/Docker/real-model limitations remain documented"
+  ],
+  "first_build_artifacts_removed": true
+}

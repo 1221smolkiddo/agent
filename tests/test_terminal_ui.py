@@ -1,5 +1,5 @@
 import pytest
-from typer._click.exceptions import Abort
+from typer import Abort
 
 import code_agent.interactive as interactive
 from code_agent.agent import AgentRunResult

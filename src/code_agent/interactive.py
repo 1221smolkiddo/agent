@@ -18,7 +18,7 @@ from typing import Protocol
 import typer  # noqa: F401
 from rich.prompt import Prompt
 from rich.table import Table
-from typer._click.exceptions import Abort
+from typer import Abort
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout
