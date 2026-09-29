@@ -196,7 +196,7 @@ def main() -> None:
                 )
                 reporter = StatusReporter()
                 reporter.thinking(1)
-                with active_shortcuts(client):
+                with active_shortcuts(client, reporter):
                     response = run_lightweight_chat(task_with_context(user_input, transcript, session_state), client)
                 reporter.done()
             except InteractiveExitRequested:
@@ -248,7 +248,7 @@ def main() -> None:
                 stream_model=stream_model,
                 require_process_isolation=sandbox_enabled,
             )
-            with active_shortcuts(agent):
+            with active_shortcuts(agent, reporter):
                 transcript = run_interactive_turn(user_input, agent, transcript, session_state)
         except InteractiveExitRequested:
             if agent is not None:
@@ -258,6 +258,7 @@ def main() -> None:
         except KeyboardInterrupt:
             if agent is not None:
                 agent.cancel("interactive keyboard interrupt")
+            reporter.cancelled()
             print_panel("Stopped", "Current action stopped. Interactive session is still open.")
             continue
         except Exception as exc:
@@ -1618,8 +1619,8 @@ def read_windows_line(prompt: str) -> str:
 
 
 @contextlib.contextmanager
-def active_shortcuts(agent: InteractiveAgent):
-    monitor = ActiveShortcutMonitor(agent)
+def active_shortcuts(agent: InteractiveAgent, reporter: StatusReporter | None = None):
+    monitor = ActiveShortcutMonitor(agent, reporter)
     monitor.start()
     try:
         yield
@@ -1632,8 +1633,10 @@ def active_shortcuts(agent: InteractiveAgent):
 
 
 class ActiveShortcutMonitor:
-    def __init__(self, agent: InteractiveAgent) -> None:
+    def __init__(self, agent: InteractiveAgent, reporter: StatusReporter | None = None) -> None:
         self.agent = agent
+        self.reporter = reporter
+        self._terminal_attrs = None
         self.exit_requested = False
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -1642,17 +1645,33 @@ class ActiveShortcutMonitor:
     def start(self) -> None:
         self._previous_sigint = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, self._handle_sigint)
-        if os.name == "nt" and sys.stdin.isatty():
-            self._thread = threading.Thread(target=self._watch_windows_keys, daemon=True)
-            self._thread.start()
+        if not sys.stdin.isatty() or (self.reporter is not None and not self.reporter._interactive):
+            return
+        if os.name == "nt":
+            target = self._watch_windows_keys
+        else:
+            import termios
+            import tty
+            self._terminal_attrs = termios.tcgetattr(sys.stdin.fileno())
+            tty.setcbreak(sys.stdin.fileno())
+            target = self._watch_posix_keys
+        self._thread = threading.Thread(target=target, daemon=True)
+        self._thread.start()
 
     def stop(self) -> None:
         self._stop.set()
+        if self._thread is not None and self._thread is not threading.current_thread():
+            self._thread.join(timeout=0.2)
+        if self._terminal_attrs is not None:
+            import termios
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, self._terminal_attrs)
         if self._previous_sigint is not None:
             signal.signal(signal.SIGINT, self._previous_sigint)
 
     def _handle_sigint(self, signum, frame) -> None:
         self.agent.cancel("interactive ctrl+c")
+        if self.reporter:
+            self.reporter.cancelled()
         raise KeyboardInterrupt
 
     def _watch_windows_keys(self) -> None:
@@ -1663,15 +1682,35 @@ class ActiveShortcutMonitor:
                 time.sleep(0.05)
                 continue
             char = msvcrt.getwch()
-            if char == CTRL_C:
-                self.agent.cancel("interactive ctrl+c")
-                _thread.interrupt_main()
+            if self._handle_key(char):
                 return
-            if char == CTRL_E:
-                self.exit_requested = True
-                self.agent.cancel("interactive ctrl+e")
-                _thread.interrupt_main()
+
+    def _watch_posix_keys(self) -> None:
+        import select
+
+        while not self._stop.is_set():
+            ready, _, _ = select.select([sys.stdin], [], [], 0.05)
+            if ready and self._handle_key(sys.stdin.read(1)):
                 return
+
+    def _handle_key(self, char: str) -> bool:
+        if char.lower() == "o" and self.reporter is not None:
+            self.reporter.toggle_command_output()
+            return False
+        if char == CTRL_C:
+            self.agent.cancel("interactive ctrl+c")
+            if self.reporter:
+                self.reporter.cancelled()
+            _thread.interrupt_main()
+            return True
+        if char == CTRL_E:
+            self.exit_requested = True
+            self.agent.cancel("interactive ctrl+e")
+            if self.reporter:
+                self.reporter.cancelled()
+            _thread.interrupt_main()
+            return True
+        return False
 
 
 def run_interactive_turn(
@@ -1863,4 +1902,3 @@ def _handle_mcp_command(value: str, cwd: Path) -> None:
         print_panel("MCP Error", f"Failed to execute MCP command: {safe_exception(exc)}", style="red")
     finally:
         runtime.close()
-

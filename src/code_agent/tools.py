@@ -87,7 +87,7 @@ from .repo_index import (
     rank_context,
     start_background_index_refresh,
 )
-from .safety import classify_network_url, classify_shell_command, is_sensitive_path, redact_secrets, safe_exception
+from .safety import classify_network_url, classify_shell_command, is_sensitive_path, redact_secrets, redact_command_for_display, safe_exception
 from .sandbox_security import (
     SandboxAuditLog,
     SandboxPolicy,
@@ -945,7 +945,7 @@ class ToolRegistry:
             f"memory={self.sandbox_policy.resources.memory_mb}MB, "
             f"disk={self.sandbox_policy.resources.disk_mb}MB, "
             f"pids={self.sandbox_policy.resources.pids}\n"
-            f"Command: {command}"
+            f"Command: {redact_command_for_display(command)}"
         )
         if not self._approve("run_shell", approval_detail):
             return ToolResult(ok=False, output="Permission denied for run_shell.")
@@ -1085,7 +1085,7 @@ class ToolRegistry:
             return ToolResult(ok=False, output=str(exc))
         detail = (
             f"Risk: {policy.risk}\nCategory: {policy.category}\nReason: {policy.reason}\n"
-            f"Command: {action.command}\nWorking directory: {cwd}\n"
+            f"Command: {redact_command_for_display(action.command)}\nWorking directory: {cwd}\n"
             f"Interactive: {action.interactive}\nPTY: {action.pty}\n"
             f"Auto restart: {action.auto_restart} (max {action.max_restarts})\n"
             f"Readiness port: {action.readiness_port or 'auto-detect'}\n"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -15,6 +16,7 @@ from .failure_types import (
     classify_failure,
     recovery_instruction,
 )
+from .safety import redact_command_for_display, redact_command_output_for_display, redact_secrets
 from .models import ChatMessage
 from .schema import AgentAction, ToolResult, UpdatePlanAction
 
@@ -51,6 +53,7 @@ class ExecutionState:
     acceptance_criteria: list[str] = field(default_factory=list)
     changed_paths: list[str] = field(default_factory=list)
     failed_hypotheses: list[str] = field(default_factory=list)
+    failed_approaches: list[dict[str, Any]] = field(default_factory=list)
     hypotheses: list[dict[str, Any]] = field(default_factory=list)
     evidence_records: list[dict[str, Any]] = field(default_factory=list)
     verification_records: list[dict[str, Any]] = field(default_factory=list)
@@ -95,6 +98,7 @@ class ExecutionState:
             "acceptance_criteria",
             "changed_paths",
             "failed_hypotheses",
+            "failed_approaches",
             "hypotheses",
             "evidence_records",
             "verification_records",
@@ -256,6 +260,74 @@ class ExecutionState:
     def begin_action(self, action: AgentAction) -> None:
         self.phase = _phase_for_action(action)
 
+    @staticmethod
+    def strategy_fingerprint(action: AgentAction) -> str:
+        """Hash executable action parameters, not rewordable plan prose."""
+        payload = action.model_dump(exclude_none=True)
+        if isinstance(payload.get("command"), str):
+            payload["command"] = " ".join(payload["command"].split())
+        encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def failed_strategy_blocker(self, action: AgentAction) -> str | None:
+        fingerprint = self.strategy_fingerprint(action)
+        for item in reversed(self.failed_approaches):
+            if (
+                item.get("strategy_fingerprint") == fingerprint
+                and item.get("status") == "failed"
+                and item.get("workspace_generation") == self.workspace_generation
+            ):
+                return (
+                    "That strategy already failed repeatedly. Gather new evidence or choose "
+                    "a materially different tool, target, command, or patch before retrying."
+                )
+        return None
+
+    def _record_failed_approach(self, action: AgentAction, result: ToolResult, category: str) -> None:
+        fingerprint = self.strategy_fingerprint(action)
+        now = datetime.now(timezone.utc).isoformat()
+        payload = action.model_dump(exclude_none=True)
+        target = next(
+            (str(payload[key]) for key in ("path", "command", "query", "symbol")
+             if payload.get(key)), "",
+        )
+        target = (redact_command_for_display(target) if payload.get("command") else redact_secrets(target))[:200]
+        existing = next(
+            (item for item in self.failed_approaches
+             if item.get("strategy_fingerprint") == fingerprint
+             and item.get("workspace_generation") == self.workspace_generation),
+            None,
+        )
+        if existing is None:
+            existing = {
+                "id": fingerprint[:16], "strategy_fingerprint": fingerprint,
+                "action_type": action.type, "target": target,
+                "failure_category": category,
+                "evidence": {"exit_code": result.metadata.get("exit_code"),
+                             "output_digest": hashlib.sha256(result.output.encode("utf-8")).hexdigest()},
+                "attempts": 0, "first_seen": now,
+                "workspace_generation": self.workspace_generation,
+                "invalidated_reason": None, "superseded_by_strategy": None,
+            }
+            self.failed_approaches.append(existing)
+        existing["attempts"] += 1
+        existing["last_seen"] = now
+        existing["status"] = "failed" if existing["attempts"] >= 2 else "watching"
+        self.failed_approaches = self.failed_approaches[-16:]
+        if existing["status"] == "failed":
+            self.checkpoint("failed_approach")
+
+    def _supersede_failed_approach(self, action: AgentAction) -> None:
+        fingerprint = self.strategy_fingerprint(action)
+        for item in reversed(self.failed_approaches):
+            if item.get("status") == "failed" and item.get("action_type") == action.type:
+                if item.get("strategy_fingerprint") != fingerprint:
+                    item["status"] = "superseded"
+                    item["superseded_by_strategy"] = fingerprint
+                    item["invalidated_reason"] = "A materially different action succeeded."
+                    self.checkpoint("failed_approach_superseded")
+                break
+
     def repeated_action_detail(self, action: AgentAction) -> str | None:
         outcomes = self._outcomes.get(self._fingerprint(action), [])
         if len(outcomes) < self.repeated_outcome_limit:
@@ -286,7 +358,10 @@ class ExecutionState:
         if not result.ok:
             self.phase = ExecutionPhase.RECOVER
             self.recovery_attempt_count += 1
-            hypothesis = f"{action.type}: {' '.join(result.output.split())[:240]}"
+            safe_output = (redact_command_output_for_display(action.command, result.output)
+                           if isinstance(getattr(action, "command", None), str)
+                           else redact_secrets(result.output))
+            hypothesis = f"{action.type}: {' '.join(safe_output.split())[:240]}"
             self.failed_hypotheses = _dedupe([*self.failed_hypotheses, hypothesis])[-8:]
             self.record_evidence(source=action.type, summary=hypothesis, confidence="high")
             # Track structured failure fingerprint (action + target + category)
@@ -298,8 +373,10 @@ class ExecutionState:
             action_payload = action.model_dump(exclude_none=True)
             fp = FailureFingerprint.from_action(action.type, action_payload, category)
             self._failure_fingerprints[fp] = self._failure_fingerprints.get(fp, 0) + 1
+            self._record_failed_approach(action, result, category.value)
         else:
             self.recovery_attempt_count = 0
+            self._supersede_failed_approach(action)
         if changed_paths:
             self.changed_paths = _dedupe([*self.changed_paths, *changed_paths])
             self.workspace_generation += 1
@@ -362,6 +439,7 @@ class ExecutionState:
         self,
         action: AgentAction,
         result: ToolResult,
+        current_recorded: bool = True,
     ) -> str | None:
         """Return a category-specific recovery instruction, or trigger replan.
 
@@ -381,9 +459,11 @@ class ExecutionState:
         action_payload = action.model_dump(exclude_none=True)
         fp = FailureFingerprint.from_action(action.type, action_payload, category)
         occurrences = self._failure_fingerprints.get(fp, 0)
+        effective_occurrences = occurrences if current_recorded else occurrences + 1
+        effective_recoveries = self.recovery_attempt_count if current_recorded else self.recovery_attempt_count + 1
 
         # Hard stop: too many total recovery attempts
-        if self.recovery_attempt_count >= MAX_RECOVERY_ATTEMPTS:
+        if effective_recoveries >= MAX_RECOVERY_ATTEMPTS:
             self.require_replan(
                 f"Reached {MAX_RECOVERY_ATTEMPTS} recovery attempts. "
                 "The current approach is not working."
@@ -395,13 +475,13 @@ class ExecutionState:
             )
 
         # Same fingerprint repeated >= 2 times => force replan
-        if occurrences >= 2:
+        if effective_occurrences >= 2:
             self.require_replan(
-                f"Repeated {category.value} failure on {fp.action_type} "
-                f"targeting '{fp.target[:80]}'. A different strategy is needed."
+                f"Repeated {category.value} failure on {fp.action_type}. "
+                "A different strategy is needed."
             )
             return (
-                f"The same {category.value} failure has occurred {occurrences} times "
+                f"The same {category.value} failure has occurred {effective_occurrences} times "
                 f"for `{fp.action_type}`. The plan must be revised before retrying. "
                 "Update the plan with new information from the failed attempts."
             )
@@ -541,6 +621,7 @@ class ExecutionState:
             "acceptance_criteria": self.acceptance_criteria,
             "changed_paths": self.changed_paths,
             "failed_hypotheses": self.failed_hypotheses,
+            "failed_approaches": self.failed_approaches,
             "hypotheses": self.hypotheses,
             "evidence_records": self.evidence_records,
             "verification_records": self.verification_records,

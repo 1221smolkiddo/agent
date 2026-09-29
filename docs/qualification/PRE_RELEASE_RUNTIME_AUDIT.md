@@ -293,3 +293,59 @@ capacity use the configured override or conservative 65,536-token fallback.
 The known terminal assertion still prevents a completely green local suite.
 No packaging metadata, tag, main branch, PyPI publication or remote branch
 was changed by this qualification.
+
+## M. ADAPTIVE REPLANNING
+
+Failed approaches are bounded to 16 structured records in the durable execution
+checkpoint. Each record has a deterministic SHA-256 fingerprint of the executable
+action (including its tool, target and parameters), a sanitized display target,
+failure category, output digest and exit code, attempt count, timestamps, workspace
+generation and supersession fields. Neither raw failed output nor the raw shell
+command is stored in these records. A matching action becomes failed after two
+unsuccessful attempts in the same workspace generation. A further identical action
+is rejected before tool execution, including after context compaction or process
+restart. Rewording a plan does not change the fingerprint; changing an executable
+action does. A workspace mutation can invalidate the old failure context, allowing
+verification to be retried against changed code. A successful alternative of the
+same action type marks the prior failed approach superseded. Existing recovery
+thresholds remain unchanged.
+
+## N. INTERACTIVE TERMINAL UX
+
+Shell and managed-process actions now create a sanitized display copy of the
+command before the tool runs. Approval prompts and terminal command history use
+that copy; the executor receives the original command. The display masks known
+credential forms, credential-bearing flags, quoted arguments, opaque tokens and
+literal echo payloads. A bounded eight-command history holds sanitized command,
+state, elapsed duration, short result and at most 4,000 sanitized output characters.
+The interactive Rich display starts collapsed and `o` toggles up to 40 recent
+sanitized output lines. The existing Live spinner handles the active state; a
+compact bottom line shows phase, elapsed time, step and context utilization,
+dropping lower-priority fields as terminal width shrinks. Replanning and
+cancellation update that phase. Non-interactive output uses plain `RUN` and
+`PASS`/`FAIL` lines and starts no key-reader thread. Provider-private reasoning
+fields are omitted from expanded output.
+
+The tool API currently returns output only when a command completes, so the active
+panel shows the command and running indicator immediately, then exposes captured
+output after completion. Arbitrary command output can contain novel secret formats
+that pattern-based sanitization cannot recognize; operators should avoid printing
+credentials in tool output. The separate existing tool/result storage policy still
+applies. The pre-existing Windows narrow-terminal assertion and unavailable Docker
+engine remain release qualification limitations pending final suite results below.
+
+Final qualification for this revision: focused adaptive, terminal, recovery,
+privacy, runtime and session tests **173 passed**; the new adaptive/terminal file
+**12 passed**. Ruff and `git diff --check` pass. The final non-Docker suite reports
+**1,276 passed, 1 failed, 5 skipped, 4 deselected** in 214.81 seconds. The sole
+failure is the unchanged Windows
+`tests/test_interactive_diff.py::test_terminal_width_fallback_when_narrow`
+assertion (`"fallback" in text`), already present before this revision. No new
+full-suite failure appeared. Docker Desktop's Linux engine pipe is absent, so
+Docker security could not be rerun. The terminal privacy tests cover redacted
+approval and display commands while the executor receives the original, plus
+redacted collapsed and expanded output, echoed credentials and the durable
+execution snapshot. Pattern-based sanitization cannot prove that an arbitrary,
+previously unknown secret format in tool output will be recognized. This release
+remains **READY FOR 0.1.0 WITH DOCUMENTED LIMITATIONS** for merge review; the
+local full suite is not completely green.

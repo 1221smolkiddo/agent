@@ -728,6 +728,26 @@ class CodingAgent:
                 previous_failure_allows_final = True
                 continue
 
+            failed_strategy = execution_state.failed_strategy_blocker(action)
+            if failed_strategy is not None:
+                consecutive_failures += 1
+                payload = self._failure_payload(
+                    step=step, kind="failed_strategy", output=failed_strategy,
+                    consecutive_failures=consecutive_failures,
+                )
+                payload["execution_state"] = execution_state.snapshot()
+                self.storage.add_step(run_id, "tool", payload)
+                failed_actions.append(payload)
+                self._report_recovery("replanning after repeated failed strategy")
+                if consecutive_failures >= self.max_failures:
+                    return self._finalize_run(AgentRunResult(
+                        message=self._failure_summary(consecutive_failures, failed_strategy),
+                        run_id=run_id, task=task, clean_task=clean_task,
+                        failed_actions=failed_actions, blocked=True,
+                    ))
+                messages.append({"role": "assistant", "content": action.model_dump_json()})
+                messages.append({"role": "user", "content": json.dumps(payload)})
+                continue
             # Low-confidence gate (Production Readiness Pass 1)
             confidence_block = execution_state.low_confidence_blocker(action)
             if confidence_block is not None:
@@ -914,7 +934,7 @@ class CodingAgent:
                 "output": result.output,
                 "elapsed_ms": tool_elapsed_ms,
                 "recovery_instruction": (
-                    execution_state.failure_recovery_instruction(action, result)
+                    execution_state.failure_recovery_instruction(action, result, current_recorded=False)
                     or self._recovery_instruction(action, result)
                 )
                 if not result.ok
@@ -1008,7 +1028,10 @@ class CodingAgent:
                     )
                 )
             if not result.ok:
-                self._report_recovery("tool failed; asking model for another attempt")
+                self._report_recovery(
+                    "replanning after repeated tool failure" if execution_state.replan_required
+                    else "tool failed; asking model for another attempt"
+                )
             messages.append({"role": "assistant", "content": action.model_dump_json()})
             messages.append({"role": "user", "content": json.dumps(tool_payload)})
             if reflect_coordinator is not None and (self.max_steps is None or step < self.max_steps):
@@ -1204,12 +1227,13 @@ class CodingAgent:
     ) -> str:
         state = self._active_execution_state
         checkpoint = None
-        if state is not None and (state.plan_steps or state.evidence_records or state.verification_records):
+        if state is not None and (state.plan_steps or state.evidence_records or state.verification_records or state.failed_approaches):
             checkpoint = {
                 "run_id": run_id, "execution_id": self.durable_execution_id,
                 "plan": state.plan_steps, "unresolved": state.blockers,
                 "verification": state.verification_records,
                 "evidence": state.evidence_records[-8:],
+                "failed_approaches": state.failed_approaches[-8:],
                 "changed_paths": state.changed_paths,
                 "recovery": state.replan_reason,
             }
@@ -1228,6 +1252,11 @@ class CodingAgent:
             "compaction_triggered": bool(omitted), "messages_dropped": omitted,
             "checkpoint_used": checkpoint is not None,
         })
+        if self.reporter is not None:
+            context_status = getattr(self.reporter, "context_status", None)
+            if callable(context_status):
+                context_status(input_estimate, self.context_window_tokens - self.reserved_output_tokens
+                               - max(128, int(self.context_window_tokens * 0.10)))
         if omitted:
             self._phase("Compacting context")
         if state is not None:

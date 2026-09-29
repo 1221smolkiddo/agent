@@ -165,6 +165,44 @@ def redact_secrets(value: str) -> str:
 
 
 
+_DISPLAY_SECRET_ARGUMENT = re.compile(
+    r"(?i)(?<![\w-])(--(?:api[-_]?key|password|passwd|token|secret|authorization|client[-_]?secret|user|header|data|data-urlencode)\s+)"
+    r"(\"[^\"]*\"|'[^']*'|\S+)"
+)
+
+
+_DISPLAY_OPAQUE_TOKEN = re.compile(r"(?<![A-Za-z0-9_./-])[A-Za-z][A-Za-z0-9_-]{19,}(?![A-Za-z0-9_./-])")
+
+
+def redact_command_for_display(command: str) -> str:
+    """Return a safe copy for terminal and approval rendering; never alter execution input."""
+    safe = redact_secrets(command)
+    if re.match(r"(?i)^\s*(?:echo|printf|print)\b", safe):
+        return safe.split(maxsplit=1)[0] + " [REDACTED]"
+    safe = re.sub(r"(?i)(?<![\w-])(?:-H|-u|-d)\s+(?:\"[^\"]*\"|'[^']*'|\S+)", "[REDACTED ARGUMENT]", safe)
+    safe = _DISPLAY_SECRET_ARGUMENT.sub(lambda match: match.group(1) + "[REDACTED]", safe)
+    safe = re.sub(r'"[^\"]*"|\x27[^\x27]*\x27', "[REDACTED]", safe)
+    return _DISPLAY_OPAQUE_TOKEN.sub("[REDACTED]", safe)
+
+
+def redact_command_output_for_display(command: str, output: str) -> str:
+    """Redact output using credentials known from the command, without changing execution."""
+    safe = redact_secrets(output)
+    if re.match(r"(?i)^\s*(?:echo|printf|print)\b", command):
+        return "[output redacted]"
+    candidates = [match.group(2) for match in _DISPLAY_SECRET_ARGUMENT.finditer(command)]
+    for match in re.finditer(r"(?i)(?<![\w-])(?:-H|-u|-d)\s+(\"[^\"]*\"|'[^']*'|\S+)", command):
+        candidate = match.group(1).strip("\"'")
+        candidates.append(candidate)
+        if ":" in candidate:
+            candidates.append(candidate.split(":", 1)[1].strip())
+    for candidate in candidates:
+        candidate = candidate.strip("\"'")
+        if len(candidate) >= 4:
+            safe = safe.replace(candidate, "[REDACTED]")
+    return safe
+
+
 # One recursive boundary for event payloads, snapshots, UI metadata and checkpoints.
 # These are provider-private fields, not public plans or verification explanations.
 _PRIVATE_FIELDS = {"reasoning_content", "reasoning_details", "chain_of_thought", "private_analysis", "provider_debug"}
