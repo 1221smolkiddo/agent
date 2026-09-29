@@ -74,6 +74,9 @@ exclude = [
   "**/.env",
   "**/.env.*",
   "!/.env.example",
+  "/debug_run_eval*.py",
+  "/debug_workspace/**",
+  "/docs/qualification/**",
   "/dist/**",
   "/build/**",
 ]

@@ -13,3 +13,5 @@ build/
 .code-agent/
 node_modules/
 temp/
+debug_run_eval*.py
+debug_workspace/
