@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .safety import safe_exception
+
 import json
 import html
 import os
@@ -160,7 +162,7 @@ def validate_profile_option(value: Optional[str]) -> Optional[str]:
     try:
         return validate_profile_name(value)
     except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+        raise typer.BadParameter(safe_exception(exc)) from exc
 
 
 def validate_preset_option(value: Optional[str]) -> Optional[str]:
@@ -169,7 +171,7 @@ def validate_preset_option(value: Optional[str]) -> Optional[str]:
     try:
         preset = resolve_model_preset(value)
     except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+        raise typer.BadParameter(safe_exception(exc)) from exc
     return preset.name if preset else None
 
 
@@ -179,14 +181,14 @@ def validate_provider_option(value: Optional[str]) -> Optional[str]:
     try:
         return validate_provider_name(value)
     except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+        raise typer.BadParameter(safe_exception(exc)) from exc
 
 
 PROVIDER_HELP = f"Provider override: {provider_name_list()}."
 
 
 def _credential_error(exc: Exception) -> None:
-    typer.echo(f"Credential storage error: {exc}", err=True)
+    typer.echo(f"Credential storage error: {safe_exception(exc)}", err=True)
     raise typer.Exit(code=1)
 
 
@@ -208,7 +210,7 @@ def auth_login_command() -> None:
         with console.status("[bold green]Waiting for authentication...[/bold green]", spinner="dots"):
             account = GoogleAuthenticator().login()
     except (OAuthConfigurationError, OAuthError, KeyringUnavailableError) as exc:
-        console.print(f"[red]Login failed: {exc}[/red]")
+        console.print(f"[red]Login failed: {safe_exception(exc)}[/red]")
         raise typer.Exit(code=1) from exc
         
     console.print("\n[green]✓ Authentication successful[/green]\n")
@@ -319,7 +321,7 @@ def auth_refresh_command() -> None:
         auth = GoogleAuthenticator()
         new_token = auth.refresh()
     except (OAuthConfigurationError, KeyringUnavailableError) as exc:
-        typer.echo(f"Refresh failed: {exc}", err=True)
+        typer.echo(f"Refresh failed: {safe_exception(exc)}", err=True)
         raise typer.Exit(code=1) from exc
     if new_token:
         typer.echo("✓ Access token refreshed successfully.")
@@ -339,7 +341,7 @@ def auth_repair_command() -> None:
         auth = GoogleAuthenticator()
         actions = auth.repair()
     except (OAuthConfigurationError, KeyringUnavailableError) as exc:
-        typer.echo(f"Repair failed: {exc}", err=True)
+        typer.echo(f"Repair failed: {safe_exception(exc)}", err=True)
         raise typer.Exit(code=1) from exc
     if actions:
         for action in actions:
@@ -531,7 +533,7 @@ def keys_add_command(
             try:
                 CredentialStore().set_provider_key(spec.name, key)
             except KeyringUnavailableError as exc:
-                server.send_error("Storage Failed", f"Could not save credential: {exc}")
+                server.send_error("Storage Failed", f"Could not save credential: {safe_exception(exc)}")
                 _credential_error(exc)
                 return
 
@@ -1084,7 +1086,7 @@ def run(
         "--sandbox-backend",
         help="Sandbox backend override: auto, docker, or podman. Local is refused with --sandbox.",
     ),
-    max_steps: int = typer.Option(12, "--max-steps", min=1, help="Maximum agent loop steps."),
+    max_steps: Optional[int] = typer.Option(None, "--max-steps", min=0, help="Optional maximum agent steps; omitted or 0 has no hard cap."),
     max_failures: Optional[int] = typer.Option(
         None,
         "--max-failures",
@@ -1108,7 +1110,7 @@ def run(
             require_process_isolation=sandbox,
         )
     except SandboxIsolationError as exc:
-        typer.echo(f"Sandbox unavailable: {exc}")
+        typer.echo(f"Sandbox unavailable: {safe_exception(exc)}")
         raise typer.Exit(code=1)
     if sandbox:
         sandbox_workspace = create_sandbox_workspace(
@@ -1318,7 +1320,7 @@ def sandbox_diff_command(
     try:
         diff = diff_sandbox_workspace(base, sandbox, paths=path)
     except ValueError as exc:
-        typer.echo(str(exc))
+        typer.echo(safe_exception(exc))
         raise typer.Exit(code=2)
     typer.echo(format_sandbox_diff(diff))
     if diff.skipped_paths:
@@ -1344,7 +1346,7 @@ def sandbox_health_command(
             require_process_isolation=True,
         )
     except SandboxIsolationError as exc:
-        typer.echo(f"Sandbox unavailable: {exc}")
+        typer.echo(f"Sandbox unavailable: {safe_exception(exc)}")
         raise typer.Exit(code=1)
     typer.echo(sandbox_health(policy).format_text())
 
@@ -1369,7 +1371,7 @@ def container_start_command(
     try:
         record = _workspace_container(cwd, backend).ensure_running()
     except (ContainerError, SandboxIsolationError) as exc:
-        typer.echo(f"Container unavailable: {exc}")
+        typer.echo(f"Container unavailable: {safe_exception(exc)}")
         raise typer.Exit(code=1)
     typer.echo(json.dumps(record.__dict__, indent=2, ensure_ascii=False))
 
@@ -1383,7 +1385,7 @@ def container_status_command(
     try:
         payload = _workspace_container(cwd, backend).reconcile()
     except (ContainerError, SandboxIsolationError) as exc:
-        typer.echo(f"Container unavailable: {exc}")
+        typer.echo(f"Container unavailable: {safe_exception(exc)}")
         raise typer.Exit(code=1)
     typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
 
@@ -1398,7 +1400,7 @@ def container_stop_command(
     try:
         changed = _workspace_container(cwd, backend).stop(remove=remove)
     except (ContainerError, SandboxIsolationError) as exc:
-        typer.echo(f"Container unavailable: {exc}")
+        typer.echo(f"Container unavailable: {safe_exception(exc)}")
         raise typer.Exit(code=1)
     typer.echo("Container removed." if remove and changed else "Container stopped." if changed else "No container found.")
 
@@ -1418,7 +1420,7 @@ def sandbox_apply_command(
             approval_callback=confirm_permission,
         )
     except ValueError as exc:
-        typer.echo(str(exc))
+        typer.echo(safe_exception(exc))
         raise typer.Exit(code=2)
     typer.echo(result.output)
     if result.changed_paths:
@@ -1467,7 +1469,7 @@ def run_json(
         "--sandbox-backend",
         help="Sandbox backend override: auto, docker, or podman. Local is refused with --sandbox.",
     ),
-    max_steps: int = typer.Option(12, "--max-steps", min=1, help="Maximum agent loop steps."),
+    max_steps: Optional[int] = typer.Option(None, "--max-steps", min=0, help="Optional maximum agent steps; omitted or 0 has no hard cap."),
     max_failures: Optional[int] = typer.Option(
         None,
         "--max-failures",
@@ -1561,7 +1563,7 @@ def run_json(
         emit_run_failed(emitter, "Stopped by user.", code="keyboard_interrupt")
         raise typer.Exit(code=130)
     except Exception as exc:
-        emit_run_failed(emitter, str(exc), code=type(exc).__name__)
+        emit_run_failed(emitter, safe_exception(exc), code=type(exc).__name__)
         raise typer.Exit(code=1)
     emit_run_finished(emitter, result)
     if result.blocked or result.failed_actions:
@@ -1609,7 +1611,7 @@ def resume(
         "--sandbox-backend",
         help="Sandbox backend override: auto, docker, or podman. Local is refused with --sandbox.",
     ),
-    max_steps: int = typer.Option(12, "--max-steps", min=1, help="Maximum agent loop steps."),
+    max_steps: Optional[int] = typer.Option(None, "--max-steps", min=0, help="Optional maximum agent steps; omitted or 0 has no hard cap."),
     max_failures: Optional[int] = typer.Option(
         None,
         "--max-failures",
@@ -1634,7 +1636,7 @@ def resume(
             require_process_isolation=sandbox,
         )
     except SandboxIsolationError as exc:
-        typer.echo(f"Sandbox unavailable: {exc}")
+        typer.echo(f"Sandbox unavailable: {safe_exception(exc)}")
         raise typer.Exit(code=1)
     if sandbox:
         sandbox_workspace = create_sandbox_workspace(
@@ -1694,7 +1696,7 @@ def revert_command(
     try:
         plan = build_revert_plan(storage, run_id)
     except ValueError as exc:
-        typer.echo(str(exc))
+        typer.echo(safe_exception(exc))
         raise typer.Exit(code=1)
     typer.echo(format_revert_preview(plan))
     result = apply_revert_plan(
@@ -1954,7 +1956,7 @@ def _run_transaction_command(
         else:
             plan = manager.plan_restore_snapshot(transaction_id, paths=paths or None)
     except TransactionError as exc:
-        typer.echo(str(exc))
+        typer.echo(safe_exception(exc))
         raise typer.Exit(code=1)
     preview = manager.format_preview(plan)
     typer.echo(preview)
@@ -1984,7 +1986,7 @@ def collab_status_command(
     try:
         context = build_collaboration_context(cwd.resolve(), storage, run_id=run_id)
     except ValueError as exc:
-        typer.echo(str(exc))
+        typer.echo(safe_exception(exc))
         raise typer.Exit(code=1)
     typer.echo(format_collaboration_status(context))
 
@@ -1999,7 +2001,7 @@ def collab_commit_message_command(
     try:
         context = build_collaboration_context(cwd.resolve(), storage, run_id=run_id)
     except ValueError as exc:
-        typer.echo(str(exc))
+        typer.echo(safe_exception(exc))
         raise typer.Exit(code=1)
     typer.echo(build_commit_message(context))
 
@@ -2016,7 +2018,7 @@ def collab_pr_summary_command(
         context = build_collaboration_context(cwd.resolve(), storage, run_id=run_id)
         template = load_pr_template(cwd.resolve()) if use_template else None
     except ValueError as exc:
-        typer.echo(str(exc))
+        typer.echo(safe_exception(exc))
         raise typer.Exit(code=1)
     typer.echo(build_pr_summary(context, template))
 
@@ -2032,7 +2034,7 @@ def collab_changelog_command(
     try:
         context = build_collaboration_context(cwd.resolve(), storage, run_id=run_id)
     except ValueError as exc:
-        typer.echo(str(exc))
+        typer.echo(safe_exception(exc))
         raise typer.Exit(code=1)
     typer.echo(build_changelog_entry(context, version=version))
 
@@ -2049,7 +2051,7 @@ def collab_review_command(
         context = build_collaboration_context(cwd.resolve(), storage, run_id=run_id)
         report = build_review_report(context)
     except ValueError as exc:
-        typer.echo(str(exc))
+        typer.echo(safe_exception(exc))
         raise typer.Exit(code=1)
     typer.echo(format_review_report(report))
     if strict and not report.ok:
@@ -2071,7 +2073,7 @@ def collab_branch_command(
             apply=apply,
         )
     except ValueError as exc:
-        typer.echo(str(exc))
+        typer.echo(safe_exception(exc))
         raise typer.Exit(code=1)
     typer.echo(result.output)
     if not result.ok:
@@ -2099,7 +2101,7 @@ def collab_commit_command(
             commit=commit,
         )
     except ValueError as exc:
-        typer.echo(str(exc))
+        typer.echo(safe_exception(exc))
         raise typer.Exit(code=1)
     typer.echo(result.output)
     if not result.ok:
@@ -2151,7 +2153,7 @@ def history_export(
     try:
         path = export_debug_bundle(storage, run_id, output_dir)
     except ValueError as exc:
-        typer.echo(str(exc))
+        typer.echo(safe_exception(exc))
         raise typer.Exit(code=1)
     typer.echo(f"Debug bundle exported: {path}")
 
@@ -2201,7 +2203,7 @@ def mcp_list() -> None:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
-        console.print(f"[red]Failed to parse .agents/mcp.json: {exc}[/red]")
+        console.print(f"[red]Failed to parse .agents/mcp.json: {safe_exception(exc)}[/red]")
         return
 
     servers = payload.get("servers", {})
@@ -2243,13 +2245,13 @@ def mcp_status() -> None:
         try:
             runtime.configure_mcp()
         except json.JSONDecodeError as exc:
-            console.print(f"[red]Failed to parse .agents/mcp.json: {exc}[/red]")
+            console.print(f"[red]Failed to parse .agents/mcp.json: {safe_exception(exc)}[/red]")
             return
         except ValueError as exc:
-            console.print(f"[red]Configuration error: {exc}[/red]")
+            console.print(f"[red]Configuration error: {safe_exception(exc)}[/red]")
             return
         except Exception as exc:
-            console.print(f"[red]Unexpected error during configuration parsing: {exc}[/red]")
+            console.print(f"[red]Unexpected error during configuration parsing: {safe_exception(exc)}[/red]")
             return
 
         status_info = runtime.mcp.status()
@@ -2300,13 +2302,13 @@ def mcp_tools() -> None:
         try:
             runtime.configure_mcp()
         except json.JSONDecodeError as exc:
-            console.print(f"[red]Failed to parse .agents/mcp.json: {exc}[/red]")
+            console.print(f"[red]Failed to parse .agents/mcp.json: {safe_exception(exc)}[/red]")
             return
         except ValueError as exc:
-            console.print(f"[red]Configuration error: {exc}[/red]")
+            console.print(f"[red]Configuration error: {safe_exception(exc)}[/red]")
             return
         except Exception as exc:
-            console.print(f"[red]Unexpected error during configuration parsing: {exc}[/red]")
+            console.print(f"[red]Unexpected error during configuration parsing: {safe_exception(exc)}[/red]")
             return
 
         tools = [t for t in runtime.tools.discover() if t.get("namespace", "").startswith("mcp-")]
@@ -2350,13 +2352,13 @@ def mcp_validate() -> None:
         try:
             runtime.configure_mcp()
         except json.JSONDecodeError as exc:
-            console.print(f"[red]Failed to parse .agents/mcp.json: {exc}[/red]")
+            console.print(f"[red]Failed to parse .agents/mcp.json: {safe_exception(exc)}[/red]")
             raise typer.Exit(code=1)
         except ValueError as exc:
-            console.print(f"[red]Configuration error: {exc}[/red]")
+            console.print(f"[red]Configuration error: {safe_exception(exc)}[/red]")
             raise typer.Exit(code=1)
         except Exception as exc:
-            console.print(f"[red]Unexpected error during configuration parsing: {exc}[/red]")
+            console.print(f"[red]Unexpected error during configuration parsing: {safe_exception(exc)}[/red]")
             raise typer.Exit(code=2)
 
         configs = [client.config for client in runtime.mcp.clients.values()]
@@ -2420,7 +2422,7 @@ def mcp_start(name: str = typer.Argument(..., help="Name of the MCP server to st
         try:
             runtime.configure_mcp()
         except Exception as exc:
-            console.print(f"Failed to load MCP configuration: {exc}")
+            console.print(f"Failed to load MCP configuration: {safe_exception(exc)}")
             raise typer.Exit(code=1)
             
         if name not in runtime.mcp.clients:
@@ -2439,13 +2441,13 @@ def mcp_start(name: str = typer.Argument(..., help="Name of the MCP server to st
             console.print(f'Unknown MCP server "{name}".')
             raise typer.Exit(code=1)
         except ValueError as exc:
-            console.print(str(exc).replace("'", '"'))
+            console.print(safe_exception(exc).replace("'", '"'))
             raise typer.Exit(code=1)
         except McpError as exc:
-            console.print(f"Failed to initialize server.\n\nReason:\n{exc}")
+            console.print(f"Failed to initialize server.\n\nReason:\n{safe_exception(exc)}")
             raise typer.Exit(code=1)
         except Exception as exc:
-            console.print(f"Failed to initialize server.\n\nReason:\n{exc}")
+            console.print(f"Failed to initialize server.\n\nReason:\n{safe_exception(exc)}")
             raise typer.Exit(code=1)
     finally:
         pass # Do not close runtime here, since that would stop the server. Wait, does it?
@@ -2467,7 +2469,7 @@ def mcp_stop(name: str = typer.Argument(..., help="Name of the MCP server to sto
         try:
             runtime.configure_mcp()
         except Exception as exc:
-            console.print(f"Failed to load MCP configuration: {exc}")
+            console.print(f"Failed to load MCP configuration: {safe_exception(exc)}")
             raise typer.Exit(code=1)
             
         if name not in runtime.mcp.clients:
@@ -2506,7 +2508,7 @@ def mcp_restart(name: str = typer.Argument(..., help="Name of the MCP server to 
         try:
             runtime.configure_mcp()
         except Exception as exc:
-            console.print(f"Failed to load MCP configuration: {exc}")
+            console.print(f"Failed to load MCP configuration: {safe_exception(exc)}")
             raise typer.Exit(code=1)
             
         if name not in runtime.mcp.clients:
@@ -2523,13 +2525,13 @@ def mcp_restart(name: str = typer.Argument(..., help="Name of the MCP server to 
             console.print(f'Unknown MCP server "{name}".')
             raise typer.Exit(code=1)
         except ValueError as exc:
-            console.print(str(exc).replace("'", '"'))
+            console.print(safe_exception(exc).replace("'", '"'))
             raise typer.Exit(code=1)
         except McpError as exc:
-            console.print(f"Failed to initialize server.\n\nReason:\n{exc}")
+            console.print(f"Failed to initialize server.\n\nReason:\n{safe_exception(exc)}")
             raise typer.Exit(code=1)
         except Exception as exc:
-            console.print(f"Failed to initialize server.\n\nReason:\n{exc}")
+            console.print(f"Failed to initialize server.\n\nReason:\n{safe_exception(exc)}")
             raise typer.Exit(code=1)
     finally:
         pass
@@ -2549,7 +2551,7 @@ def mcp_reload() -> None:
         try:
             runtime.configure_mcp()
         except Exception as exc:
-            console.print(f"Failed to load MCP configuration: {exc}")
+            console.print(f"Failed to load MCP configuration: {safe_exception(exc)}")
             raise typer.Exit(code=1)
             
         try:
@@ -2572,7 +2574,7 @@ def mcp_reload() -> None:
                 for name in result.removed:
                     console.print(f"    {name}")
         except Exception as exc:
-            console.print(f"Failed to reload configuration.\n\nReason:\n{exc}")
+            console.print(f"Failed to reload configuration.\n\nReason:\n{safe_exception(exc)}")
             raise typer.Exit(code=1)
     finally:
         pass
@@ -2595,7 +2597,7 @@ def mcp_resources() -> None:
         try:
             runtime.configure_mcp()
         except Exception as exc:
-            console.print(f"Failed to load MCP configuration: {exc}")
+            console.print(f"Failed to load MCP configuration: {safe_exception(exc)}")
             raise typer.Exit(code=1)
             
         runtime.mcp.start_enabled()
@@ -2617,7 +2619,7 @@ def mcp_resources() -> None:
                         console.print(f"    [bold]{name}[/bold] ({uri})")
                 console.print("")
     except Exception as exc:
-        console.print(f"Failed to list resources: {exc}")
+        console.print(f"Failed to list resources: {safe_exception(exc)}")
         raise typer.Exit(code=1)
     finally:
         runtime.close()
@@ -2641,7 +2643,7 @@ def mcp_resource(uri: str = typer.Argument(..., help="URI of the resource to rea
         try:
             runtime.configure_mcp()
         except Exception as exc:
-            console.print(f"Failed to load MCP configuration: {exc}")
+            console.print(f"Failed to load MCP configuration: {safe_exception(exc)}")
             raise typer.Exit(code=1)
             
         runtime.mcp.start_enabled()
@@ -2669,7 +2671,7 @@ def mcp_resource(uri: str = typer.Argument(..., help="URI of the resource to rea
             elif "blob" in content:
                 console.print(f"[Base64 Blob: {len(content['blob'])} bytes]")
     except Exception as exc:
-        console.print(f"Failed to read resource: {exc}")
+        console.print(f"Failed to read resource: {safe_exception(exc)}")
         raise typer.Exit(code=1)
     finally:
         runtime.close()
@@ -2693,7 +2695,7 @@ def mcp_prompts() -> None:
         try:
             runtime.configure_mcp()
         except Exception as exc:
-            console.print(f"Failed to load MCP configuration: {exc}")
+            console.print(f"Failed to load MCP configuration: {safe_exception(exc)}")
             raise typer.Exit(code=1)
             
         runtime.mcp.start_enabled()
@@ -2714,7 +2716,7 @@ def mcp_prompts() -> None:
                         console.print(f"    [bold]{name}[/bold]")
                 console.print("")
     except Exception as exc:
-        console.print(f"Failed to list prompts: {exc}")
+        console.print(f"Failed to list prompts: {safe_exception(exc)}")
         raise typer.Exit(code=1)
     finally:
         runtime.close()
@@ -2739,7 +2741,7 @@ def mcp_prompt(name: str = typer.Argument(..., help="Name of the prompt to displ
         try:
             runtime.configure_mcp()
         except Exception as exc:
-            console.print(f"Failed to load MCP configuration: {exc}")
+            console.print(f"Failed to load MCP configuration: {safe_exception(exc)}")
             raise typer.Exit(code=1)
             
         runtime.mcp.start_enabled()
@@ -2772,7 +2774,7 @@ def mcp_prompt(name: str = typer.Argument(..., help="Name of the prompt to displ
                 text = json.dumps(content)
             console.print(f"[bold]{role}[/bold]:\n{text}\n")
     except Exception as exc:
-        console.print(f"Failed to get prompt: {exc}")
+        console.print(f"Failed to get prompt: {safe_exception(exc)}")
         raise typer.Exit(code=1)
     finally:
         runtime.close()
@@ -2782,17 +2784,19 @@ def main() -> None:
     import sys
     from rich.console import Console
 
-    if os.environ.get("AGENT47_DEBUG") or "--debug" in sys.argv:
+    try:
         app()
-    else:
-        try:
-            app()
-        except Exception as exc:
-            from .interactive import friendly_error_message
-            console = Console(stderr=True)
-            console.print(f"\n[red]Error:[/red] {friendly_error_message(exc)}")
-            console.print("[dim]Use --debug to see the full stack trace[/dim]\n")
-            sys.exit(1)
+    except Exception as exc:
+        from .interactive import friendly_error_message
+        console = Console(stderr=True)
+        console.print(f"\n[red]Error:[/red] {friendly_error_message(exc)}")
+        if os.environ.get("AGENT47_DEBUG") or "--debug" in sys.argv:
+            import traceback
+            # Frame locations only; never source lines, locals or exception bodies.
+            for frame in traceback.extract_tb(exc.__traceback__):
+                console.print(f"  {frame.name}:{frame.lineno}", markup=False)
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

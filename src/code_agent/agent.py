@@ -16,15 +16,12 @@ from .experience_memory.reflection import MemoryReflectCoordinator
 from .experience_memory.recall import (
     MemoryRecallCoordinator, RecallRunMetrics, record_recall_evaluation,
 )
-from .execution_state import ExecutionState, compact_message_history
+from .execution_state import ExecutionState
+from .context_budget import bound_messages, ContextBudgetExceeded, estimate_tokens
+from .safety import safe_exception
 from .durable_execution import AgentExecutionAdapter, DurableExecutionRuntime
 from .execution_host import ExecutionRuntimeHost, PlanningContext
-from .failure_types import (
-    CONTEXT_BUDGET_FORCE_COMPACT_RATIO,
-    CONTEXT_BUDGET_TIGHT_TARGET_RATIO,
-    EVIDENCE_RECORDS_LIMIT_COMPACTED,
-)
-from .models import ChatMessage, ModelClient
+from .models import ChatMessage, ModelClient, classify_model_error, safe_model_error
 from .patches import git_style_unified_diff
 from .platform_runtime import PlatformRuntime
 from .repo_index import affected_test_paths, build_context_pack, build_repo_map
@@ -79,7 +76,7 @@ class CodingAgent:
         self,
         cwd: Path,
         dry_run: bool,
-        max_steps: int,
+        max_steps: int | None,
         max_failures: int,
         model_client: ModelClient,
         tools: ToolRegistry,
@@ -87,9 +84,13 @@ class CodingAgent:
         reporter: StatusReporter | None = None,
         stream_model: bool = True,
         reviewer_client: ModelClient | None = None,
-        context_max_chars: int = 60_000,
-        model_timeout_seconds: float = 60.0,
-        run_timeout_seconds: float = 300.0,
+        context_max_chars: int | None = None,
+        model_timeout_seconds: float = 180.0,
+        run_timeout_seconds: float | None = None,
+        context_window_tokens: int = 65_536,
+        reserved_output_tokens: int = 4096,
+        context_compact_ratio: float = 0.75,
+        context_hard_compact_ratio: float = 0.85,
         execution_state_snapshot: dict[str, Any] | None = None,
         resumed_from_run_id: int | None = None,
         platform_runtime: PlatformRuntime | None = None,
@@ -104,7 +105,7 @@ class CodingAgent:
         self._recall_metrics = RecallRunMetrics()
         self.cwd = cwd
         self.dry_run = dry_run
-        self.max_steps = max_steps
+        self.max_steps = max_steps or None
         self.max_failures = max_failures
         self.model_client = model_client
         self.tools = tools
@@ -113,8 +114,12 @@ class CodingAgent:
         self.stream_model = stream_model
         self.reviewer_client = reviewer_client
         self.context_max_chars = context_max_chars
+        self.context_compact_ratio = context_compact_ratio
+        self.context_hard_compact_ratio = context_hard_compact_ratio
         self.model_timeout_seconds = model_timeout_seconds
-        self.run_timeout_seconds = run_timeout_seconds
+        self.run_timeout_seconds = run_timeout_seconds  # Deprecated; deliberately ignored.
+        self.context_window_tokens = context_window_tokens
+        self.reserved_output_tokens = reserved_output_tokens
         self.execution_state_snapshot = execution_state_snapshot
         self.resumed_from_run_id = resumed_from_run_id
         self.platform_runtime = platform_runtime
@@ -129,12 +134,13 @@ class CodingAgent:
             runtime_host.shadow if runtime_host is not None else shadow_runtime
         )
         self._active_execution_state: ExecutionState | None = None
-        self._deadline_paused_seconds: float = 0.0
+        self._cancelled = False
 
     def run(self, task: str) -> str:
         return self.run_detailed(task).message
 
     def cancel(self, reason: str = "user stop") -> int:
+        self._cancelled = True
         if self._durable_adapter is not None:
             self._durable_adapter.cancel(reason)
         if self.platform_runtime is not None:
@@ -148,22 +154,36 @@ class CodingAgent:
         return cancelled
 
     def run_detailed(self, task: str) -> AgentRunResult:
-        run_started = perf_counter()
-        run_deadline = run_started + self.run_timeout_seconds
-        
-        # Pause deadline during approval waiting (Production Readiness Pass 1)
-        if hasattr(self.tools, "approval_callback") and getattr(self.tools, "approval_callback", None):
-            original_callback = self.tools.approval_callback
-            
-            def _timed_approval(action_type: str, detail: str) -> bool:
-                start = perf_counter()
-                try:
-                    return original_callback(action_type, detail)
-                finally:
-                    self._deadline_paused_seconds += perf_counter() - start
-                    
-            self.tools.approval_callback = _timed_approval
-            
+        self._cancelled = False
+        reset = getattr(self.tools, "reset_cancellation", None)
+        if callable(reset):
+            reset()
+        try:
+            return self._run_detailed(task)
+        except BaseException as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                self.cancel()
+            close = getattr(self.tools, "close", None)
+            if callable(close):
+                close()
+            if self.platform_runtime is not None:
+                self.platform_runtime.close()
+            if self.reporter:
+                self.reporter.done()
+            raise
+
+    def _check_cancelled(self) -> None:
+        if self._cancelled:
+            raise KeyboardInterrupt("User cancelled the current task.")
+
+    def _phase(self, label: str) -> None:
+        self._check_cancelled()
+        phase = getattr(self.reporter, "phase", None)
+        if callable(phase):
+            phase(label)
+
+    def _run_detailed(self, task: str) -> AgentRunResult:
+        self._phase("Planning")
         clean_task = self._extract_user_task(task)
         workspace_task = self._is_workspace_task(task)
         historical_context = ""
@@ -215,10 +235,10 @@ class CodingAgent:
                 durable_goal,
                 execution_id=self.durable_execution_id,
                 planning_context=planning_context,
-                budgets={
-                    "tokens": float(self.max_steps * 10_000),
-                    "tool_calls": float(self.max_steps),
-                },
+                budgets=(
+                    {"tokens": float(self.max_steps * 10_000), "tool_calls": float(self.max_steps)}
+                    if self.max_steps is not None else {}
+                ),
             )
             self.durable_execution_id = self._durable_adapter.execution_id
         elif self.durable_runtime is not None:
@@ -226,7 +246,7 @@ class CodingAgent:
                 self.durable_runtime,
                 clean_task,
                 execution_id=self.durable_execution_id,
-                budgets={"tokens": float(self.max_steps * 10_000), "tool_calls": float(self.max_steps)},
+                budgets=({"tokens": float(self.max_steps * 10_000), "tool_calls": float(self.max_steps)} if self.max_steps is not None else {}),
             )
             self.durable_execution_id = self._durable_adapter.execution_id
         run_id = self.storage.create_run(task=clean_task, model=self.model_client.model, cwd=self.cwd)
@@ -297,6 +317,7 @@ class CodingAgent:
             summary = analyze_workspace(self.cwd)
             self.reporter.workspace_analysis(summary)
         if workspace_task and isinstance(self.tools, ToolRegistry):
+            self._phase("Inspecting project")
             context_records.extend(
                 self._run_context_preflight(
                     run_id=run_id,
@@ -306,60 +327,11 @@ class CodingAgent:
                 )
             )
 
-        for step in range(1, self.max_steps + 1):
-            remaining_run_seconds = run_deadline + self._deadline_paused_seconds - perf_counter()
-            if remaining_run_seconds <= 0:
-                return self._finalize_run(
-                    AgentRunResult(
-                        message=(
-                            f"Stopped after reaching the {self.run_timeout_seconds:g}s "
-                            "absolute run deadline. No further model or tool actions were started."
-                        ),
-                        run_id=run_id,
-                        task=task,
-                        clean_task=clean_task,
-                        context_records=context_records,
-                        model_usage_records=model_usage_records,
-                        failed_actions=failed_actions,
-                        blocked=True,
-                    )
-                )
+        step = 0
+        while self.max_steps is None or step < self.max_steps:
+            step += 1
+            self._check_cancelled()
             execution_state.begin_step(step)
-            messages, compacted_count = compact_message_history(
-                messages,
-                max_chars=self.context_max_chars,
-            )
-            execution_state.record_context(
-                chars=sum(len(message.get("content", "")) for message in messages),
-                compacted_messages=compacted_count,
-            )
-            # Proactive budget check (Production Readiness Pass 1)
-            budget_hint = execution_state.proactive_budget_check(
-                context_chars=sum(len(m.get("content", "")) for m in messages),
-                max_chars=self.context_max_chars,
-            )
-            if budget_hint:
-                messages.append({"role": "system", "content": budget_hint})
-            total_chars = sum(len(m.get("content", "")) for m in messages)
-            if total_chars > self.context_max_chars * CONTEXT_BUDGET_FORCE_COMPACT_RATIO:
-                execution_state.checkpoint("budget_compaction")
-                tight_target = max(8000, int(self.context_max_chars * CONTEXT_BUDGET_TIGHT_TARGET_RATIO))
-                messages, extra_compacted = compact_message_history(messages, max_chars=tight_target)
-                if extra_compacted:
-                    execution_state.record_context(
-                        chars=sum(len(m.get("content", "")) for m in messages),
-                        compacted_messages=extra_compacted,
-                    )
-                execution_state.evidence_records = (
-                    execution_state.evidence_records[-EVIDENCE_RECORDS_LIMIT_COMPACTED:]
-                )
-                self.storage.add_step(run_id, "tool", {
-                    "type": "budget_compaction",
-                    "step": step,
-                    "original_chars": total_chars,
-                    "compacted_chars": sum(len(m.get("content", "")) for m in messages),
-                    "evidence_trimmed_to": len(execution_state.evidence_records),
-                })
             if step > 1 or execution_state.resume_count:
                 execution_state.checkpoint("before_model")
                 self.storage.add_step(run_id, "tool", execution_state.snapshot())
@@ -371,15 +343,17 @@ class CodingAgent:
                     messages,
                     step,
                     model_usage_records,
-                    timeout_seconds=min(self.model_timeout_seconds, remaining_run_seconds),
+                    timeout_seconds=self.model_timeout_seconds,
                 )
             except Exception as exc:
+                self._check_cancelled()
                 payload = self._failure_payload(
                     step=step,
                     kind="model_failure",
-                    output=f"{type(exc).__name__}: {exc}",
+                    output=str(exc) if isinstance(exc, ContextBudgetExceeded) else safe_model_error(exc),
                     consecutive_failures=consecutive_failures + 1,
                 )
+                payload["category"] = "CONTEXT_BUDGET" if isinstance(exc, ContextBudgetExceeded) else "MODEL_" + classify_model_error(exc).kind.upper()
                 self.storage.add_step(run_id, "tool", payload)
                 failed_actions.append(payload)
                 self._report_recovery("model failed; stopping run")
@@ -400,30 +374,7 @@ class CodingAgent:
                         blocked=True,
                     )
                 )
-            if perf_counter() >= run_deadline:
-                payload = self._failure_payload(
-                    step=step,
-                    kind="run_deadline",
-                    output=(
-                        f"The model returned after the {self.run_timeout_seconds:g}s absolute "
-                        "run deadline; its proposed action was not executed."
-                    ),
-                    consecutive_failures=consecutive_failures + 1,
-                )
-                self.storage.add_step(run_id, "tool", payload)
-                failed_actions.append(payload)
-                return self._finalize_run(
-                    AgentRunResult(
-                        message=payload["output"],
-                        run_id=run_id,
-                        task=task,
-                        clean_task=clean_task,
-                        context_records=context_records,
-                        model_usage_records=model_usage_records,
-                        failed_actions=failed_actions,
-                        blocked=True,
-                    )
-                )
+            self._check_cancelled()
             for usage_record in model_usage_records[usage_start:]:
                 if usage_record.get("fallback_from"):
                     execution_state.record_model_handoff(usage_record)
@@ -431,7 +382,7 @@ class CodingAgent:
             action, parse_error = self._parse_action(response)
             if parse_error:
                 if not workspace_task and self._can_use_raw_final(response):
-                    self.storage.add_step(run_id, "assistant", {"raw": response})
+                    self.storage.add_step(run_id, "assistant", {"response_chars": len(response), "parsed": False})
                     self._report_done()
                     return self._finalize_run(
                         AgentRunResult(
@@ -449,7 +400,7 @@ class CodingAgent:
                     output=parse_error,
                     consecutive_failures=consecutive_failures,
                 )
-                self.storage.add_step(run_id, "assistant", {"raw": response})
+                self.storage.add_step(run_id, "assistant", {"response_chars": len(response), "parsed": False})
                 self.storage.add_step(run_id, "tool", payload)
                 failed_actions.append(payload)
                 self._report_recovery("invalid model action; retrying")
@@ -777,6 +728,26 @@ class CodingAgent:
                 previous_failure_allows_final = True
                 continue
 
+            failed_strategy = execution_state.failed_strategy_blocker(action)
+            if failed_strategy is not None:
+                consecutive_failures += 1
+                payload = self._failure_payload(
+                    step=step, kind="failed_strategy", output=failed_strategy,
+                    consecutive_failures=consecutive_failures,
+                )
+                payload["execution_state"] = execution_state.snapshot()
+                self.storage.add_step(run_id, "tool", payload)
+                failed_actions.append(payload)
+                self._report_recovery("replanning after repeated failed strategy")
+                if consecutive_failures >= self.max_failures:
+                    return self._finalize_run(AgentRunResult(
+                        message=self._failure_summary(consecutive_failures, failed_strategy),
+                        run_id=run_id, task=task, clean_task=clean_task,
+                        failed_actions=failed_actions, blocked=True,
+                    ))
+                messages.append({"role": "assistant", "content": action.model_dump_json()})
+                messages.append({"role": "user", "content": json.dumps(payload)})
+                continue
             # Low-confidence gate (Production Readiness Pass 1)
             confidence_block = execution_state.low_confidence_blocker(action)
             if confidence_block is not None:
@@ -963,7 +934,7 @@ class CodingAgent:
                 "output": result.output,
                 "elapsed_ms": tool_elapsed_ms,
                 "recovery_instruction": (
-                    execution_state.failure_recovery_instruction(action, result)
+                    execution_state.failure_recovery_instruction(action, result, current_recorded=False)
                     or self._recovery_instruction(action, result)
                 )
                 if not result.ok
@@ -1001,7 +972,7 @@ class CodingAgent:
                             self.cwd,
                             execution_state.task,
                             max_files=10,
-                            max_tokens=min(6000, max(1000, self.context_max_chars // 8)),
+                            max_tokens=min(6000, max(1000, (self.context_max_chars or self.context_window_tokens) // 8)),
                             cache=self.tools.index_cache
                             if isinstance(self.tools, ToolRegistry)
                             else None,
@@ -1057,17 +1028,20 @@ class CodingAgent:
                     )
                 )
             if not result.ok:
-                self._report_recovery("tool failed; asking model for another attempt")
+                self._report_recovery(
+                    "replanning after repeated tool failure" if execution_state.replan_required
+                    else "tool failed; asking model for another attempt"
+                )
             messages.append({"role": "assistant", "content": action.model_dump_json()})
             messages.append({"role": "user", "content": json.dumps(tool_payload)})
-            if reflect_coordinator is not None and step < self.max_steps:
+            if reflect_coordinator is not None and (self.max_steps is None or step < self.max_steps):
                 # Normal diagnosis, evidence recording, and retry-budget checks have already run.
                 reflection_context = self._reflection_recovery_context(
                     coordinator=reflect_coordinator, run_id=run_id, clean_task=clean_task,
                     result=result, command_record=command_record,
                     verification_results=([verification_result] if verification_result else [])
                     + automatic_results,
-                    remaining_seconds=run_deadline + self._deadline_paused_seconds - perf_counter(),
+                    remaining_seconds=float("inf"),
                 )
                 if reflection_context:
                     messages.append({"role": "user", "content": reflection_context})
@@ -1102,6 +1076,7 @@ class CodingAgent:
         )
 
     def _finalize_run(self, result: AgentRunResult) -> AgentRunResult:
+        self._check_cancelled()
         if self._durable_adapter is not None:
             if self.runtime_host is not None:
                 self.runtime_host.ensure_plan_observed(
@@ -1184,6 +1159,7 @@ class CodingAgent:
     ) -> dict[str, Any] | None:
         if self.reviewer_client is None or not changed_paths:
             return None
+        self._phase("Reviewing")
         review = run_reviewer_pass(
             self.reviewer_client,
             task=task,
@@ -1249,29 +1225,90 @@ class CodingAgent:
         *,
         timeout_seconds: float,
     ) -> str:
+        state = self._active_execution_state
+        checkpoint = None
+        if state is not None and (state.plan_steps or state.evidence_records or state.verification_records or state.failed_approaches):
+            checkpoint = {
+                "run_id": run_id, "execution_id": self.durable_execution_id,
+                "plan": state.plan_steps, "unresolved": state.blockers,
+                "verification": state.verification_records,
+                "evidence": state.evidence_records[-8:],
+                "failed_approaches": state.failed_approaches[-8:],
+                "changed_paths": state.changed_paths,
+                "recovery": state.replan_reason,
+            }
+        input_estimate = estimate_tokens(messages)
+        messages[:], omitted = bound_messages(
+            messages, max_chars=self.context_max_chars,
+            window_tokens=self.context_window_tokens, output_tokens=self.reserved_output_tokens,
+            checkpoint=checkpoint,
+            compact_ratio=self.context_compact_ratio,
+            hard_compact_ratio=self.context_hard_compact_ratio,
+        )
+        self.storage.add_step(run_id, "tool", {
+            "type": "context_budget", "input_estimate": input_estimate,
+            "budget": self.context_window_tokens - self.reserved_output_tokens
+            - max(128, int(self.context_window_tokens * 0.10)),
+            "compaction_triggered": bool(omitted), "messages_dropped": omitted,
+            "checkpoint_used": checkpoint is not None,
+        })
+        if self.reporter is not None:
+            context_status = getattr(self.reporter, "context_status", None)
+            if callable(context_status):
+                context_status(input_estimate, self.context_window_tokens - self.reserved_output_tokens
+                               - max(128, int(self.context_window_tokens * 0.10)))
+        if omitted:
+            self._phase("Compacting context")
+        if state is not None:
+            state.record_context(chars=sum(len(m["content"]) for m in messages), compacted_messages=omitted)
+            if omitted:
+                state.checkpoint("budget_compaction")
+                self.storage.add_step(run_id, "tool", state.snapshot())
         stream_complete = getattr(self.model_client, "stream_complete", None)
         stream_started = False
         started = perf_counter()
+        timing = {"type": "runtime_timing", "phase": "model_request", "step": step,
+                  "execution_id": self.durable_execution_id}
+        category = "completed"
+        def checked(response: str) -> str:
+            self._check_cancelled()
+            if perf_counter() - started >= timeout_seconds:
+                raise TimeoutError("Model request timed out; late response discarded.")
+            return response
+
+        try:
+            self.storage.add_step(run_id, "tool", {**timing, "event": "start", "elapsed_ms": 0})
+        except Exception:
+            pass
         try:
             if not self.stream_model or stream_complete is None:
                 complete_with_timeout = getattr(self.model_client, "complete_with_timeout", None)
                 if complete_with_timeout is not None:
-                    return complete_with_timeout(messages, timeout_seconds)
-                return self.model_client.complete(messages)
+                    return checked(complete_with_timeout(messages, timeout_seconds))
+                return checked(self.model_client.complete(messages))
 
             if self.reporter:
                 self.reporter.model_stream_start(step)
                 stream_started = True
             stream_with_timeout = getattr(self.model_client, "stream_complete_with_timeout", None)
             if stream_with_timeout is not None:
-                return stream_with_timeout(
+                return checked(stream_with_timeout(
                     messages,
                     self._report_model_stream_chunk,
                     timeout_seconds,
-                )
-            return stream_complete(messages, self._report_model_stream_chunk)
+                ))
+            return checked(stream_complete(messages, self._report_model_stream_chunk))
+        except Exception as exc:
+            category = "MODEL_" + classify_model_error(exc).kind.upper()
+            raise
         finally:
             latency_ms = round((perf_counter() - started) * 1000, 2)
+            try:
+                self.storage.add_step(run_id, "tool", {
+                    **timing, "event": "end", "elapsed_ms": latency_ms, "category": category,
+                })
+            except Exception:
+                pass
             self._drain_model_usage(run_id, model_usage_records, latency_ms=latency_ms)
             if self.reporter and stream_started:
                 self.reporter.model_stream_end()
@@ -1310,10 +1347,11 @@ class CodingAgent:
             self.reporter.model_stream_chunk(chunk)
 
     def _run_tool(self, action: AgentAction) -> ToolResult:
+        self._check_cancelled()
         try:
             return self.tools.run(action)
         except Exception as exc:
-            return ToolResult(ok=False, output=str(exc))
+            return ToolResult(ok=False, output=safe_exception(exc, component="Tool"))
 
     def _reflection_recovery_context(
         self, *, coordinator: MemoryReflectCoordinator, run_id: int, clean_task: str,
@@ -1398,7 +1436,7 @@ class CodingAgent:
             self.cwd,
             task,
             max_files=10,
-            max_tokens=min(6000, max(1000, self.context_max_chars // 8)),
+            max_tokens=min(6000, max(1000, (self.context_max_chars or self.context_window_tokens) // 8)),
             cache=self.tools.index_cache,
         )
         execution_state.record_context_pack(context_pack)
@@ -1671,6 +1709,7 @@ class CodingAgent:
         """
         text = task
         for marker in [
+            "\nDeterministic execution-history checkpoint.",
             "\nCurrent interactive session state:\n",
             "\nCurrent interactive session state:",
             "\nRecent interactive transcript for reference:\n",
@@ -2193,6 +2232,7 @@ class CodingAgent:
         step: int,
         changed_paths: list[str],
     ) -> list[dict[str, Any]]:
+        self._phase("Verifying")
         tests = affected_test_paths(
             self.cwd,
             changed_paths,

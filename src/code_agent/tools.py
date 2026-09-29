@@ -87,7 +87,7 @@ from .repo_index import (
     rank_context,
     start_background_index_refresh,
 )
-from .safety import classify_network_url, classify_shell_command, is_sensitive_path, redact_secrets
+from .safety import classify_network_url, classify_shell_command, is_sensitive_path, redact_secrets, redact_command_for_display, safe_exception
 from .sandbox_security import (
     SandboxAuditLog,
     SandboxPolicy,
@@ -306,6 +306,8 @@ class ToolRegistry:
         )
         if after_hooks:
             result.metadata["hooks"] = after_hooks
+        result.output = redact_secrets(result.output)
+        result.metadata = self._redact_payload(result.metadata)
         return result
 
     def _dispatch(self, action: AgentAction) -> ToolResult:
@@ -636,7 +638,7 @@ class ToolRegistry:
                 except (DiffParseError, ValueError):
                     pass
                 except Exception as exc:
-                    return ToolResult(ok=False, output=f"Reviewer error: {exc}")
+                    return ToolResult(ok=False, output=safe_exception(exc, component="Reviewer"))
 
             if review:
                 plan = self.transaction_manager.plan_patch_with_review(
@@ -885,6 +887,11 @@ class ToolRegistry:
                     f"{policy.reason}"
                 ),
             )
+        if policy.category == "development":
+            return ToolResult(
+                ok=False,
+                output="Use start_process for development servers and watchers; they need managed process lifecycle.",
+            )
         if self.shell_network_policy == "deny" and policy.may_network:
             return ToolResult(
                 ok=False,
@@ -938,7 +945,7 @@ class ToolRegistry:
             f"memory={self.sandbox_policy.resources.memory_mb}MB, "
             f"disk={self.sandbox_policy.resources.disk_mb}MB, "
             f"pids={self.sandbox_policy.resources.pids}\n"
-            f"Command: {command}"
+            f"Command: {redact_command_for_display(command)}"
         )
         if not self._approve("run_shell", approval_detail):
             return ToolResult(ok=False, output="Permission denied for run_shell.")
@@ -1052,6 +1059,7 @@ class ToolRegistry:
                     f"{policy.reason}"
                 ),
             )
+
         if self.shell_network_policy == "deny" and policy.may_network:
             return ToolResult(
                 ok=False,
@@ -1077,7 +1085,7 @@ class ToolRegistry:
             return ToolResult(ok=False, output=str(exc))
         detail = (
             f"Risk: {policy.risk}\nCategory: {policy.category}\nReason: {policy.reason}\n"
-            f"Command: {action.command}\nWorking directory: {cwd}\n"
+            f"Command: {redact_command_for_display(action.command)}\nWorking directory: {cwd}\n"
             f"Interactive: {action.interactive}\nPTY: {action.pty}\n"
             f"Auto restart: {action.auto_restart} (max {action.max_restarts})\n"
             f"Readiness port: {action.readiness_port or 'auto-detect'}\n"

@@ -45,6 +45,7 @@ class RegisteredModel:
     required_key: str
     capabilities: ModelCapabilities
     context_window: str = "unknown"
+    context_window_tokens: int | None = None
     quality: int = 3
     speed: int = 3
     cost: int = 3

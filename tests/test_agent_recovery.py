@@ -267,29 +267,21 @@ def test_second_distinct_action_loop_finalizes_without_more_model_calls(tmp_path
     assert sum(item.get("type") == "action_loop" for item in result.failed_actions) == 2
 
 
-def test_action_returned_after_run_deadline_is_not_executed(tmp_path: Path) -> None:
+def test_model_operation_timeout_does_not_execute_action(tmp_path: Path) -> None:
     class SlowModel(FakeModel):
-        def complete(self, messages: list[ChatMessage]) -> str:
-            time.sleep(0.3)
-            return super().complete(messages)
+        def complete_with_timeout(self, messages, timeout_seconds):
+            assert timeout_seconds == 0.2
+            raise TimeoutError("Model request timed out.")
 
-    model = SlowModel(['{"type":"write_file","path":"late.txt","content":"too late"}'])
     tools = RecoveringTools(tmp_path)
     agent = CodingAgent(
-        cwd=tmp_path,
-        dry_run=False,
-        max_steps=2,
-        max_failures=2,
-        model_client=model,
-        tools=tools,  # type: ignore[arg-type]
-        storage=AgentStorage(tmp_path / "agent.db"),
-        run_timeout_seconds=0.2,
+        cwd=tmp_path, dry_run=False, max_steps=2, max_failures=2,
+        model_client=SlowModel([]), tools=tools,
+        storage=AgentStorage(tmp_path / "agent.db"), model_timeout_seconds=0.2,
     )
-
     result = agent.run_detailed("write late.txt in this project")
-
     assert result.blocked is True
-    assert "proposed action was not executed" in result.message
+    assert result.failed_actions[-1]["category"] == "MODEL_TIMEOUT"
     assert not (tmp_path / "late.txt").exists()
     assert tools.calls == 0
 
@@ -317,7 +309,7 @@ def test_agent_compacts_large_history_without_losing_task(tmp_path: Path) -> Non
         model_client=model,
         tools=LargeOutputTools(tmp_path),  # type: ignore[arg-type]
         storage=AgentStorage(tmp_path / "agent.db"),
-        context_max_chars=10_000,
+        context_max_chars=20_000,
     )
 
     result = agent.run_detailed("inspect this project without changing it")
@@ -540,7 +532,8 @@ def test_agent_records_plan_updates_without_calling_tools(tmp_path: Path) -> Non
         }
     ]
     assert tools.calls == 0
-    assert stored_steps[1]["payload"]["type"] == "plan_updated"
+    action_steps = [item for item in stored_steps if item["payload"].get("type") != "runtime_timing"]
+    assert any(item["payload"].get("type") == "plan_updated" for item in action_steps)
     assert "Plan updated" in model.messages_seen[1][-1]["content"]
 
 
@@ -1242,7 +1235,7 @@ def test_agent_shell_command_audit_completeness(tmp_path: Path) -> None:
     assert record["captured_output"] == "hello"
 
 
-def test_agent_deadline_pauses_during_approval(tmp_path: Path) -> None:
+def test_agent_preserves_approval_callback_without_global_timer(tmp_path: Path) -> None:
     model = FakeModel([
         '{"type":"run_shell","command":"sleep 1"}',
         '{"type":"final","message":"done"}',
@@ -1259,7 +1252,7 @@ def test_agent_deadline_pauses_during_approval(tmp_path: Path) -> None:
     agent.run_timeout_seconds = 60.0
     
     agent.run_detailed("run slow command")
-    assert agent._deadline_paused_seconds >= 0.5
+    assert tools.approval_callback is slow_approval
 
 
 def test_agent_low_confidence_blocks_mutation(tmp_path: Path) -> None:

@@ -45,8 +45,11 @@ from .sandbox import (
 )
 from .sandbox_security import SandboxIsolationError, resolve_sandbox_policy
 from .session import SessionState
+from .context_budget import bound_messages, safe_content, ContextBudgetExceeded
 from .storage import AgentStorage
 from .status import StatusReporter, analyze_workspace
+from .models import classify_model_error, safe_model_error
+from .safety import redact_secrets, safe_exception
 from .terminal_ui import (
     console,
     print_error_card,
@@ -110,10 +113,10 @@ def main() -> None:
     dry_run = DEFAULT_DRY_RUN
     stream_model = settings.agent_stream
     sandbox_enabled = False
-    max_steps = 12
+    max_steps = settings.agent_max_steps or None
     max_failures: int | None = None
     transcript: list[tuple[str, str]] = []
-    session_state = SessionState()
+    session_state = SessionState.restore(AgentStorage(settings.agent_db_path), cwd)
     permission_policy = PermissionPolicy(confirm_permission, ApprovalMode.auto_read)
 
     print_startup_header(
@@ -193,8 +196,8 @@ def main() -> None:
                 )
                 reporter = StatusReporter()
                 reporter.thinking(1)
-                with active_shortcuts(client):
-                    response = run_lightweight_chat(user_input, client)
+                with active_shortcuts(client, reporter):
+                    response = run_lightweight_chat(task_with_context(user_input, transcript, session_state), client)
                 reporter.done()
             except InteractiveExitRequested:
                 if reporter:
@@ -213,7 +216,7 @@ def main() -> None:
             except Exception as exc:
                 if reporter:
                     reporter.done()
-                session_state._last_exc = traceback.format_exc()
+                session_state._last_exc = "\n".join(f"{frame.name}:{frame.lineno}" for frame in traceback.extract_tb(exc.__traceback__)) + "\n" + safe_model_error(exc)
                 print_error_card(
                     "Model Request Failed",
                     [
@@ -224,7 +227,7 @@ def main() -> None:
                 )
                 continue
             print_response("Agent47", response)
-            transcript.append((user_input, response))
+            transcript.append((redact_secrets(user_input), safe_content(response)))
             transcript = transcript[-8:]
             continue
 
@@ -245,7 +248,7 @@ def main() -> None:
                 stream_model=stream_model,
                 require_process_isolation=sandbox_enabled,
             )
-            with active_shortcuts(agent):
+            with active_shortcuts(agent, reporter):
                 transcript = run_interactive_turn(user_input, agent, transcript, session_state)
         except InteractiveExitRequested:
             if agent is not None:
@@ -255,10 +258,11 @@ def main() -> None:
         except KeyboardInterrupt:
             if agent is not None:
                 agent.cancel("interactive keyboard interrupt")
+            reporter.cancelled()
             print_panel("Stopped", "Current action stopped. Interactive session is still open.")
             continue
         except Exception as exc:
-            session_state._last_exc = traceback.format_exc()
+            session_state._last_exc = "\n".join(f"{frame.name}:{frame.lineno}" for frame in traceback.extract_tb(exc.__traceback__)) + "\n" + safe_model_error(exc)
             print_error_card(
                 "Error",
                 [
@@ -292,7 +296,7 @@ def require_interactive_onboarding(settings: Settings) -> str | None | object:
         session = LocalSession()
         signed_in = session.signed_in()
     except KeyringUnavailableError as exc:
-        print_panel("Secure Storage Unavailable", str(exc), style="red")
+        print_panel("Secure Storage Unavailable", safe_exception(exc), style="red")
         return _ONBOARDING_BLOCKED
 
     if not signed_in:
@@ -313,7 +317,7 @@ def require_interactive_onboarding(settings: Settings) -> str | None | object:
                 print_panel("Sign-in Incomplete", "Login did not create a usable local session.", style="red")
                 return _ONBOARDING_BLOCKED
         except KeyringUnavailableError as exc:
-            print_panel("Secure Storage Unavailable", str(exc), style="red")
+            print_panel("Secure Storage Unavailable", safe_exception(exc), style="red")
             return _ONBOARDING_BLOCKED
 
     try:
@@ -323,7 +327,7 @@ def require_interactive_onboarding(settings: Settings) -> str | None | object:
             return None
         return _select_or_add_interactive_provider_key(store, default_provider)
     except KeyringUnavailableError as exc:
-        print_panel("Secure Storage Unavailable", str(exc), style="red")
+        print_panel("Secure Storage Unavailable", safe_exception(exc), style="red")
         return _ONBOARDING_BLOCKED
 
 
@@ -408,7 +412,7 @@ class CommandState:
         dry_run: bool,
         stream_model: bool,
         sandbox_enabled: bool,
-        max_steps: int,
+        max_steps: int | None,
         max_failures: int | None,
         exit_requested: bool = False,
     ) -> None:
@@ -434,7 +438,7 @@ def handle_command(
     dry_run: bool,
     stream_model: bool,
     sandbox_enabled: bool,
-    max_steps: int,
+    max_steps: int | None,
     max_failures: int | None,
     session_state: SessionState | None = None,
     permission_policy: PermissionPolicy | None = None,
@@ -538,7 +542,7 @@ def handle_command(
                 try:
                     diff = diff_sandbox_workspace(base_cwd, cwd, paths=paths)
                 except ValueError as exc:
-                    print_panel("Sandbox", str(exc))
+                    print_panel("Sandbox", safe_exception(exc))
                 else:
                     print_panel("Sandbox Diff", format_sandbox_diff(diff))
         elif value.lower().startswith("apply"):
@@ -554,7 +558,7 @@ def handle_command(
                         approval_callback=confirm_permission,
                     )
                 except ValueError as exc:
-                    print_panel("Sandbox Apply", str(exc))
+                    print_panel("Sandbox Apply", safe_exception(exc))
                 else:
                     body = result.output
                     if result.changed_paths:
@@ -570,7 +574,7 @@ def handle_command(
                 )
                 sandbox_workspace = create_sandbox_workspace(base_cwd, policy=policy)
             except SandboxIsolationError as exc:
-                print_panel("Sandbox Unavailable", str(exc))
+                print_panel("Sandbox Unavailable", safe_exception(exc))
             else:
                 cwd = sandbox_workspace.path
                 sandbox_enabled = True
@@ -601,7 +605,7 @@ def handle_command(
             try:
                 profile = validate_profile_name(value)
             except ValueError as exc:
-                print_panel("Profile", str(exc))
+                print_panel("Profile", safe_exception(exc))
                 return CommandState(
                     base_cwd,
                     cwd,
@@ -616,8 +620,8 @@ def handle_command(
         print_panel("Profile", profile or settings.agent_profile)
     elif command == "/max-steps":
         if value:
-            max_steps = int(value)
-        print_panel("Max Steps", str(max_steps))
+            max_steps = int(value) or None
+        print_panel("Max Steps", str(max_steps) if max_steps else "Unlimited")
     elif command == "/max-failures":
         if value:
             max_failures = int(value)
@@ -643,7 +647,7 @@ def handle_command(
     elif command == "/history-show":
         print_history_detail(settings, value)
     elif command == "/status":
-        _handle_status_command(settings, cwd, model, profile, dry_run, stream_model, sandbox_enabled, permission_policy)
+        _handle_status_command(settings, cwd, model, profile, dry_run, stream_model, sandbox_enabled, permission_policy, session_state)
     elif command == "/approve-all":
         if permission_policy:
             permission_policy.set_mode(ApprovalMode.approve_task)
@@ -690,6 +694,15 @@ def handle_command(
         )
     elif command == "/mcp":
         _handle_mcp_command(value, cwd)
+    elif command == "/goal":
+        if session_state is None:
+            print_panel("Project Goal", "Project session is unavailable.")
+        elif value:
+            session_state.set_goal(value)
+            session_state.save(AgentStorage(settings.agent_db_path))
+            print_panel("Project Goal", session_state.persistent_goal or "unset")
+        else:
+            print_panel("Project Goal", session_state.persistent_goal or "unset")
     elif command == "/steer":
         if session_state is None:
             print_panel("Steering", "Session steering is unavailable.")
@@ -759,6 +772,7 @@ def _handle_status_command(
     stream_model: bool,
     sandbox_enabled: bool,
     permission_policy: PermissionPolicy | None,
+    session_state: SessionState | None = None,
 ) -> None:
     """Gather environment, auth, model, and workspace status and render /status panel."""
     auth_status = "✓ Signed in" if LocalSession().signed_in() else "✗ Not signed in"
@@ -788,6 +802,7 @@ def _handle_status_command(
         ("Model", "Provider", current_provider_name(settings, model)),
         ("Model", "Profile", profile or settings.agent_profile),
         ("Session", "Mode", "dry-run" if dry_run else "write-enabled"),
+        ("Session", "Project goal", (session_state.persistent_goal or "unset") if session_state else "unset"),
         ("Session", "Approvals", permission_policy.mode.value if permission_policy else "auto_read"),
         ("Session", "Sandbox", "enabled" if sandbox_enabled else "disabled"),
         ("Session", "Streaming", "on" if stream_model else "off"),
@@ -845,7 +860,7 @@ def run_resume_command(
     profile: str | None,
     dry_run: bool,
     stream_model: bool,
-    max_steps: int,
+    max_steps: int | None,
     max_failures: int | None,
     sandbox_enabled: bool,
     session_state: SessionState | None,
@@ -891,7 +906,7 @@ def run_resume_command(
             resumed_from_run_id=run_id,
         )
     except SandboxIsolationError as exc:
-        print_panel("Sandbox Unavailable", str(exc))
+        print_panel("Sandbox Unavailable", safe_exception(exc))
         return
     result = agent.run_detailed(task)
     print_work_report_panel(result)
@@ -927,7 +942,7 @@ def run_revert_command(
     try:
         plan = build_revert_plan(storage, run_id)
     except ValueError as exc:
-        print_panel("Restore", str(exc))
+        print_panel("Restore", safe_exception(exc))
         return
     print_panel("Restore Preview", format_revert_preview(plan))
     result = apply_revert_plan(storage, plan, approval_callback=confirm_permission)
@@ -1308,7 +1323,10 @@ def model_switch_error(settings: Settings, model: str, *, stream_model: bool = T
         validate_model_selection(provider=provider, model=model, stream=stream_model)
         settings.model_api_key_for(provider)
     except (RuntimeError, ValueError) as exc:
-        return str(exc)
+        message = str(exc)
+        if re.fullmatch(r"[A-Z_]+_API_KEY is required for AGENT_PROVIDER=[a-z]+\.", message):
+            return message  # Locally generated configuration names only, no credential value.
+        return safe_exception(exc)
     return None
 
 
@@ -1339,7 +1357,7 @@ def switch_model_or_report(
             "Model Saved For Session Only",
             [
                 ("What failed:", "The model was switched for this session, but .env could not be updated."),
-                ("Reason:", str(exc)),
+                ("Reason:", safe_exception(exc)),
             ],
             ["Check file permissions", "Update .env manually if you want this model after restart"],
         )
@@ -1512,12 +1530,15 @@ def friendly_error_message(exc: Exception) -> str:
 
 
 def friendly_model_error(exc: Exception) -> str:
-    message = str(exc).strip() or exc.__class__.__name__
-    return friendly_model_error_text(f"{exc.__class__.__name__}: {message}")
+    if isinstance(exc, ContextBudgetExceeded):
+        return str(exc)
+    if classify_model_error(exc).kind in {"capacity", "rate_limit"}:
+        return f"The model provider is currently capacity-limited or rate-limited. {type(exc).__name__}."
+    return friendly_model_error_text(safe_model_error(exc))
 
 
 def friendly_model_error_text(message: str) -> str:
-    cleaned = message.strip() or "Unknown model error."
+    cleaned = redact_secrets(message.strip()) or "Unknown model error."
     lowered = cleaned.lower()
     if "resourceexhausted" in lowered or "request limit reached" in lowered or "rate limit" in lowered:
         return (
@@ -1598,8 +1619,8 @@ def read_windows_line(prompt: str) -> str:
 
 
 @contextlib.contextmanager
-def active_shortcuts(agent: InteractiveAgent):
-    monitor = ActiveShortcutMonitor(agent)
+def active_shortcuts(agent: InteractiveAgent, reporter: StatusReporter | None = None):
+    monitor = ActiveShortcutMonitor(agent, reporter)
     monitor.start()
     try:
         yield
@@ -1612,8 +1633,10 @@ def active_shortcuts(agent: InteractiveAgent):
 
 
 class ActiveShortcutMonitor:
-    def __init__(self, agent: InteractiveAgent) -> None:
+    def __init__(self, agent: InteractiveAgent, reporter: StatusReporter | None = None) -> None:
         self.agent = agent
+        self.reporter = reporter
+        self._terminal_attrs = None
         self.exit_requested = False
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -1622,17 +1645,33 @@ class ActiveShortcutMonitor:
     def start(self) -> None:
         self._previous_sigint = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, self._handle_sigint)
-        if os.name == "nt" and sys.stdin.isatty():
-            self._thread = threading.Thread(target=self._watch_windows_keys, daemon=True)
-            self._thread.start()
+        if not sys.stdin.isatty() or (self.reporter is not None and not self.reporter._interactive):
+            return
+        if os.name == "nt":
+            target = self._watch_windows_keys
+        else:
+            import termios
+            import tty
+            self._terminal_attrs = termios.tcgetattr(sys.stdin.fileno())
+            tty.setcbreak(sys.stdin.fileno())
+            target = self._watch_posix_keys
+        self._thread = threading.Thread(target=target, daemon=True)
+        self._thread.start()
 
     def stop(self) -> None:
         self._stop.set()
+        if self._thread is not None and self._thread is not threading.current_thread():
+            self._thread.join(timeout=0.2)
+        if self._terminal_attrs is not None:
+            import termios
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, self._terminal_attrs)
         if self._previous_sigint is not None:
             signal.signal(signal.SIGINT, self._previous_sigint)
 
     def _handle_sigint(self, signum, frame) -> None:
         self.agent.cancel("interactive ctrl+c")
+        if self.reporter:
+            self.reporter.cancelled()
         raise KeyboardInterrupt
 
     def _watch_windows_keys(self) -> None:
@@ -1643,15 +1682,35 @@ class ActiveShortcutMonitor:
                 time.sleep(0.05)
                 continue
             char = msvcrt.getwch()
-            if char == CTRL_C:
-                self.agent.cancel("interactive ctrl+c")
-                _thread.interrupt_main()
+            if self._handle_key(char):
                 return
-            if char == CTRL_E:
-                self.exit_requested = True
-                self.agent.cancel("interactive ctrl+e")
-                _thread.interrupt_main()
+
+    def _watch_posix_keys(self) -> None:
+        import select
+
+        while not self._stop.is_set():
+            ready, _, _ = select.select([sys.stdin], [], [], 0.05)
+            if ready and self._handle_key(sys.stdin.read(1)):
                 return
+
+    def _handle_key(self, char: str) -> bool:
+        if char.lower() == "o" and self.reporter is not None:
+            self.reporter.toggle_command_output()
+            return False
+        if char == CTRL_C:
+            self.agent.cancel("interactive ctrl+c")
+            if self.reporter:
+                self.reporter.cancelled()
+            _thread.interrupt_main()
+            return True
+        if char == CTRL_E:
+            self.exit_requested = True
+            self.agent.cancel("interactive ctrl+e")
+            if self.reporter:
+                self.reporter.cancelled()
+            _thread.interrupt_main()
+            return True
+        return False
 
 
 def run_interactive_turn(
@@ -1660,7 +1719,8 @@ def run_interactive_turn(
     transcript: list[tuple[str, str]],
     session_state: SessionState,
 ) -> list[tuple[str, str]]:
-    task = task_with_context(user_input, transcript, session_state)
+    task = task_with_context(user_input, transcript, session_state,
+                             max_chars=min(10_000, max(2048, (getattr(agent, "context_window_tokens", 65_536) - getattr(agent, "reserved_output_tokens", 4096)) // 4)))
     result = agent.run_detailed(task)
     if is_model_failure_result(result):
         print_model_failure_card(result)
@@ -1669,7 +1729,10 @@ def run_interactive_turn(
     if not should_show_work_report(result) and not is_model_failure_result(result):
         print_response("Agent47", result.message)
     session_state.update(user_input, result)
-    transcript.append((user_input, result.message))
+    storage = getattr(agent, "storage", None)
+    if storage is not None:
+        session_state.save(storage)
+    transcript.append((redact_secrets(user_input), safe_content(result.message)))
     return transcript[-8:]
 
 
@@ -1692,14 +1755,13 @@ def task_with_context(
     user_input: str,
     transcript: list[tuple[str, str]],
     session_state: SessionState,
+    *, max_chars: int = 20_000,
 ) -> str:
-    sections = [user_input]
-    rendered_state = session_state.render()
-    if rendered_state:
-        sections.extend(["", rendered_state])
-    if transcript:
-        sections.extend(["", _format_transcript(transcript)])
-    return "\n".join(sections)
+    pinned = {"session": session_state.render()}
+    messages = [{"role": "system", "content": ""}, {"role": "user", "content": user_input}]
+    messages.extend({"role": "user", "content": _format_transcript([turn])} for turn in transcript)
+    bounded, _ = bound_messages(messages, max_chars=max_chars, checkpoint=pinned)
+    return "\n\n".join(m["content"] for m in bounded if m["content"])
 
 
 def _format_transcript(transcript: list[tuple[str, str]]) -> str:
@@ -1724,7 +1786,7 @@ def _handle_mcp_command(value: str, cwd: Path) -> None:
         try:
             runtime.configure_mcp()
         except Exception as exc:
-            print_error_card("MCP Configuration Error", [("Error:", str(exc))], ["Fix the configuration in .agents/mcp.json"])
+            print_error_card("MCP Configuration Error", [("Error:", safe_exception(exc))], ["Fix the configuration in .agents/mcp.json"])
             return
 
         command = value.lower().strip()
@@ -1837,7 +1899,6 @@ def _handle_mcp_command(value: str, cwd: Path) -> None:
                 ["Use '/mcp', '/mcp tools', '/mcp resources', or '/mcp prompts'"]
             )
     except Exception as exc:
-        print_panel("MCP Error", f"Failed to execute MCP command: {exc}", style="red")
+        print_panel("MCP Error", f"Failed to execute MCP command: {safe_exception(exc)}", style="red")
     finally:
         runtime.close()
-

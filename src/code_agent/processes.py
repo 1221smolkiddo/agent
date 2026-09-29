@@ -244,7 +244,7 @@ def terminate_process_tree(process: subprocess.Popen[Any], *, grace_seconds: flo
             process.send_signal(signal.CTRL_BREAK_EVENT)
             process.wait(timeout=grace_seconds)
             return
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, SystemError, subprocess.TimeoutExpired):
             pass
         try:
             subprocess.run(

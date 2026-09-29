@@ -454,6 +454,15 @@ def build_default_registry() -> CommandRegistry:
             rank=260,
         ),
         CommandMeta(
+            name="/goal",
+            category="Configuration",
+            description="Inspect or explicitly replace the persistent project goal",
+            usage="/goal\n/goal <project objective>",
+            examples=("/goal Build a production issue tracker",),
+            keywords=("goal", "objective", "project", "session"),
+            rank=255,
+        ),
+        CommandMeta(
             name="/max-steps",
             category="Configuration",
             description="Set maximum agent tool steps per turn",

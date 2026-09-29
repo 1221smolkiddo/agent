@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .safety import sanitize_payload
+
 import hashlib
 import json
 import sqlite3
@@ -457,7 +459,7 @@ class SQLiteEventStore:
             for offset, (event_type, payload) in enumerate(facts, 1):
                 event = ExecutionEvent(
                     execution_id, current + offset, event_type,
-                    json.loads(json.dumps(payload)), _id("evt"), command.command_id,
+                    sanitize_payload(json.loads(json.dumps(payload))), _id("evt"), command.command_id,
                     command.causation_id, correlation, _now(),
                 )
                 conn.execute(
@@ -503,7 +505,7 @@ class SQLiteEventStore:
         return [dict(row) for row in rows]
 
     def save_snapshot(self, projection: ExecutionProjection) -> str:
-        payload = json.dumps(projection.canonical(), sort_keys=True, separators=(",", ":"))
+        payload = json.dumps(sanitize_payload(projection.canonical()), sort_keys=True, separators=(",", ":"))
         checksum = hashlib.sha256(payload.encode()).hexdigest()
         with self._connect() as conn:
             conn.execute(
@@ -1833,7 +1835,7 @@ class DurableExecutionRuntime:
         profile, signals = self.policy_selector.select(task_intent, overrides=profile_overrides)
 
         # Use profile budgets unless caller provided explicit overrides
-        effective_budgets = budgets if budgets else profile.budgets.to_engine_budgets()
+        effective_budgets = budgets if budgets is not None else profile.budgets.to_engine_budgets()
 
         execution_id = self.engine.create(
             goal, budgets=effective_budgets, compatibility_version=compatibility_version

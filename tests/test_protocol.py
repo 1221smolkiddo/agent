@@ -322,4 +322,4 @@ def test_run_json_command_reports_failures(monkeypatch, tmp_path: Path) -> None:
     events = parse_json_lines(result.output)
     assert [event["event"] for event in events] == ["run_started", "run_failed"]
     assert events[1]["code"] == "RuntimeError"
-    assert events[1]["message"] == "missing key"
+    assert events[1]["message"] == "Operation failed (RuntimeError)."

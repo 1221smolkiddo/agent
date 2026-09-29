@@ -279,23 +279,9 @@ def _check_docker_or_podman() -> DoctorCheck:
 
 
 def _check_model_deadlines(settings: Settings) -> DoctorCheck:
-    if settings.agent_run_timeout_seconds < settings.agent_model_timeout_seconds:
-        return DoctorCheck(
-            "model-deadlines",
-            "warn",
-            (
-                f"turn={settings.agent_model_timeout_seconds:g}s, "
-                f"run={settings.agent_run_timeout_seconds:g}s"
-            ),
-            "Keep the run deadline at least as large as the model-turn deadline.",
-        )
     return DoctorCheck(
-        "model-deadlines",
-        "pass",
-        (
-            f"turn={settings.agent_model_timeout_seconds:g}s, "
-            f"run={settings.agent_run_timeout_seconds:g}s; Agent47-owned retries"
-        ),
+        "model-deadlines", "pass",
+        f"turn={settings.agent_model_timeout_seconds:g}s; no overall run timeout; Agent47-owned retries",
     )
 
 

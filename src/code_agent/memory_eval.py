@@ -92,7 +92,6 @@ def _real_model_environment(source: dict[str, Any], cases: list[Any], *,
         "AGENT_MODEL_RETRY_COUNT": "0", "AGENT_MAX_FAILURES": "3",
         "AGENT_REVIEWER_PASS": "false", "AGENT_SHADOW_PLANNER": "deterministic",
         "AGENT_STREAM": "false", "AGENT_FALLBACK_MODELS": "",
-        "AGENT_RUN_TIMEOUT_SECONDS": str(min(120, timeout_seconds)),
     }
 
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .safety import safe_exception
+
 import inspect
 import re
 import threading
@@ -71,7 +73,7 @@ class RegisteredTool:
         try:
             ok, detail = self.health_check()
         except Exception as exc:
-            return {"ok": False, "detail": f"{type(exc).__name__}: {exc}"}
+            return {"ok": False, "detail": safe_exception(exc, component="Extension")}
         return {"ok": bool(ok), "detail": str(detail)}
 
 
@@ -175,7 +177,7 @@ class DynamicToolRegistry:
         try:
             value = tool.handler(dict(arguments))
         except Exception as exc:
-            return ToolResult(ok=False, output=f"Tool {name} failed: {type(exc).__name__}: {exc}")
+            return ToolResult(ok=False, output=safe_exception(exc, component="Tool"))
         if isinstance(value, ToolResult):
             return value
         if isinstance(value, dict):
@@ -255,7 +257,7 @@ class LifecycleHooks:
                     raise TypeError("Coroutine hooks require an async host; use a synchronous wrapper.")
                 results.append({"source": subscription.source, "ok": True, "result": value})
             except Exception as exc:
-                results.append({"source": subscription.source, "ok": False, "error": f"{type(exc).__name__}: {exc}"})
+                results.append({"source": subscription.source, "ok": False, "error": safe_exception(exc, component="Extension")})
 
         for subscription in subscriptions:
             if subscription.mode == "async":

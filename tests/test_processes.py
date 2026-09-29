@@ -117,3 +117,62 @@ def test_background_python_avoids_console_interpreter_on_windows() -> None:
     assert argv == [executable, "server.py"]
     if os.name == "nt" and Path(processes_module.sys.executable).with_name("pythonw.exe").exists():
         assert Path(executable).name.lower() == "pythonw.exe"
+
+
+def test_five_minute_build_passes_and_hung_build_is_cleaned_up(tmp_path: Path, monkeypatch) -> None:
+    from code_agent.safety import classify_shell_command
+
+    clock = [0.0]
+    monkeypatch.setattr(processes_module.time, "monotonic", lambda: clock[0])
+    created = []
+    cleaned = []
+
+    class FakeBuild:
+        pid = 4321
+        returncode = None
+
+        def __init__(self, hung):
+            self.hung = hung
+            self.calls = 0
+
+        def poll(self):
+            return self.returncode
+
+        def communicate(self, timeout=None):
+            if timeout is None:
+                return "", ""
+            self.calls += 1
+            clock[0] += timeout
+            if self.hung or self.calls == 1:
+                raise subprocess.TimeoutExpired("uv run pytest", timeout)
+            self.returncode = 0
+            return "build passed", ""
+
+    def popen(*_args, **_kwargs):
+        process = FakeBuild(hung=len(created) > 0)
+        created.append(process)
+        return process
+
+    def cleanup(process):
+        cleaned.append(process.pid)
+        process.returncode = -9
+
+    monkeypatch.setattr(processes_module.subprocess, "Popen", popen)
+    monkeypatch.setattr(processes_module, "terminate_process_tree", cleanup)
+    timeout = classify_shell_command("uv run pytest").timeout_seconds
+    assert timeout == 600
+    supervisor = ProcessSupervisor()
+    passed = supervisor.run_shell(
+        "uv run pytest", cwd=tmp_path, timeout_seconds=timeout,
+        env={}, poll_seconds=300,
+    )
+    assert passed.completed.returncode == 0
+    assert not passed.timed_out
+    clock[0] = 0
+    hung = supervisor.run_shell(
+        "uv run pytest", cwd=tmp_path, timeout_seconds=timeout,
+        env={}, poll_seconds=600,
+    )
+    assert hung.timed_out and hung.cleanup_attempted
+    assert cleaned == [4321]
+    assert supervisor.active_count == 0

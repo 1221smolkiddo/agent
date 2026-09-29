@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
+import re
+import sys
+import time
 from pathlib import Path
 from typing import TypeVar
 
@@ -56,8 +60,18 @@ from .schema import (
     WriteFileAction,
 )
 from .terminal_ui import console
+from .safety import redact_command_for_display, redact_command_output_for_display, redact_secrets, sanitize_payload
 
 CallbackResult = TypeVar("CallbackResult")
+
+
+@dataclass
+class CommandDisplay:
+    command: str
+    status: str = "running"
+    summary: str = "Running..."
+    output: str = ""
+    duration_ms: float = 0.0
 
 
 class StatusReporter:
@@ -70,20 +84,28 @@ class StatusReporter:
         self._is_generating = False
         self._stopped = False
         self._paused = False
+        self._interactive = bool(console.is_terminal and sys.stdin.isatty())
+        self._started_at = time.monotonic()
+        self._step = 0
+        self._context_percent: int | None = None
+        self._commands: list[CommandDisplay] = []
+        self._expanded = False
         # stages: list of tuples (stage_detail, status) where status is 'pending','in-progress','done'
         self._stages: list[tuple[str, str]] = []
         self._live = self._new_live()
         self._live.start()
 
-    @staticmethod
-    def _new_live() -> Live:
-        return Live(console=console, transient=True, refresh_per_second=4)
+    def _new_live(self) -> Live:
+        return Live(console=console, transient=True, refresh_per_second=4, get_renderable=self._render)
 
     @classmethod
     def mark_workspace_seen(cls, summary: str) -> None:
         cls._seen_workspace_summaries.add(summary)
 
     def _render(self) -> Group:
+        self._current_label = redact_secrets(self._current_label)
+        self._current_detail = redact_secrets(self._current_detail)
+        self._stages = [(redact_secrets(stage), status) for stage, status in self._stages]
         lines = []
 
         if self._current_label or self._is_generating:
@@ -91,7 +113,7 @@ class StatusReporter:
             detail = self._current_detail or ""
             text = Text()
             text.append(" ")
-            text.append(label, style="bold cyan")
+            text.append(redact_secrets(label), style="bold cyan")
             if detail:
                 text.append(f" — {detail}", style="default")
             spinner = Spinner("dots", text=text, style="cyan", speed=0.8)
@@ -104,7 +126,7 @@ class StatusReporter:
         if self._stages and not self._is_generating:
             prog = Text()
             if hasattr(self, "_active_profile") and self._active_profile:
-                prog.append(f"[{self._active_profile.upper()}] ", style="bold magenta")
+                prog.append(f"[{redact_secrets(self._active_profile).upper()}] ", style="bold magenta")
             prog.append("Progress:\n", style="muted")
             for stage, status in self._stages[-8:]:
                 if status == "done":
@@ -118,6 +140,10 @@ class StatusReporter:
                     prog.append(f"{stage}\n", style="muted")
             lines.append(prog)
 
+        if self._interactive and self._commands:
+            lines.extend(self._command_lines())
+        if self._interactive:
+            lines.append(self._bottom_status())
         return Group(*lines)
 
     def set_profile(self, profile: str) -> None:
@@ -168,17 +194,24 @@ class StatusReporter:
 
         return guarded
 
-    def thinking(self, step: int) -> None:
-        if self._current_label or self._stages:
-            return
-        self._current_label = "Thinking"
+    def phase(self, label: str) -> None:
+        self._current_label = redact_secrets(label)
         self._current_detail = ""
+        self._update()
+
+    def thinking(self, step: int) -> None:
+        self._current_label = "Thinking"
+        self._current_detail = "Waiting for model"
+        self._step = step
         self._update()
 
     def action(self, action: AgentAction) -> None:
         self._consecutive_retries = 0
         self._complete_current(refresh=False)
         stage, detail = _semantic_stage(action)
+        if isinstance(action, (RunShellAction, StartProcessAction)):
+            self._begin_command(action.command)
+        stage, detail = redact_secrets(stage), redact_secrets(detail)
         if stage:
             self._current_label = stage
             self._current_detail = detail
@@ -193,9 +226,9 @@ class StatusReporter:
 
     def recovery(self, detail: str) -> None:
         self._consecutive_retries += 1
-        if self._consecutive_retries >= 2:
+        if self._consecutive_retries >= 2 or "replan" in detail.lower() or "strategy" in detail.lower():
             self._complete_current(refresh=False)
-            self._current_label = "Recovering"
+            self._current_label = "Replanning" if "replan" in detail.lower() or "strategy" in detail.lower() else "Recovering"
             self._current_detail = friendly_retry_detail(detail)
             if not any(s == self._current_detail for s, _ in self._stages):
                 self._stages.append((self._current_detail, "in-progress"))
@@ -207,6 +240,9 @@ class StatusReporter:
         result: ToolResult,
         elapsed_ms: float,
     ) -> None:
+        result.metadata = sanitize_payload(result.metadata)
+        if isinstance(action, (RunShellAction, StartProcessAction)):
+            self._finish_command(action.command, result, elapsed_ms)
         transaction = result.metadata.get("transaction")
         if isinstance(transaction, dict) and transaction.get("id"):
             style = "bold green" if result.ok else "bold red"
@@ -256,6 +292,107 @@ class StatusReporter:
             console.print(Text(f"  … {len(items) - 8} more diagnostics", style="dim"))
         console.print(Text(f"  completed in {elapsed_ms:.0f}ms", style="dim"))
 
+    def _begin_command(self, command: str) -> None:
+        display = redact_command_for_display(command)
+        self._commands.append(CommandDisplay(command=display))
+        self._commands = self._commands[-8:]
+        self._expanded = False
+        if not self._interactive:
+            console.print(Text(f"RUN: {display}"))
+        self._update()
+
+    @staticmethod
+    def _safe_command_output(output: str) -> str:
+        private_field = re.compile(
+            r"(?i)\b(?:reasoning_content|reasoning_details|chain_of_thought|private_analysis|provider_debug)\b\s*[:=]"
+        )
+        visible = [line for line in output.splitlines() if not private_field.search(line)]
+        return redact_secrets("\n".join(visible))
+
+    @staticmethod
+    def _command_summary(output: str, ok: bool) -> str:
+        lines = [line.strip() for line in output.splitlines() if line.strip()]
+        summary = next(
+            (line for line in reversed(lines)
+             if re.search(r"\b\d+\s+(?:passed|failed|skipped|errors?)\b", line, re.I)),
+            lines[-1] if lines else ("Completed" if ok else "FAILED"),
+        )
+        return redact_secrets(summary[:180])
+
+    def _finish_command(self, command: str, result: ToolResult, elapsed_ms: float) -> None:
+        display = redact_command_for_display(command)
+        entry = next(
+            (item for item in reversed(self._commands)
+             if item.command == display and item.status == "running"),
+            None,
+        )
+        if entry is None:
+            self._begin_command(command)
+            entry = self._commands[-1]
+        safe_output = self._safe_command_output(redact_command_output_for_display(command, result.output))
+        entry.output = safe_output[-4000:]
+        entry.status = "cancelled" if result.metadata.get("cancelled") else ("passed" if result.ok else "failed")
+        entry.summary = self._command_summary(safe_output, result.ok)
+        entry.duration_ms = elapsed_ms
+        symbol = "!" if entry.status == "cancelled" else ("✓" if result.ok else "✗")
+        if self._interactive:
+            console.print(Text(f"{symbol} {entry.command}\n  {entry.summary}", style="green" if result.ok else "red"))
+        else:
+            label = "PASS" if result.ok else ("CANCELLED" if entry.status == "cancelled" else "FAIL")
+            console.print(Text(f"{label}: {entry.summary}"))
+        self._update()
+
+    def _command_lines(self) -> list[Text]:
+        entry = self._commands[-1]
+        symbol = "›" if entry.status == "running" else ("✓" if entry.status == "passed" else "✗")
+        width = max(12, console.width - 4)
+        command = Text(f"{symbol} {entry.command}", style="cyan")
+        command.truncate(width, overflow="ellipsis")
+        lines = [command, Text(f"  {entry.summary}", style="dim")]
+        if self._expanded and entry.output:
+            for line in entry.output.splitlines()[-40:]:
+                rendered = Text("  " + redact_secrets(line), style="dim")
+                rendered.truncate(width, overflow="ellipsis")
+                lines.append(rendered)
+        elif entry.status != "running" and entry.output:
+            lines.append(Text("  press o to expand", style="dim"))
+        return lines
+
+    def toggle_command_output(self) -> bool:
+        if not self._interactive or not self._commands:
+            return False
+        self._expanded = not self._expanded
+        self._update()
+        return self._expanded
+
+    def command_history(self) -> tuple[CommandDisplay, ...]:
+        return tuple(self._commands)
+
+    def context_status(self, input_estimate: int, budget: int) -> None:
+        self._context_percent = min(100, max(0, round(input_estimate * 100 / max(1, budget))))
+        self._update()
+
+    def _bottom_status(self) -> Text:
+        phase = (self._current_label or "Ready").upper()
+        elapsed = int(time.monotonic() - self._started_at)
+        parts = [phase, f"{elapsed // 60:02d}:{elapsed % 60:02d}"]
+        optional = [f"step {self._step}"] if self._step else []
+        if self._context_percent is not None:
+            optional.append(f"ctx {self._context_percent}%")
+        for item in optional:
+            if len(" • ".join(parts + [item])) <= max(12, console.width - 2):
+                parts.append(item)
+        text = Text(" • ".join(parts), style="reverse dim")
+        text.truncate(max(12, console.width - 2), overflow="ellipsis")
+        return text
+
+    def cancelled(self) -> None:
+        if self._commands and self._commands[-1].status == "running":
+            self._commands[-1].status = "cancelled"
+            self._commands[-1].summary = "Process stopped"
+        self._current_label = "Cancelled"
+        self._update()
+
     def done(self) -> None:
         if self._stopped:
             return
@@ -284,6 +421,7 @@ class StatusReporter:
         self._update()
 
     def workspace_analysis(self, summary: str) -> None:
+        summary = redact_secrets(summary)
         if summary in self._seen_workspace_summaries:
             return
         self.mark_workspace_seen(summary)
@@ -338,10 +476,10 @@ def _semantic_stage(action: AgentAction) -> tuple[str, str]:
         return "Recovering", f"Executed {action.type}"
     if isinstance(action, RunShellAction):
         if any(w in action.command.lower() for w in ["test", "pytest", "lint", "check"]):
-            return "Running Verification", f"Ran {action.command}"
-        return "Applying Fixes", f"Ran {action.command}"
+            return "Running Verification", "Command execution"
+        return "Applying Fixes", "Command execution"
     if isinstance(action, StartProcessAction):
-        return "Starting Process", f"Started {action.name or action.command}"
+        return "Starting Process", "Managed command started"
     if isinstance(action, (StopProcessAction, RestartProcessAction, SendProcessInputAction)):
         return "Managing Process", f"Executed {action.type} for {action.process_id}"
     if isinstance(
@@ -373,16 +511,17 @@ def _semantic_stage(action: AgentAction) -> tuple[str, str]:
             LspCodeActionsAction,
         ),
     ):
-        path = getattr(action, "path", "") or getattr(action, "query", "") or "project"
+        path = getattr(action, "path", "") or "project"
         return "Inspecting Project", f"Inspected {path}"
     if isinstance(action, WebSearchAction):
-        return "Understanding Request", f"Searched web for {action.query}"
+        return "Understanding Request", "Web search"
     if isinstance(action, (DetectVerificationAction, SuggestVerificationAction)):
         return "Inspecting Project", "Checked verification commands"
     return "Working", f"Executed {action.type}"
 
 
 def _print_terminal_diagnostic(item: dict[str, object]) -> None:
+    item = sanitize_payload(item)
     severity = str(item.get("severity") or "error")
     style = {
         "error": "bold red",

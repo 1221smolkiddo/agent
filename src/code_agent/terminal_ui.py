@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .safety import redact_secrets
+
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -260,7 +262,7 @@ def print_error_card(title: str, lines: list[tuple[str, str]], suggestions: list
     for label, detail in lines:
         if label:
             text.append(f"{label}\n", style="muted")
-        text.append(f"{detail}\n\n", style="danger" if label == "Reason:" else "default")
+        text.append(f"{redact_secrets(detail)}\n\n", style="danger" if label == "Reason:" else "default")
     
     if suggestions:
         text.append("Suggested actions:\n", style="muted")
@@ -304,7 +306,7 @@ def print_response(author: str, body: str, *, author_style: str = "bold cyan") -
 
 
 def _render_markdown(body: str, *, max_chars: int | None = None) -> Markdown:
-    normalized = _normalize_panel_body(body)
+    normalized = _normalize_panel_body(redact_secrets(body))
     if max_chars is not None and len(normalized) > max_chars:
         normalized = normalized[:max_chars].rstrip()
         if normalized.count("```") % 2:
@@ -314,7 +316,7 @@ def _render_markdown(body: str, *, max_chars: int | None = None) -> Markdown:
 
 
 def _normalize_panel_body(body: str) -> str:
-    lines = [line.rstrip() for line in body.strip().splitlines()]
+    lines = [line.rstrip() for line in redact_secrets(body).strip().splitlines()]
     collapsed: list[str] = []
     previous_blank = False
     for line in lines:

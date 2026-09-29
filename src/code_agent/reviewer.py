@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from .models import ChatMessage, ModelClient
+from .models import ChatMessage, ModelClient, safe_model_error
 
 
 class ReviewerDecision(BaseModel):
@@ -31,7 +31,7 @@ class ReviewerPassResult:
             "summary": self.summary,
             "issues": self.issues,
             "required_actions": self.required_actions,
-            "raw": self.raw,
+            "raw": "",
             "error": self.error,
         }
 
@@ -62,14 +62,14 @@ def run_reviewer_pass(
             ok=True,
             summary="Reviewer pass unavailable; continuing with primary agent result.",
             raw="",
-            error=f"{type(exc).__name__}: {exc}",
+            error=safe_model_error(exc),
         )
     return ReviewerPassResult(
         ok=decision.ok,
         summary=decision.summary,
         issues=decision.issues,
         required_actions=decision.required_actions,
-        raw=raw,
+        raw="",
     )
 
 

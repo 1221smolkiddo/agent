@@ -164,6 +164,85 @@ def redact_secrets(value: str) -> str:
     return _JWT_TOKEN.sub(_redact_jwt, redacted)
 
 
+
+_DISPLAY_SECRET_ARGUMENT = re.compile(
+    r"(?i)(?<![\w-])(--(?:api[-_]?key|password|passwd|token|secret|authorization|client[-_]?secret|user|header|data|data-urlencode)\s+)"
+    r"(\"[^\"]*\"|'[^']*'|\S+)"
+)
+
+
+_DISPLAY_OPAQUE_TOKEN = re.compile(r"(?<![A-Za-z0-9_./-])[A-Za-z][A-Za-z0-9_-]{19,}(?![A-Za-z0-9_./-])")
+
+
+def redact_command_for_display(command: str) -> str:
+    """Return a safe copy for terminal and approval rendering; never alter execution input."""
+    safe = redact_secrets(command)
+    if re.match(r"(?i)^\s*(?:echo|printf|print)\b", safe):
+        return safe.split(maxsplit=1)[0] + " [REDACTED]"
+    safe = re.sub(r"(?i)(?<![\w-])(?:-H|-u|-d)\s+(?:\"[^\"]*\"|'[^']*'|\S+)", "[REDACTED ARGUMENT]", safe)
+    safe = _DISPLAY_SECRET_ARGUMENT.sub(lambda match: match.group(1) + "[REDACTED]", safe)
+    safe = re.sub(r'"[^\"]*"|\x27[^\x27]*\x27', "[REDACTED]", safe)
+    return _DISPLAY_OPAQUE_TOKEN.sub("[REDACTED]", safe)
+
+
+def redact_command_output_for_display(command: str, output: str) -> str:
+    """Redact output using credentials known from the command, without changing execution."""
+    safe = redact_secrets(output)
+    if re.match(r"(?i)^\s*(?:echo|printf|print)\b", command):
+        return "[output redacted]"
+    candidates = [match.group(2) for match in _DISPLAY_SECRET_ARGUMENT.finditer(command)]
+    for match in re.finditer(r"(?i)(?<![\w-])(?:-H|-u|-d)\s+(\"[^\"]*\"|'[^']*'|\S+)", command):
+        candidate = match.group(1).strip("\"'")
+        candidates.append(candidate)
+        if ":" in candidate:
+            candidates.append(candidate.split(":", 1)[1].strip())
+    for candidate in candidates:
+        candidate = candidate.strip("\"'")
+        if len(candidate) >= 4:
+            safe = safe.replace(candidate, "[REDACTED]")
+    return safe
+
+
+# One recursive boundary for event payloads, snapshots, UI metadata and checkpoints.
+# These are provider-private fields, not public plans or verification explanations.
+_PRIVATE_FIELDS = {"reasoning_content", "reasoning_details", "chain_of_thought", "private_analysis", "provider_debug"}
+_CREDENTIAL_FIELDS = {"api_key", "apikey", "password", "authorization", "access_token", "refresh_token", "client_secret"}
+
+
+def sanitize_payload(value):
+    if isinstance(value, str):
+        return redact_secrets(value)
+    if isinstance(value, dict):
+        result = {}
+        for key, item in value.items():
+            normalized = str(key).lower().replace("-", "_")
+            if normalized in _PRIVATE_FIELDS:
+                continue
+            safe_key = redact_secrets(str(key))
+            result[safe_key] = (
+                "[REDACTED]" if normalized in _CREDENTIAL_FIELDS and item is not None
+                else sanitize_payload(item)
+            )
+        return result
+    if isinstance(value, (list, tuple)):
+        return [sanitize_payload(item) for item in value]
+    return value
+
+
+def safe_exception(exc: BaseException, *, component: str = "Operation") -> str:
+    # Never echo exception bodies: they can contain arbitrary prompts and responses.
+    if type(exc).__name__ == "SandboxIsolationError":
+        return "Sandbox isolation unavailable; Agent47 will not fall back to local execution."
+    if isinstance(exc, (TimeoutError,)):
+        category = "timed out"
+    elif isinstance(exc, PermissionError):
+        category = "permission denied"
+    elif isinstance(exc, (KeyboardInterrupt, SystemExit)):
+        category = "cancelled"
+    else:
+        category = "failed"
+    return f"{component} {category} ({type(exc).__name__})."
+
 def classify_shell_command(command: str) -> ShellPolicy:
     normalized = " ".join(command.strip().split())
     lowered = normalized.lower()
@@ -216,7 +295,7 @@ def classify_shell_command(command: str) -> ShellPolicy:
             "May install packages or contact external network resources.",
             may_write=True,
             may_network=True,
-            timeout_seconds=180,
+            timeout_seconds=600,
         )
     if _looks_like_test_or_build(lowered):
         return ShellPolicy(
@@ -225,7 +304,7 @@ def classify_shell_command(command: str) -> ShellPolicy:
             True,
             "Runs project verification.",
             may_write=True,
-            timeout_seconds=120,
+            timeout_seconds=600,
         )
     if _looks_like_development_process(lowered):
         return ShellPolicy(
@@ -245,7 +324,7 @@ def classify_shell_command(command: str) -> ShellPolicy:
             True,
             "Touches git metadata or repository state.",
             may_write=True,
-            timeout_seconds=60,
+            timeout_seconds=120,
         )
     if _looks_like_read_only(lowered):
         return ShellPolicy(
@@ -253,7 +332,7 @@ def classify_shell_command(command: str) -> ShellPolicy:
             "low",
             True,
             "Inspects local state without obvious mutation.",
-            timeout_seconds=30,
+            timeout_seconds=60,
         )
     return ShellPolicy(
         "unknown",

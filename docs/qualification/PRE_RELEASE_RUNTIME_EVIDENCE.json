@@ -1,0 +1,138 @@
+{
+  "baseline_sha": "8a9bbe588fc4c6799f9938328cff8d7ee103f4e9",
+  "branch": "audit/pre-release-runtime",
+  "focused": {
+    "tests": 742,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 5,
+    "passed": 737,
+    "seconds": 158.404,
+    "failed_tests": []
+  },
+  "full_non_docker": {
+    "tests": 1263,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 5,
+    "passed": 1257,
+    "seconds": 184.581,
+    "failed_tests": [
+      "tests.test_interactive_diff::test_terminal_width_fallback_when_narrow"
+    ]
+  },
+  "new_long_lived_regressions": 16,
+  "simulated_workflow_seconds": 660,
+  "conversation_turns": 35,
+  "ruff": "PASS",
+  "diff_check": "PASS",
+  "docker": "NOT RUN: local daemon unavailable",
+  "provider": [
+    {
+      "task": "short",
+      "status": "timeout",
+      "elapsed_ms": 16476.95
+    },
+    {
+      "task": "multi-step",
+      "status": "blocked",
+      "elapsed_ms": 29990.1,
+      "phases": [
+        "Planning",
+        "Inspecting project",
+        "Executing",
+        "Executing",
+        "Executing",
+        "Waiting for model",
+        "Executing",
+        "Recovering",
+        "Waiting for model",
+        "Recovering"
+      ],
+      "model_calls": 2,
+      "model_elapsed_ms": 29448.54,
+      "error_categories": [
+        null,
+        "MODEL_TIMEOUT"
+      ]
+    }
+  ],
+  "installed_wheel": {
+    "fresh_venv": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-runtime-audit-install-8si63_rn\\.venv",
+    "results": {
+      "venv": {
+        "exit_code": 0,
+        "log": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-runtime-audit-install-8si63_rn\\venv.log"
+      },
+      "install": {
+        "exit_code": 0,
+        "log": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-runtime-audit-install-8si63_rn\\install.log"
+      },
+      "pip-check": {
+        "exit_code": 0,
+        "log": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-runtime-audit-install-8si63_rn\\pip-check.log"
+      },
+      "imports": {
+        "exit_code": 0,
+        "log": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-runtime-audit-install-8si63_rn\\imports.log",
+        "path": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-runtime-audit-install-8si63_rn\\.venv\\Lib\\site-packages\\code_agent\\__init__.py"
+      },
+      "help": {
+        "exit_code": 0,
+        "log": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-runtime-audit-install-8si63_rn\\help.log"
+      },
+      "automation-help": {
+        "exit_code": 0,
+        "log": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-runtime-audit-install-8si63_rn\\automation-help.log"
+      },
+      "startup": {
+        "exit_code": 0,
+        "log": "C:\\Users\\Sirius\\AppData\\Local\\Temp\\agent47-runtime-audit-install-8si63_rn\\startup.log",
+        "normal_setup": true
+      }
+    }
+  },
+  "wheel_sha256": "5e77029fecc6e0167b8e12857c63041a2e97ed24dcf4547e41360b0bf151edcf",
+  "wheel_runtime_files_match": 135,
+  "source_sha256": {
+    "src/code_agent/agent.py": "e449fa7711db0c83f535a8e126d783b13d18aaf0fd7d6a6764bfe8002ae3a4c7",
+    "src/code_agent/cli.py": "c93f6c53f9610893c791ee0e8f2f96e4fcb31275ca3cc30258a92894e0ca9d32",
+    "src/code_agent/config.py": "ad641656eb5ed20c8067e81edf6310a200dc4a016e9f3316795a4ee3b7761960",
+    "src/code_agent/doctor.py": "0f5e410b49e8298f5d2fd3d43a1967d5e5627cfc489df9db91c92994618e8dab",
+    "src/code_agent/durable_execution.py": "449b3716d4c27ec97a16d992975065ae0d7bde81528208af7bf232db40aaa59f",
+    "src/code_agent/execution_adapters.py": "027d70a16933fc32a7e5b10f0c3df8da1516eb54ff56430a397ef4d3c09b0dfc",
+    "src/code_agent/execution_state.py": "8ba1ec353fcc8e8d764218e00a7e421276007224e7e3a232141d81b8cd8aeabc",
+    "src/code_agent/extensions.py": "e883cd151ba77a9685aba85476ddf056830286a52f29ed1e0c3f40e1a9bfd483",
+    "src/code_agent/factory.py": "355a4dbc2dea9cac1411b7a951ae771553187688a4a128789817280499f007c2",
+    "src/code_agent/interactive.py": "c75d911eb2f04097647aa4dc224fe253ed3f123521de63048202de1a9ef49844",
+    "src/code_agent/lsp.py": "14921114e6ca668739465e36ce4802c1877012bbfd1ca0302f29a47a230ab92b",
+    "src/code_agent/mcp.py": "246ea66a7fc2ad433da2343abe425501bbc9a92c7b99d2e3dc5548b22dcc5b15",
+    "src/code_agent/memory_eval.py": "ebf88d5609a692eb5b7f48e212acf46a23f5a8d250f2590a51b00ec191870085",
+    "src/code_agent/models.py": "d9bf02400d593b032e8eec2a2848fb958f9f73a7525ae6d1cfebe07230bb5f22",
+    "src/code_agent/process_worker.py": "c41530299a762767557b49ad1ca53a8f3b8b8ac99d98f2b6fd3951049d1a0640",
+    "src/code_agent/protocol.py": "591f08bdbf3718ea1bc4b8f10ee67591ccfcae07af59e8e0ed2269f42dc33d33",
+    "src/code_agent/runtime_migration.py": "0c84f4791105bf3379a63097b15f95cb10eaa4d935f652c7a24ff42ad93c2793",
+    "src/code_agent/safety.py": "fb36f128cb26f00cc4cb46d61a00a64abf7e0bb6d13a63ee44c3f21e7d81a582",
+    "src/code_agent/session.py": "9f371367ddccc4ba2a671eaf756a8864a21c92a8dbb7a22799e92d9a0c8085bc",
+    "src/code_agent/status.py": "d99a2cd8bad4137baf5b8f97e195cd612bc2ec2ad6caa198c3644abe4a7b8ee4",
+    "src/code_agent/storage.py": "c7c3b17929cc782e2ae67c9fb60cd1634511c4580bc3d6e2cf11df786d69b38e",
+    "src/code_agent/tools.py": "29d3ecd3d68b897a9e2d818fdda7a8748837960476cff5a9b6886ca2796aa6ff",
+    "src/code_agent/work_report.py": "9ea951d6f28b9f24d854b3c8a5f8bc6b29b5fd90c9a376fd93bef414916f3fc9",
+    "tests/test_agent_recovery.py": "880f80dcd5b3261225bd54d157eb42e0ed46ca72e13b3bb93076cd577d0286ea",
+    "tests/test_execution_migration.py": "df46bc6d50c8573966b64e779f1c41d3f7a351c2370a3b89eda11fc540145ed2",
+    "tests/test_protocol.py": "2f990c7ed335b5f40ca4672ee9fa2caa676ad609ea155b612ff2b010f91b5e4e",
+    "tests/test_runtime_audit.py": "e937e0cc0d5d98161c350463af63c094293f0427d49af8090115b4d893c3afe1",
+    "tests/test_status.py": "fec4863ee88a8f8d3c85abc5ab7501f4d36a2bf2572bdfa536658cab048e04a8",
+    "src/code_agent/context_budget.py": "26eb5a94e065f8aebfae83f621326f095dc19ebbb840ce3d00f17791b8d8ec12",
+    "tests/test_long_lived_runtime.py": "3863e3fd254374f629d2c9f2ea436ceae25ab2d88414aefbcd174455c851a78c"
+  },
+  "global_runtime_budget": "REMOVED",
+  "durable_event_privacy": "PASS for tested boundaries",
+  "status_error_privacy": "PASS for tested boundaries",
+  "hidden_reasoning": "PASS for dedicated fields",
+  "verdict": "READY FOR 0.1.0 WITH DOCUMENTED LIMITATIONS",
+  "pushed": false,
+  "published": false,
+  "tag_modified": false,
+  "validation_note": "An intermediate Windows test-file write failed due to encoding; the file was restored as UTF-8 and all 16 cases are present in both final suites."
+}

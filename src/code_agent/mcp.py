@@ -126,7 +126,7 @@ class McpStdioClient:
                     self._write({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params or {}})
                     response = self._read_response(request_id)
                 if "error" in response:
-                    raise McpError(f"MCP {method} failed: {response['error']}")
+                    raise McpError("MCP request rejected by remote server.")
                 result = response.get("result", {})
                 return result if isinstance(result, dict) else {"value": result}
             except (OSError, EOFError, BrokenPipeError, McpError) as exc:
@@ -135,7 +135,8 @@ class McpStdioClient:
                 if not reconnect:
                     break
                 time.sleep(0.1)
-        raise McpError(f"MCP request {method} failed after {attempts} attempt(s): {last_error}")
+        category = "timed out" if isinstance(last_error, McpError) and "timed out" in str(last_error) else "failed"
+        raise McpError(f"MCP request {category} after {attempts} attempt(s).") from None
 
     def notify(self, method: str, params: dict[str, Any]) -> None:
         if not self.connected:

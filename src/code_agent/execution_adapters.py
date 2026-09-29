@@ -23,6 +23,7 @@ from .execution_contracts import (
     PreparedEffect,
 )
 from .schema import AgentAction, ToolResult
+from .safety import sanitize_payload, safe_exception
 
 
 ACTION_ADAPTER = TypeAdapter(AgentAction)
@@ -51,6 +52,8 @@ class CallableTransactionalAdapter:
     def prepare(self, request: dict[str, Any], context: AdapterContext) -> PreparedEffect:
         if context.compatibility_version not in self.capabilities.compatibility_versions:
             raise ValueError("Adapter does not support this execution compatibility version.")
+        if sanitize_payload(request) != request or "[REDACTED]" in json.dumps(request):
+            raise ValueError("Sensitive effect payload cannot be replayed safely; use credential references.")
         encoded = json.dumps(request, sort_keys=True, default=str)
         fingerprint = hashlib.sha256(
             f"{self.capabilities.name}:{context.idempotency_key}:{encoded}".encode()
@@ -342,7 +345,7 @@ class TransactionalEffectRunner:
             try:
                 outcome = adapter.execute(prepared)
             except Exception as exc:
-                outcome = EffectOutcome(False, "unknown", f"{type(exc).__name__}: {exc}")
+                outcome = EffectOutcome(False, "unknown", safe_exception(exc, component="Adapter"))
         target = (
             "committed" if outcome.ok and outcome.status != "unknown"
             else "unknown" if outcome.status == "unknown"

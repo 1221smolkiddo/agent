@@ -7,6 +7,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TextIO
 
+from .safety import sanitize_payload
 from .permissions import MANUAL_APPROVAL_ACTIONS
 from .schema import AgentAction, ToolResult
 from .status import _semantic_stage
@@ -29,7 +30,7 @@ def protocol_event(event: str, **payload: Any) -> dict[str, Any]:
 
 
 def event_to_json_line(event: dict[str, Any]) -> str:
-    return json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return json.dumps(sanitize_payload(event), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 class JsonEventEmitter:
@@ -47,6 +48,9 @@ class JsonProtocolReporter:
         self._stream_chars = 0
         self._has_plan = False
         self._consecutive_retries = 0
+
+    def phase(self, label: str) -> None:
+        self.emitter.emit("status", label=label, detail="")
 
     def thinking(self, step: int) -> None:
         label = "PLANNING" if self._has_plan else "THINKING"

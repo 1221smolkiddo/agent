@@ -226,11 +226,7 @@ class LspClient:
             with self._pending_lock:
                 self._pending.pop(request_id, None)
         if "error" in response:
-            error = _dict(response["error"])
-            raise LspError(
-                f"{self.server.spec.name} rejected {method}: "
-                f"{error.get('message', 'unknown JSON-RPC error')}"
-            )
+            raise LspError("Language server rejected the request.")
         return response.get("result")
 
     def notify(self, method: str, params: Any) -> None:
