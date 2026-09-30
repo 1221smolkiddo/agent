@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import asdict, replace
 import difflib
 import html.parser
 import inspect
@@ -39,6 +40,7 @@ from .schema import (
     InvokeToolAction,
     InspectProcessAction,
     ListFilesAction,
+    MakeDirectoryAction,
     ListProcessesAction,
     LspCodeActionsAction,
     LspCompletionAction,
@@ -87,7 +89,7 @@ from .repo_index import (
     rank_context,
     start_background_index_refresh,
 )
-from .safety import classify_network_url, classify_shell_command, is_sensitive_path, redact_secrets, redact_command_for_display, safe_exception
+from .safety import ShellPolicy, blocked_command_strategy, unknown_command_approval_eligible, classify_network_url, classify_shell_command, is_sensitive_path, redact_secrets, redact_command_for_display, safe_exception
 from .sandbox_security import (
     SandboxAuditLog,
     SandboxPolicy,
@@ -165,11 +167,14 @@ class ToolRegistry:
         extension_registry: DynamicToolRegistry | None = None,
         lifecycle_hooks: LifecycleHooks | None = None,
         session_state: Any | None = None,
+        interactive_shell: bool = False,
     ) -> None:
         self.workspace = workspace.resolve()
         self.dry_run = dry_run
         self.approval_callback = approval_callback
         self.session_state = session_state
+        self.interactive_shell = interactive_shell
+        self._denied_command_strategies: dict[str, ToolResult] = {}
         self.shell_network_policy = shell_network_policy.strip().lower()
         self.index_cache = index_cache
         self.index_refresh: BackgroundIndexRefresh | None = None
@@ -317,6 +322,8 @@ class ToolRegistry:
             return self._list_files(action.path)
         if isinstance(action, ReadFileAction):
             return self._read_file(action.path)
+        if isinstance(action, MakeDirectoryAction):
+            return self._make_directory(action.path)
         if isinstance(action, WriteFileAction):
             return self._write_file(action.path, action.content)
         if isinstance(action, EditFileAction):
@@ -506,6 +513,28 @@ class ToolRegistry:
         if not self._approve("read_file", requested_path):
             return ToolResult(ok=False, output="Permission denied for read_file.")
         return ToolResult(ok=True, output=redact_secrets(target.read_text(encoding="utf-8")))
+
+    def _make_directory(self, requested_path: str) -> ToolResult:
+        if self.dry_run:
+            return ToolResult(ok=False, output="Directory creation is disabled in dry-run mode.")
+        try:
+            target = self.resolve_inside_workspace(requested_path)
+        except ValueError:
+            return ToolResult(ok=False, output="Refusing directory creation outside the workspace.")
+        protected = {".ssh", ".aws", ".azure", ".gnupg", ".git"}
+        if is_sensitive_path(target, self.workspace) or any(
+            part.lower() in protected for part in target.relative_to(self.workspace.resolve()).parts
+        ):
+            return ToolResult(ok=False, output="Refusing to create a sensitive directory.")
+        if not self._approve("make_directory", f"Create directory: {requested_path}"):
+            return ToolResult(ok=False, output="Permission denied for directory creation.")
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            return ToolResult(ok=False, output=safe_exception(exc))
+        self._refresh_index_after_mutation(True, [requested_path])
+        return ToolResult(ok=True, output=f"Created directory: {requested_path}",
+                          metadata={"scaffolding": True, "paths": [requested_path]})
 
     def _write_file(self, requested_path: str, content: str) -> ToolResult:
         if self.dry_run:
@@ -864,10 +893,44 @@ class ToolRegistry:
     def _refresh_index_after_mutation(self, ok: bool, paths: list[str]) -> None:
         if not ok or not paths or self.index_cache is None:
             return
-        if self.index_refresh is not None:
-            self.index_refresh.request_refresh(paths)
-        else:
-            self.index_cache.invalidate(self.workspace, paths)
+        try:
+            if self.index_refresh is not None:
+                self.index_refresh.request_refresh(paths)
+            else:
+                self.index_cache.invalidate(self.workspace, paths)
+        except Exception:
+            pass  # Index invalidation is advisory; the completed mutation remains valid.
+
+    def _command_policy(self, command: str) -> ShellPolicy:
+        policy = classify_shell_command(command)
+        if (self.interactive_shell and policy.category == "unknown"
+                and unknown_command_approval_eligible(command, self.workspace)):
+            return replace(policy, allowed=True, arbitrary_code=False,
+                           may_write=True, may_network=True, timeout_seconds=60,
+                           reason="Unclassified command requires explicit approval for this action.")
+        return policy
+
+    def policy_context(self) -> str:
+        """Only a changed effective policy can invalidate a recorded hard denial."""
+        payload = {"sandbox": asdict(self.sandbox_policy), "network": self.shell_network_policy}
+        return sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+
+    def _policy_denial(
+        self, command: str, category: str, reason: str, *,
+        legacy_output: str | None = None, extra_metadata: dict[str, Any] | None = None,
+    ) -> ToolResult:
+        display = redact_command_for_display(command)
+        reason = redact_command_for_display(redact_secrets(reason))
+        result = ToolResult(
+            ok=False,
+            output=(redact_secrets(legacy_output) if legacy_output is not None and not self.interactive_shell
+                    else f"Blocked command:\n{display}\n\nReason:\n{reason}"),
+            metadata={"policy_denied": True, "policy_class": category,
+                      "blocked_command": display, "policy_reason": reason,
+                      "policy_context": self.policy_context(), **(extra_metadata or {})},
+        )
+        self._denied_command_strategies[blocked_command_strategy(command)] = result
+        return result
 
     def _run_shell(self, command: str) -> ToolResult:
         if self.dry_run:
@@ -878,58 +941,34 @@ class ToolRegistry:
                     "/sandbox plus /write, or use --sandbox/without --dry-run before shell commands."
                 ),
             )
-        policy = classify_shell_command(command)
+        previous_denial = self._denied_command_strategies.get(blocked_command_strategy(command))
+        if previous_denial is not None and previous_denial.metadata.get("policy_context") == self.policy_context():
+            return previous_denial
+        policy = self._command_policy(command)
         if not policy.allowed:
-            return ToolResult(
-                ok=False,
-                output=(
-                    f"Blocked {policy.category} shell command ({policy.risk} risk): "
-                    f"{policy.reason}"
-                ),
-            )
+            return self._policy_denial(command, policy.category, policy.reason,
+                legacy_output=f"Blocked {policy.category} shell command ({policy.risk} risk): {policy.reason}")
         if policy.category == "development":
-            return ToolResult(
-                ok=False,
-                output="Use start_process for development servers and watchers; they need managed process lifecycle.",
-            )
+            return self._start_process(StartProcessAction(type="start_process", command=command))
         if self.shell_network_policy == "deny" and policy.may_network:
-            return ToolResult(
-                ok=False,
-                output=(
-                    "Blocked install/network shell command because shell network access is denied "
-                    "for this run. Use AGENT_SHELL_NETWORK=allow or omit --deny-network-shell only "
-                    "when network access is intentional."
-                ),
-                metadata={
-                    "category": policy.category,
-                    "risk": policy.risk,
-                    "shell_network_policy": self.shell_network_policy,
-                },
-            )
+            return self._policy_denial(command, policy.category,
+                "Shell network access is denied for this run.",
+                legacy_output=("Blocked install/network shell command because shell network access is denied "
+                               "for this run. Use AGENT_SHELL_NETWORK=allow only when network access is intentional."),
+                extra_metadata={"shell_network_policy": self.shell_network_policy,
+                                "category": policy.category, "risk": policy.risk})
         sandbox_rejection = self.sandbox_policy.command_rejection(command, policy)
         if sandbox_rejection:
-            return ToolResult(
-                ok=False,
-                output=sandbox_rejection,
-                metadata={
-                    "category": policy.category,
-                    "risk": policy.risk,
-                    "sandbox_backend": self.sandbox_policy.backend,
-                },
-            )
+            return self._policy_denial(command, policy.category, sandbox_rejection,
+                                       legacy_output=sandbox_rejection)
         if self.sandbox_policy.backend == "local":
             local_path_rejection = local_command_path_rejection(command, self.workspace)
             if local_path_rejection:
-                return ToolResult(
-                    ok=False,
-                    output=local_path_rejection,
-                    metadata={
-                        "category": policy.category,
-                        "risk": policy.risk,
-                        "sandbox_backend": self.sandbox_policy.backend,
-                        "local_command_path_rejected": True,
-                    },
-                )
+                return self._policy_denial(command, "workspace-escape", local_path_rejection,
+                    legacy_output=local_path_rejection,
+                    extra_metadata={"category": policy.category, "risk": policy.risk,
+                                    "sandbox_backend": self.sandbox_policy.backend,
+                                    "local_command_path_rejected": True})
         approval_detail = (
             f"Risk: {policy.risk}\n"
             f"Category: {policy.category}\n"
@@ -948,10 +987,11 @@ class ToolRegistry:
             f"Command: {redact_command_for_display(command)}"
         )
         if not self._approve("run_shell", approval_detail):
-            return ToolResult(ok=False, output="Permission denied for run_shell.")
+            return self._policy_denial(command, policy.category,
+                "Permission denied by the user; this command strategy is unavailable.",
+                legacy_output="Permission denied for run_shell.")
         if self._is_python_test_command(command):
             self._clear_python_bytecode_cache()
-        self.reset_cancellation()
         process_result = self._normalize_shell_process_result(
             self._run_shell_process(
                 command,
@@ -1050,39 +1090,28 @@ class ToolRegistry:
     def _start_process(self, action: StartProcessAction) -> ToolResult:
         if self.dry_run:
             return ToolResult(ok=False, output="Dry-run mode skipped start_process.")
-        policy = classify_shell_command(action.command)
+        previous_denial = self._denied_command_strategies.get(blocked_command_strategy(action.command))
+        if previous_denial is not None and previous_denial.metadata.get("policy_context") == self.policy_context():
+            return previous_denial
+        policy = self._command_policy(action.command)
         if not policy.allowed:
-            return ToolResult(
-                ok=False,
-                output=(
-                    f"Blocked {policy.category} background command ({policy.risk} risk): "
-                    f"{policy.reason}"
-                ),
-            )
-
+            return self._policy_denial(action.command, policy.category, policy.reason,
+                legacy_output=f"Blocked {policy.category} background command ({policy.risk} risk): {policy.reason}")
         if self.shell_network_policy == "deny" and policy.may_network:
-            return ToolResult(
-                ok=False,
-                output="Blocked background command because shell network access is denied.",
-            )
+            return self._policy_denial(action.command, policy.category, "Shell network access is denied for this run.")
         sandbox_rejection = self.sandbox_policy.command_rejection(action.command, policy)
         if sandbox_rejection:
-            return ToolResult(ok=False, output=sandbox_rejection)
+            return self._policy_denial(action.command, policy.category, sandbox_rejection)
         if self.sandbox_policy.backend != "local" and self.container_manager is None:
-            return ToolResult(
-                ok=False,
-                output=(
-                    "Persistent background processes require a managed container-job backend when "
-                    "container isolation is active; refusing to launch an unisolated host process."
-                ),
-            )
+            return self._policy_denial(action.command, policy.category,
+                "Persistent background processes require a managed container-job backend; refusing an unisolated host process.")
         path_rejection = local_command_path_rejection(action.command, self.workspace)
         if path_rejection:
-            return ToolResult(ok=False, output=path_rejection)
+            return self._policy_denial(action.command, "workspace-escape", path_rejection)
         try:
             cwd = self.resolve_inside_workspace(action.working_directory)
-        except ValueError as exc:
-            return ToolResult(ok=False, output=str(exc))
+        except ValueError:
+            return self._policy_denial(action.command, "workspace-escape", "Working directory escapes the workspace.")
         detail = (
             f"Risk: {policy.risk}\nCategory: {policy.category}\nReason: {policy.reason}\n"
             f"Command: {redact_command_for_display(action.command)}\nWorking directory: {cwd}\n"
@@ -1093,7 +1122,11 @@ class ToolRegistry:
             f"CPU-time limit: {action.cpu_time_limit_seconds or 'monitor only'} seconds"
         )
         if not self._approve("start_process", detail):
-            return ToolResult(ok=False, output="Permission denied for start_process.")
+            return self._policy_denial(action.command, policy.category,
+                "Starts a development process and requires approval. Permission denied by the user.",
+                legacy_output="Permission denied for start_process.")
+        if self.cancellation_token.cancelled:
+            raise KeyboardInterrupt
         try:
             record = self.process_supervisor.start_managed(
                 action.command,
@@ -1115,6 +1148,9 @@ class ToolRegistry:
             )
         except (ManagedProcessError, OSError, ValueError) as exc:
             return ToolResult(ok=False, output=f"Failed to start managed process: {exc}")
+        if self.cancellation_token.cancelled:
+            self.cancel_running_processes(self.cancellation_token.reason)
+            raise KeyboardInterrupt
         return ToolResult(
             ok=True,
             output=(

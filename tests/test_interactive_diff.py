@@ -465,7 +465,9 @@ def test_terminal_width_fallback_when_narrow() -> None:
     from code_agent.diff_types import DiffViewMode
 
     model = _sample_model()
-    narrow_console = Console(record=True, force_terminal=True, width=50)
+    # Rich ignores a width-only override under TERM=dumb; set both dimensions.
+    narrow_console = Console(record=True, force_terminal=True, width=50, height=25)
+    assert narrow_console.width < 70
     state = _state(cursor_row=0, view_mode=DiffViewMode.SIDE_BY_SIDE)
 
     with narrow_console.capture() as capture:

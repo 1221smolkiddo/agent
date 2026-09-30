@@ -11,6 +11,7 @@ from code_agent.agent import AgentRunResult, CodingAgent
 from code_agent.config import Settings
 from code_agent.context_budget import ContextBudgetExceeded, bound_messages, estimate_tokens
 from code_agent.durable_execution import Command, DurableExecutionRuntime
+from code_agent.failure_types import RunDisposition
 from code_agent.interactive import run_interactive_turn, task_with_context
 from code_agent.models import OpenAICompatibleChatClient
 from code_agent.protocol import JsonEventEmitter
@@ -107,8 +108,8 @@ def test_cancelled_late_model_cannot_mutate(tmp_path):
             runner.cancel()
             return '{"type":"write_file","path":"unsafe.txt","content":"late"}'
     runner = agent(tmp_path, CancellingModel([]), tools)
-    with pytest.raises(KeyboardInterrupt):
-        runner.run_detailed("write a project file")
+    result = runner.run_detailed("write a project file")
+    assert result.blocked and result.disposition == RunDisposition.TERMINAL
     assert tools.calls == 0 and tools.closed
     assert not (tmp_path / "unsafe.txt").exists()
 
@@ -274,8 +275,8 @@ def test_cancel_after_tool_prevents_success_and_retention(tmp_path):
     tools = CancellingTools()
     runner = agent(tmp_path, Model(['{"type":"read_file","path":"a.py"}',
                                     '{"type":"final","message":"must not run"}']), tools)
-    with pytest.raises(KeyboardInterrupt):
-        runner.run_detailed("inspect project")
+    result = runner.run_detailed("inspect project")
+    assert result.blocked and result.disposition == RunDisposition.TERMINAL
     assert tools.calls == 1 and tools.closed
     assert len(runner.model_client.seen) == 1
 
@@ -392,3 +393,118 @@ def test_100_turn_checkpoint_compaction_and_restart(tmp_path):
     assert (tmp_path / "migration.py").read_text(encoding="utf-8") == "SCHEMA_VERSION = 2\n"
     assert SECRETS[0] not in str(bounded) + prompt
     assert PRIVATE not in str(bounded) + prompt
+
+
+def test_interactive_task_uses_model_relative_tokens_above_old_ten_k_limit(tmp_path, monkeypatch):
+    import code_agent.interactive as ui
+    monkeypatch.setattr(ui, "print_work_report_panel", lambda *args: None)
+    monkeypatch.setattr(ui, "print_response", lambda *args: None)
+    class CapturingAgent:
+        context_window_tokens = 120_000
+        reserved_output_tokens = 4096
+        context_max_chars = None
+        storage = None
+        def run_detailed(self, task):
+            self.task = task
+            return AgentRunResult(message="done", run_id=1, task=task)
+    runner = CapturingAgent()
+    state = SessionState(persistent_goal="finish the migration")
+    transcript = [(f"discussion {i} " + "x" * 800, "next action " + "y" * 800) for i in range(30)]
+    run_interactive_turn("continue the migration", runner, transcript, state)
+    assert len(runner.task) > 10_000
+    assert "finish the migration" in runner.task
+    assert "discussion 29" in runner.task
+
+
+def test_checkpoint_keeps_many_distinct_decisions_without_tiny_list_cap():
+    state = SessionState(persistent_goal="complete architecture migration")
+    for index in range(20):
+        state.record_decision(f"Decision {index}: keep compatibility")
+    rendered = state.render(max_tokens=12_000)
+    assert len(state.architecture_decisions) == 20
+    assert "Decision 0" in rendered and "Decision 19" in rendered
+
+
+def test_checkpoint_budget_preserves_priority_and_restart(tmp_path):
+    storage = AgentStorage(tmp_path / "agent.db")
+    state = SessionState(persistent_goal="complete the migration")
+    for index in range(50):
+        state.record_decision(f"Architecture decision {index}")
+        state.record_failed_approach(f"Failed approach {index}")
+    state.current_plan = [{"step": f"migration stage {index}", "status": "pending"} for index in range(30)]
+    state.verified_evidence = [
+        {"command": f"pytest part {index}", "status": "passed"} for index in range(30)
+    ]
+    state.recent_corrections = ["Correction: keep existing IDs"]
+    state.last_blocker = "verification pending"
+    state.last_run_id = storage.create_run("migration", "fake", tmp_path)
+    state.save(storage)
+    restored = SessionState.restore(storage, tmp_path)
+    assert restored.persistent_goal == state.persistent_goal
+    assert restored.current_plan == state.current_plan
+    assert restored.last_blocker == state.last_blocker
+    assert restored.recent_corrections == state.recent_corrections
+    assert restored.verified_evidence == state.verified_evidence
+    assert len(restored.architecture_decisions) == 50
+    assert len(restored.failed_approaches) == 50
+
+
+def test_recent_transcript_is_bounded_by_active_model_capacity():
+    from code_agent.interactive import _recent_transcript
+
+    history = [(f"user {index}", "x" * 250) for index in range(100)]
+    kept = _recent_transcript(history, 4_000)
+    assert kept and kept[-1][0] == "user 99"
+    assert len(kept) > 8
+    assert sum(len(a.encode()) + len(b.encode()) + 64 for a, b in kept) <= 4_000
+
+
+def test_agent_accepts_completed_fallback_after_prior_attempt_window(tmp_path, monkeypatch):
+    from code_agent.models import FallbackModelClient
+
+    clock = Clock()
+    monkeypatch.setattr("code_agent.agent.perf_counter", lambda: clock.now)
+    calls = []
+
+    class Client(Model):
+        def __init__(self, name, fail):
+            super().__init__(['{"type":"final","message":"completed"}'])
+            self.model = name
+            self.fail = fail
+
+        def drain_usage_records(self):
+            return []
+
+        def complete_with_timeout(self, messages, timeout_seconds):
+            calls.append((self.model, timeout_seconds))
+            if self.fail:
+                clock.advance(11)
+                raise TimeoutError("primary timed out")
+            clock.advance(2)
+            return self.complete(messages)
+
+    model = FallbackModelClient([Client("primary", True), Client("backup", False)])
+    runner = agent(tmp_path, model, model_timeout_seconds=10)
+    result = runner.run_detailed("inspect the project")
+    assert not result.blocked
+    assert result.message == "completed"
+    assert calls == [("primary", 10), ("backup", 10)]
+
+
+def test_checkpoint_compaction_keeps_blocker_and_latest_correction():
+    state = SessionState(persistent_goal="finish migration", current_task="update routing")
+    state.current_plan = [
+        {"step": f"stage {index} " + "x" * 100, "status": "pending"}
+        for index in range(100)
+    ]
+    state.last_blocker = "routing tests fail"
+    state.recent_corrections = ["preserve stable route IDs " + "y" * 450]
+    state.verified_evidence = [{"command": "pytest routing", "status": "passed"}]
+    for _ in range(5):
+        rendered = state.render(max_tokens=2048)
+        assert "finish migration" in rendered
+        assert "update routing" in rendered
+        assert "routing tests fail" in rendered
+        assert "preserve stable route IDs" in rendered
+        assert "pytest routing" in rendered
+        assert len(rendered.encode("utf-8")) <= 2048

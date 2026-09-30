@@ -709,11 +709,14 @@ def builtin_fixture_eval_cases() -> list[FixtureEvalCase]:
                     '{"type":"edit_file","path":"mathlib.py",'
                     '"find":"return a + b","replace":"return a - b"}'
                 ),
+                '{"type":"update_plan","steps":[{"step":"Repair failing checks","status":"in_progress"}],'
+                '"rationale":"Use the verification diagnostics to revise the implementation."}',
                 (
                     '{"type":"edit_file","path":"mathlib.py",'
                     '"find":"return a - b","replace":"return a * b"}'
                 ),
                 '{"type":"run_shell","command":"python -m pytest"}',
+                '{"type":"update_plan","steps":[{"step":"Repair failing checks","status":"completed"}]}',
                 '{"type":"final","message":"Fixed mathlib.py and tests pass."}',
             ],
             validators=(
@@ -744,11 +747,14 @@ def builtin_fixture_eval_cases() -> list[FixtureEvalCase]:
                     '{"type":"edit_file","path":"mathlib.py",'
                     '"find":"return a - b","replace":"return a + b"}'
                 ),
+                '{"type":"update_plan","steps":[{"step":"Repair failing checks","status":"in_progress"}],'
+                '"rationale":"Use the verification diagnostics to revise the implementation."}',
                 (
                     '{"type":"write_file","path":"mathlib.py",'
                     '"content":"def add(a, b):\\n    return a + b\\n\\n'
                     'def subtract(a, b):\\n    return a - b\\n"}'
                 ),
+                '{"type":"update_plan","steps":[{"step":"Repair failing checks","status":"completed"}]}',
                 '{"type":"final","message":"Updated mathlib.py and the tests pass."}',
             ],
             validators=(
@@ -786,11 +792,14 @@ def builtin_fixture_eval_cases() -> list[FixtureEvalCase]:
                     '{"type":"edit_file","path":"mathlib.py",'
                     '"find":"return a - b","replace":"return a + b"}'
                 ),
+                '{"type":"update_plan","steps":[{"step":"Repair failing checks","status":"in_progress"}],'
+                '"rationale":"Use the verification diagnostics to revise the implementation."}',
                 (
                     '{"type":"edit_file","path":"mathlib.py",'
                     '"find":"def subtract(a, b):\\n    return a + b",'
                     '"replace":"def subtract(a, b):\\n    return a - b"}'
                 ),
+                '{"type":"update_plan","steps":[{"step":"Repair failing checks","status":"completed"}]}',
                 '{"type":"final","message":"Fixed both helpers and tests pass."}',
             ],
             validators=(
@@ -1116,7 +1125,9 @@ def builtin_fixture_eval_cases() -> list[FixtureEvalCase]:
             name="patch_conflict_recovery",
             description="Recover when a patch cannot apply, then make a safe exact edit.",
             task="update the app mode from old to new",
-            files={"app.py": 'MODE = "old"\n'},
+            files={"app.py": 'MODE = "old"\n',
+                   "tests/test_app.py": "from pathlib import Path\ndef test_mode():\n"
+                   "    assert 'MODE = \"new\"' in Path('app.py').read_text()\n"},
             responses=[
                 (
                     '{"type":"apply_patch","patch":"--- a/app.py\\n+++ b/app.py\\n'
@@ -1126,12 +1137,14 @@ def builtin_fixture_eval_cases() -> list[FixtureEvalCase]:
                     '{"type":"edit_file","path":"app.py",'
                     '"find":"MODE = \\"old\\"","replace":"MODE = \\"new\\""}'
                 ),
+                '{"type":"run_shell","command":"python -m pytest tests/test_app.py -q"}',
                 '{"type":"final","message":"Updated app.py after recovering from the patch conflict."}',
             ],
             validators=(
                 mutation_failed("apply_patch", "app.py"),
                 mutation_succeeded("edit_file", "app.py"),
                 file_contains("app.py", 'MODE = "new"'),
+                verification_passed("test"),
             ),
             max_steps=8,
         ),

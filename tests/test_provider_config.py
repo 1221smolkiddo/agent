@@ -425,3 +425,107 @@ def test_context_capacity_priority_and_optional_step_configuration(tmp_path) -> 
     )
     assert configured.max_steps == 100
     assert unlimited.max_steps is None
+
+
+def test_parent_dotenv_is_not_inherited_by_child_workspace(tmp_path, monkeypatch):
+    parent = tmp_path / "parent"
+    child = parent / "project"
+    child.mkdir(parents=True)
+    (parent / ".env").write_text(
+        "AGENT_MODEL_TIMEOUT_SECONDS=20\nAGENT_CONTEXT_MAX_CHARS=60000\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("AGENT_MODEL_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("AGENT_CONTEXT_MAX_CHARS", raising=False)
+    monkeypatch.chdir(child)
+    settings = Settings()
+    assert settings.agent_model_timeout_seconds == 180
+    assert settings.agent_context_max_chars is None
+
+
+def test_workspace_dotenv_and_process_precedence(tmp_path, monkeypatch):
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    (workspace / ".env").write_text(
+        "AGENT_MODEL_TIMEOUT_SECONDS=90\nAGENT_CONTEXT_MAX_CHARS=75000\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("AGENT_MODEL_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("AGENT_CONTEXT_MAX_CHARS", raising=False)
+    settings = Settings.for_workspace(workspace)
+    assert settings.agent_model_timeout_seconds == 90
+    assert settings.agent_context_max_chars == 75000
+    monkeypatch.setenv("AGENT_MODEL_TIMEOUT_SECONDS", "240")
+    assert Settings.for_workspace(workspace).agent_model_timeout_seconds == 240
+    explicit = tmp_path / "other.env"
+    explicit.write_text("AGENT_CONTEXT_MAX_CHARS=81000\n", encoding="utf-8")
+    assert Settings.for_workspace(workspace, env_file=explicit).agent_context_max_chars == 81000
+
+
+def test_output_limit_is_independent_from_context_reserve(tmp_path):
+    settings = Settings(
+        _env_file=None, openrouter_api_key="test-key",
+        agent_request_max_output_tokens=None,
+        agent_response_reserve_tokens=6144,
+        agent_reviewer_pass=False, agent_db_path=tmp_path / "agent.db",
+    )
+    from code_agent.factory import create_chat_client
+    client = create_chat_client(settings)
+    assert client.request_max_output_tokens is None
+    assert client.response_reserve_tokens == 6144
+
+
+def test_explicit_output_limit_does_not_change_context_reserve(tmp_path):
+    settings = Settings(
+        _env_file=None, openrouter_api_key="test-key",
+        agent_request_max_output_tokens=8192,
+        agent_response_reserve_tokens=2048,
+        agent_reviewer_pass=False, agent_db_path=tmp_path / "agent.db",
+    )
+    from code_agent.factory import create_chat_client
+    client = create_chat_client(settings)
+    assert client.request_max_output_tokens == 8192
+    assert client.response_reserve_tokens == 2048
+
+
+def test_blank_optional_workspace_settings_mean_no_override(tmp_path, monkeypatch):
+    keys = (
+        "AGENT_MAX_TOKENS", "AGENT_REQUEST_MAX_OUTPUT_TOKENS",
+        "AGENT_RESPONSE_RESERVE_TOKENS", "AGENT_MAX_STEPS",
+        "AGENT_CONTEXT_WINDOW_TOKENS", "AGENT_CONTEXT_MAX_CHARS",
+    )
+    for key in keys:
+        monkeypatch.delenv(key, raising=False)
+    (tmp_path / ".env").write_text(
+        "\n".join(f"{key}=" for key in keys), encoding="utf-8",
+    )
+    settings = Settings.for_workspace(tmp_path)
+    assert settings.request_max_output_tokens is None
+    assert settings.agent_response_reserve_tokens is None
+    assert settings.agent_context_max_chars is None
+    assert settings.agent_context_window_tokens is None
+    assert settings.agent_max_steps is None
+
+
+def test_cli_selected_workspace_uses_its_own_dotenv(tmp_path, monkeypatch):
+    import code_agent.cli as cli
+    from code_agent.agent import AgentRunResult
+
+    invocation = tmp_path / "invocation"
+    workspace = invocation / "project"
+    workspace.mkdir(parents=True)
+    (invocation / ".env").write_text("AGENT_MODEL_TIMEOUT_SECONDS=20\n", encoding="utf-8")
+    (workspace / ".env").write_text("AGENT_MODEL_TIMEOUT_SECONDS=90\n", encoding="utf-8")
+    monkeypatch.chdir(invocation)
+    monkeypatch.delenv("AGENT_MODEL_TIMEOUT_SECONDS", raising=False)
+    seen = []
+    class Agent:
+        def run_detailed(self, task):
+            return AgentRunResult(message="done", run_id=1, task=task)
+    def create_agent(**kwargs):
+        seen.append(kwargs["settings"].agent_model_timeout_seconds)
+        return Agent()
+    monkeypatch.setattr(cli, "create_agent", create_agent)
+    result = CliRunner().invoke(app, ["run-json", "--cwd", str(workspace), "--dry-run", "inspect"])
+    assert result.exit_code == 0, result.output
+    assert seen == [90]

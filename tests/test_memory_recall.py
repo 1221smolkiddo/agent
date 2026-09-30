@@ -298,7 +298,10 @@ def test_model_planner_works_when_optional_context_is_unavailable(tmp_path, monk
     agent = create_agent(settings, tmp_path, None, True, 2,
                          approval_callback=lambda *_: True)
     result = agent.run_detailed("fix recurring parser timeout")
-    assert result.message == "Done."
+    # Optional memory failure leaves planning available; an unimplemented mutation cannot finish.
+    assert result.blocked and result.disposition.value == "waiting"
+    assert any(r.get("type") == "false_completion" for r in result.failed_actions)
+    assert not any(r.get("type") == "model_failure" for r in result.failed_actions)
     assert list(agent.runtime_host.runtime.engine.state(result.durable_execution_id).tasks) == [
         "inspect", "verify",
     ]

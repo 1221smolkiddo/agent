@@ -2,15 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from dotenv import load_dotenv
 from pydantic import Field, field_validator
 from pydantic_settings import SettingsConfigDict
 
 from .experience_memory.config import ExperienceMemorySettings
 
 from .model_registry import provider_name_list, provider_names
-
-load_dotenv()
 
 
 class Settings(ExperienceMemorySettings):
@@ -47,7 +44,9 @@ class Settings(ExperienceMemorySettings):
     agent_fallback_models: str = ""
     agent_input_cost_per_million: float | None = None
     agent_output_cost_per_million: float | None = None
-    agent_max_tokens: int = 4096
+    agent_max_tokens: int | None = Field(default=None, ge=1)  # Legacy explicit override.
+    agent_request_max_output_tokens: int | None = Field(default=None, ge=1)
+    agent_response_reserve_tokens: int | None = Field(default=None, ge=128)
     agent_max_steps: int | None = Field(default=None, ge=0)
     agent_model_timeout_seconds: float = 180.0
     # Deprecated and ignored: old .env files must not reintroduce a total run timer.
@@ -71,20 +70,43 @@ class Settings(ExperienceMemorySettings):
     agent_sandbox_image: str = "python:3.13-slim"
     agent_trust_workspace_extensions: bool = False
 
+    # A relative .env is resolved against the current workspace only. No import-time
+    # mutation or ancestor traversal is allowed; process variables win in BaseSettings.
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore", hide_input_in_errors=True,
     )
 
+    @classmethod
+    def for_workspace(cls, workspace: Path, *, env_file: Path | None = None) -> Settings:
+        selected = Path(env_file) if env_file is not None else workspace / ".env"
+        return cls(_env_file=selected)
+
+
     @field_validator(
         "agent_input_cost_per_million",
         "agent_output_cost_per_million",
+        "agent_max_tokens",
+        "agent_request_max_output_tokens",
+        "agent_response_reserve_tokens",
+        "agent_max_steps",
+        "agent_run_timeout_seconds",
+        "agent_context_window_tokens",
+        "agent_context_max_chars",
         mode="before",
     )
     @classmethod
-    def blank_optional_float(cls, value: object) -> object:
+    def blank_optional_number(cls, value: object) -> object:
         if value == "":
             return None
         return value
+
+    @property
+    def request_max_output_tokens(self) -> int | None:
+        return (
+            self.agent_request_max_output_tokens
+            if self.agent_request_max_output_tokens is not None
+            else self.agent_max_tokens
+        )
 
     @property
     def provider_name(self) -> str:

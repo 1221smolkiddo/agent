@@ -46,8 +46,8 @@ def test_format_work_report_body_produces_rich_panel() -> None:
     assert "update the docs" not in text
     assert "Modified:" not in text
     assert "docs/PROGRESS.md" in text
-    assert "uv run pytest" in text
-    assert "Passed" in text
+    assert "uv run pytest" not in text
+    assert "test" in text and "Passed" in text
 
 
 def test_work_report_renders_markdown_without_literal_markers() -> None:
@@ -138,7 +138,9 @@ def test_work_report_renders_managed_process_lifecycle() -> None:
 
     text = capture.get()
     assert "Managed Processes" in text
-    assert "proc-demo" in text
+    assert "proc-demo" not in text
+    assert "start_process" not in text
+    assert "pid=1234" not in text
     assert "port=5173" in text
 
 
@@ -686,3 +688,34 @@ def test_is_persona_instruction() -> None:
     assert is_persona_instruction("You are a senior frontend engineer")
     assert is_persona_instruction("Act as a concise reviewer")
     assert not is_persona_instruction("You are a senior frontend engineer; update the app")
+
+
+def test_normal_result_message_hides_protocol_failures_but_preserves_semantic_guidance():
+    from code_agent.terminal_ui import normal_result_message
+
+    cases = {
+        "action_loop: repeated raw action JSON": "repeated actions without progress",
+        "failed_strategy: read_file {\"type\": \"read_file\"}": "already failed",
+        '{"type": "read_file", "path": "secret.py"}': "internal action",
+    }
+    for raw, meaning in cases.items():
+        shown = normal_result_message(raw, blocked=True)
+        assert meaning in shown
+        assert all(token not in shown for token in ("action_loop", "failed_strategy", "read_file", '"type"'))
+    assert normal_result_message("Tests passed.") == "Tests passed."
+
+
+@pytest.mark.parametrize("identifier", [
+    "run_shell", "write_file", "invoke_tool", "execution_state",
+    "fingerprint", "state_payload", "model_dump",
+])
+def test_normal_results_hide_remaining_protocol_identifiers(identifier):
+    from code_agent.terminal_ui import normal_result_message
+    shown = normal_result_message(f"Failure: {identifier}: internal details", blocked=True)
+    assert identifier not in shown
+    assert "/debug" in shown
+
+
+def test_normal_result_redacts_secrets():
+    from code_agent.terminal_ui import normal_result_message
+    assert "private-value" not in normal_result_message("Provider failed API_KEY=private-value")

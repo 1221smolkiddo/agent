@@ -143,7 +143,8 @@ def test_display_copy_redacts_command_and_real_execution_receives_original(tmp_p
     assert "[REDACTED]" in approvals[0]
 
 
-def test_non_tty_shows_sanitized_command_before_execution_and_summary(monkeypatch):
+def test_debug_non_tty_shows_sanitized_command_before_execution_and_summary(monkeypatch):
+    monkeypatch.setenv("AGENT47_DEBUG", "1")
     reporter, output = _reporter(monkeypatch)
     command = 'curl -H "Authorization: Bearer sk-test-secret-value" --password hunter2'
     action = RunShellAction(type="run_shell", command=command)
@@ -250,4 +251,17 @@ def test_echo_output_is_hidden_even_when_secret_is_unlabelled(monkeypatch):
     reporter.tool_result(action, ToolResult(ok=True, output="private-short-secret"), 10)
     assert "private-short-secret" not in output.getvalue()
     assert "private-short-secret" not in reporter.command_history()[-1].output
+    reporter.done()
+
+def test_normal_non_tty_keeps_command_details_in_history(monkeypatch):
+    monkeypatch.delenv("AGENT47_DEBUG", raising=False)
+    reporter, output = _reporter(monkeypatch)
+    command = "pytest tests/routing.py --token private-value"
+    reporter.action(RunShellAction(type="run_shell", command=command))
+    assert "RUN:" not in output.getvalue()
+    assert "tests/routing.py" not in output.getvalue()
+    assert "private-value" not in output.getvalue()
+    history = reporter.command_history()
+    assert "tests/routing.py" in history[-1].command
+    assert "[REDACTED]" in history[-1].command
     reporter.done()

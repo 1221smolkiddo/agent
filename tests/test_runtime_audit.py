@@ -195,7 +195,8 @@ def test_terminal_response_and_error_card_redact_secrets(monkeypatch):
 
 
 
-def test_fallback_shares_one_deadline(monkeypatch):
+@pytest.mark.parametrize("primary_delay", [.6, 1.1])
+def test_fallback_receives_fresh_attempt_window(monkeypatch, primary_delay):
     from code_agent.models import FallbackModelClient
     clock = Clock()
     monkeypatch.setattr("code_agent.models.time.monotonic", lambda: clock.now)
@@ -211,9 +212,9 @@ def test_fallback_shares_one_deadline(monkeypatch):
             return "done"
         def drain_usage_records(self):
             return []
-    client = FallbackModelClient([Client("primary", .6, True), Client("fallback", .2, False)])
+    client = FallbackModelClient([Client("primary", primary_delay, True), Client("fallback", .2, False)])
     assert client.complete_with_timeout([], 1) == "done"
-    assert calls[1][1] == pytest.approx(.4)
+    assert calls == [("primary", 1), ("fallback", 1)]
 
 
 def test_fallback_error_does_not_echo_raw_provider_body():

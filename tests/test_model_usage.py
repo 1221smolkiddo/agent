@@ -241,7 +241,7 @@ def test_registered_model_runtime_defaults_are_applied(tmp_path: Path) -> None:
     with pytest.warns(RuntimeWarning, match="no fallback model configured"):
         agent = create_agent(settings=settings, cwd=tmp_path, model=None, dry_run=True, max_steps=1)
 
-    assert agent.model_client.max_tokens == 8192
+    assert agent.model_client.max_tokens == 16384
     assert agent.model_client.temperature == 0.2
     assert agent.model_client.include_stream_usage is False
     assert agent.model_client.extra_body is None
@@ -310,7 +310,7 @@ def test_agent_persists_model_usage_records(tmp_path: Path) -> None:
     assert stored[0]["payload"] == result.model_usage_records[0]
 
 
-def test_agent_turns_model_failure_into_blocked_result(tmp_path: Path) -> None:
+def test_agent_pauses_model_failure_without_finalizing_task(tmp_path: Path) -> None:
     model = FakeUsageClient("primary", error="provider unavailable")
     storage = AgentStorage(tmp_path / "agent.db")
     reporter = FakeReporter()
@@ -329,6 +329,43 @@ def test_agent_turns_model_failure_into_blocked_result(tmp_path: Path) -> None:
     result = agent.run_detailed("inspect this project")
 
     assert result.blocked
-    assert "Stopped after a model failure" in result.message
+    assert "Paused because the model service is unavailable" in result.message
+    assert result.disposition.value == "waiting"
+    assert result.execution_state["phase"] == "waiting"
+    assert result.execution_state["checkpoint_reason"] == "waiting"
     assert result.failed_actions[0]["type"] == "model_failure"
     assert reporter.done_calls == 1
+
+
+def test_run_level_recovery_uses_configured_fallback_routes(tmp_path):
+    class RecoveringClient(FakeUsageClient):
+        calls = 0
+        def complete(self, messages):
+            self.calls += 1
+            if self.calls == 1:
+                raise TimeoutError("provider timed out")
+            return super().complete(messages)
+
+    primary = FakeUsageClient("primary", error="provider timed out")
+    fallback = RecoveringClient("fallback", responses=['{"type":"final","message":"recovered"}'])
+    agent = CodingAgent(
+        tmp_path, True, 4, 1, FallbackModelClient([primary, fallback]), NoopTools(),
+        AgentStorage(tmp_path / "agent.db"), stream_model=False,
+    )
+    result = agent.run_detailed("inspect this project")
+    assert result.message == "recovered"
+    assert not result.blocked
+    assert fallback.calls == 2
+    assert result.execution_state["model_handoffs"]
+    assert result.execution_state["recovery_counts"]["provider"] == 1
+
+
+def test_authentication_failure_pauses_without_retrying_or_fallback(tmp_path):
+    fallback = FakeUsageClient("fallback", responses=['{"type":"final","message":"wrong"}'])
+    client = FallbackModelClient([FakeAuthErrorClient("primary"), fallback])
+    agent = CodingAgent(tmp_path, True, 4, 1, client, NoopTools(),
+                        AgentStorage(tmp_path / "agent.db"), stream_model=False)
+    result = agent.run_detailed("inspect this project")
+    assert result.disposition.value == "waiting"
+    assert result.execution_state["recovery_counts"]["provider"] == 1
+    assert fallback.responses == ['{"type":"final","message":"wrong"}']

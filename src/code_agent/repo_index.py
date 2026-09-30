@@ -667,7 +667,7 @@ class RepoIndexCache:
         changed = changed_paths if changed_paths is not None else paths
         deleted = deleted_paths if deleted_paths is not None else set()
         changed_files = [item for item in files if item.path in changed]
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connect(write=True) as conn:
             conn.executemany(
                 """
                 insert into repo_index_files (
@@ -855,7 +855,7 @@ class RepoIndexCache:
             return
         placeholders = ",".join("?" for _ in normalized)
         workspace_key = _workspace_key(workspace)
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connect(write=True) as conn:
             conn.execute(
                 f"delete from repo_index_files where workspace = ? and path in ({placeholders})",
                 (workspace_key, *sorted(normalized)),
@@ -930,11 +930,13 @@ class RepoIndexCache:
         )
 
     @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
+    def _connect(self, *, write: bool = False) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(self.db_path, timeout=10)
         conn.row_factory = sqlite3.Row
         conn.execute("pragma busy_timeout = 10000")
         try:
+            if write:
+                conn.execute("BEGIN IMMEDIATE")
             yield conn
             conn.commit()
         except BaseException:
@@ -945,6 +947,7 @@ class RepoIndexCache:
 
     def _ensure_schema(self) -> None:
         with self._lock, self._connect() as conn:
+            conn.execute("pragma journal_mode = WAL")
             conn.executescript(
                 """
                 create table if not exists repo_index_files (
@@ -1076,6 +1079,8 @@ class BackgroundIndexRefresh:
         self._stop_event = threading.Event()
         self._refresh_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self.failure_count = 0
+        self.last_error: str | None = None
 
     def start(self) -> "BackgroundIndexRefresh":
         if self._thread and self._thread.is_alive():
@@ -1092,13 +1097,24 @@ class BackgroundIndexRefresh:
 
     def request_refresh(self, paths: list[str] | None = None) -> None:
         if paths:
-            self.cache.invalidate(self.workspace, paths)
+            try:
+                self.cache.invalidate(self.workspace, paths)
+            except Exception:
+                self.last_error = "Repository index invalidation deferred."
         self._refresh_event.set()
 
     def _run(self) -> None:
         while not self._stop_event.is_set():
-            self.cache.refresh(self.workspace)
-            self._refresh_event.wait(self.interval_seconds)
+            delay = self.interval_seconds
+            try:
+                self.cache.refresh(self.workspace)
+                self.failure_count = 0
+                self.last_error = None
+            except Exception:
+                self.failure_count += 1
+                self.last_error = "Repository index refresh deferred; task execution remains available."
+                delay = min(30.0, max(0.1, self.interval_seconds), 2 ** min(self.failure_count - 1, 5))
+            self._refresh_event.wait(delay)
             self._refresh_event.clear()
 
 
@@ -1117,7 +1133,11 @@ def start_background_index_refresh(
 
 def index_repo(workspace: Path, cache: RepoIndexCache | None = None) -> list[RepoFile]:
     root = workspace.resolve()
-    cached = cache.load_workspace(root) if cache else {}
+    try:
+        cached = cache.load_workspace(root) if cache else {}
+    except (sqlite3.Error, OSError):
+        cache = None
+        cached = {}
     files: list[RepoFile] = []
     changed: list[tuple[Path, str, int, int]] = []
     seen_paths: set[str] = set()
@@ -1161,8 +1181,12 @@ def index_repo(workspace: Path, cache: RepoIndexCache | None = None) -> list[Rep
     files.sort(key=lambda item: (-item.importance, item.path))
     deleted_paths = set(cached) - seen_paths
     if cache and not changed and not deleted_paths:
-        edges = cache.load_edges(root)
-        edges_changed = False
+        try:
+            edges = cache.load_edges(root)
+            edges_changed = False
+        except (sqlite3.Error, OSError):
+            edges = _build_project_graph_edges(files)
+            edges_changed = True
     else:
         edges = _build_project_graph_edges(files)
         edges_changed = True
@@ -1174,14 +1198,17 @@ def index_repo(workspace: Path, cache: RepoIndexCache | None = None) -> list[Rep
         graph_edges=len(edges),
     )
     if cache:
-        cache.save_workspace(
-            root,
-            files,
-            changed_paths={relative for _, relative, _, _ in changed},
-            deleted_paths=deleted_paths,
-            edges=edges if edges_changed else None,
-            stats=stats,
-        )
+        try:
+            cache.save_workspace(
+                root,
+                files,
+                changed_paths={relative for _, relative, _, _ in changed},
+                deleted_paths=deleted_paths,
+                edges=edges if edges_changed else None,
+                stats=stats,
+            )
+        except (sqlite3.Error, OSError):
+            pass  # Derived cache failure must not invalidate a usable repository scan.
     return files
 
 
@@ -1191,17 +1218,21 @@ def build_project_graph(
     cache: RepoIndexCache | None = None,
 ) -> ProjectGraph:
     files = index_repo(workspace, cache=cache)
-    edges = cache.load_edges(workspace) if cache else _build_project_graph_edges(files)
-    stats = cache.load_stats(workspace) if cache else IndexRefreshStats(
-        scanned_files=len(files),
-        parsed_files=len(files),
-        reused_files=0,
-        deleted_files=0,
-        graph_edges=len(edges),
-    )
-    symbols = tuple(cache.load_symbols(workspace)) if cache else tuple(
-        symbol for item in files for symbol in item.symbol_records
-    )
+    try:
+        edges = cache.load_edges(workspace) if cache else _build_project_graph_edges(files)
+        stats = cache.load_stats(workspace) if cache else None
+        symbols = tuple(cache.load_symbols(workspace)) if cache else None
+    except (sqlite3.Error, OSError):
+        edges = _build_project_graph_edges(files)
+        stats = None
+        symbols = None
+    if stats is None:
+        stats = IndexRefreshStats(
+            scanned_files=len(files), parsed_files=len(files), reused_files=0,
+            deleted_files=0, graph_edges=len(edges),
+        )
+    if symbols is None:
+        symbols = tuple(symbol for item in files for symbol in item.symbol_records)
     return ProjectGraph(
         files=tuple(files),
         symbols=symbols,

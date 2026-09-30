@@ -46,6 +46,7 @@ class RegisteredModel:
     capabilities: ModelCapabilities
     context_window: str = "unknown"
     context_window_tokens: int | None = None
+    response_reserve_tokens: int | None = None
     quality: int = 3
     speed: int = 3
     cost: int = 3
@@ -68,7 +69,7 @@ REGISTERED_MODELS: dict[str, RegisteredModel] = {
         speed=4,
         cost=4,
         reasoning=4,
-        runtime=ModelRuntimeDefaults(max_tokens=4096),
+        runtime=ModelRuntimeDefaults(),
     ),
     "gemini-flash": RegisteredModel(
         name="gemini-flash",
@@ -82,7 +83,7 @@ REGISTERED_MODELS: dict[str, RegisteredModel] = {
         speed=5,
         cost=4,
         reasoning=3,
-        runtime=ModelRuntimeDefaults(max_tokens=4096),
+        runtime=ModelRuntimeDefaults(),
     ),
     "gemini-pro": RegisteredModel(
         name="gemini-pro",
@@ -96,7 +97,7 @@ REGISTERED_MODELS: dict[str, RegisteredModel] = {
         speed=3,
         cost=3,
         reasoning=5,
-        runtime=ModelRuntimeDefaults(max_tokens=8192, temperature=0.2),
+        runtime=ModelRuntimeDefaults(temperature=0.2),
     ),
     "deepseek-flash": RegisteredModel(
         name="deepseek-flash",
@@ -110,7 +111,7 @@ REGISTERED_MODELS: dict[str, RegisteredModel] = {
         speed=5,
         cost=5,
         reasoning=4,
-        runtime=ModelRuntimeDefaults(max_tokens=4096),
+        runtime=ModelRuntimeDefaults(),
     ),
     "deepseek-pro": RegisteredModel(
         name="deepseek-pro",
@@ -124,7 +125,7 @@ REGISTERED_MODELS: dict[str, RegisteredModel] = {
         speed=3,
         cost=5,
         reasoning=5,
-        runtime=ModelRuntimeDefaults(max_tokens=8192, temperature=0.2),
+        runtime=ModelRuntimeDefaults(temperature=0.2),
     ),
     "glm-5.2": RegisteredModel(
         name="glm-5.2",
@@ -138,7 +139,7 @@ REGISTERED_MODELS: dict[str, RegisteredModel] = {
         speed=5,
         cost=5,
         reasoning=4,
-        runtime=ModelRuntimeDefaults(max_tokens=8192, temperature=0.2),
+        runtime=ModelRuntimeDefaults(temperature=0.2),
     ),
 }
 

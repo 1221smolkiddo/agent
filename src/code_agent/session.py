@@ -53,17 +53,17 @@ class SessionState:
         self.durable_execution_id = result.durable_execution_id
         state = result.execution_state or {}
         if state.get("plan_steps"):
-            self.current_plan = _bounded_checkpoint_value(sanitize_payload(state["plan_steps"]))[-12:]
-            self.next_actions = [
+            self.current_plan = _bounded_checkpoint_value(sanitize_payload(state["plan_steps"]))
+            self.next_actions = _tail_within_bytes([
                 redact_secrets(str(item.get("step", ""))[:200])
                 for item in self.current_plan if item.get("status") in {"pending", "in_progress"}
-            ][:6]
+            ], 24_000)
         for item in state.get("verification_records", []):
             if item.get("status") == "passed":
                 evidence = _bounded_checkpoint_value(sanitize_payload({**item, "run_id": result.run_id}))
                 if evidence not in self.verified_evidence:
                     self.verified_evidence.append(evidence)
-        self.verified_evidence = self.verified_evidence[-12:]
+        self.verified_evidence = _tail_within_bytes(self.verified_evidence, 48_000)
         self.last_blocker = self._blocker_from_result(result)
         self.previous_status = "blocked" if self.last_blocker else "completed"
         if self.persistent_goal is None:
@@ -71,7 +71,7 @@ class SessionState:
         self.current_task = redact_secrets(user_input[:2000])
         if user_input.strip().lower().startswith(("correction:", "actually,", "instead,", "please change")):
             correction = redact_secrets(" ".join(user_input.split())[:500])
-            self.recent_corrections = (self.recent_corrections + [correction])[-4:]
+            self.recent_corrections = _tail_within_bytes(self.recent_corrections + [correction], 24_000)
         if result.failed_actions:
             last_failure = result.failed_actions[-1]
             self.record_failed_approach(
@@ -128,7 +128,7 @@ class SessionState:
 
         self.last_tool_results = self._summarize_tool_results(result)
 
-    def render(self) -> str:
+    def render(self, *, max_tokens: int = 6_000) -> str:
         rows: list[tuple[str, object]] = [("session_id", self.session_id)]
         if self.current_plan:
             rows.append(("current_plan", json.dumps(sanitize_payload(self.current_plan))))
@@ -139,19 +139,19 @@ class SessionState:
         if self.persistent_goal:
             rows.append(("persistent_goal", self.persistent_goal))
         if self.architecture_decisions:
-            rows.append(("architecture_decisions", json.dumps(self.architecture_decisions[-6:])))
+            rows.append(("architecture_decisions", json.dumps(self.architecture_decisions)))
         if self.failed_approaches:
-            rows.append(("failed_approaches", json.dumps(self.failed_approaches[-6:])))
+            rows.append(("failed_approaches", json.dumps(self.failed_approaches)))
         if self.recent_corrections:
-            rows.append(("recent_corrections", json.dumps(self.recent_corrections[-4:])))
+            rows.append(("recent_corrections", json.dumps(self.recent_corrections)))
         if self.next_actions:
-            rows.append(("next_actions", json.dumps(self.next_actions[-6:])))
+            rows.append(("next_actions", json.dumps(self.next_actions)))
         if self.current_task:
             rows.append(("current_task", self.current_task))
         if self.pending_user_info:
             rows.append(("pending_user_info", self.pending_user_info))
         if self.target_files:
-            rows.append(("target_files", ", ".join(self.target_files[-6:])))
+            rows.append(("target_files", ", ".join(self.target_files)))
         if self.last_created_files:
             rows.append(("last_created_files", ", ".join(self.last_created_files)))
         if self.last_edited_files:
@@ -161,7 +161,7 @@ class SessionState:
         if self.last_blocker:
             rows.append(("last_blocker", self.last_blocker))
         if self.last_tool_results:
-            rows.append(("last_tool_results", " | ".join(self.last_tool_results[-4:])))
+            rows.append(("last_tool_results", " | ".join(self.last_tool_results)))
         if self.last_run_id is not None:
             rows.append(("last_run_id", self.last_run_id))
         if self.previous_status:
@@ -171,8 +171,74 @@ class SessionState:
         if not rows:
             return ""
 
+        # Semantic order is intentional. A byte-based estimator is conservative
+        # for unknown model tokenizers; lower-priority rows yield first.
+        priority = (
+            "session_id", "persistent_goal", "current_plan",
+            "last_blocker", "pending_user_info", "recent_corrections",
+            "verified_evidence", "current_task", "architecture_decisions", "failed_approaches",
+            "next_actions", "target_files", "durable_execution_id",
+            "last_created_files", "last_edited_files", "last_deleted_files",
+            "last_tool_results", "previous_status", "conversation_steering",
+            "last_run_id",
+        )
+        values = dict(rows)
         lines = ["Current interactive session state:"]
-        lines.extend(f"- {key}: {value}" for key, value in rows)
+        present_keys = [key for key in priority if key in values]
+        for index, key in enumerate(present_keys):
+            if key not in values:
+                continue
+            value = str(values[key])
+            prefix = f"- {key}: "
+            remaining = max_tokens - len("\n".join(lines).encode("utf-8")) - len(prefix) - 16
+            # Reserve a model-budget share for each remaining semantic section,
+            # so a large plan cannot erase the blocker or latest correction.
+            later = len(present_keys) - index - 1
+            remaining -= min(max_tokens // 32, 256) * later
+            remaining = min(remaining, max_tokens // 2)
+            if remaining <= 0:
+                continue
+            if len(value.encode("utf-8")) > remaining:
+                if key in {
+                    "current_plan", "verified_evidence", "architecture_decisions",
+                    "failed_approaches", "recent_corrections", "next_actions",
+                    "target_files", "last_tool_results",
+                }:
+                    items = getattr(self, key)
+                    if key == "current_plan":
+                        active = [item for item in items if item.get("status") in {"in_progress", "pending"}]
+                        ordered = active + [item for item in reversed(items) if item not in active]
+                    elif key == "failed_approaches":
+                        terms = set((self.current_task + " " + " ".join(self.target_files)).lower().split())
+                        ordered = sorted(
+                            reversed(items),
+                            key=lambda item: len(terms.intersection(str(item).lower().split())),
+                            reverse=True,
+                        )
+                    else:
+                        ordered = list(reversed(items))
+                    selected = []
+                    for item in ordered:
+                        candidate = json.dumps(selected + [item], ensure_ascii=False)
+                        if len(candidate.encode("utf-8")) > remaining:
+                            break
+                        selected.append(item)
+                    if not selected:
+                        # Keep at least the beginning of the newest correction or
+                        # decision if one fact alone exceeds its section budget.
+                        if not ordered or not isinstance(ordered[0], str):
+                            continue
+                        selected = [ordered[0][:max(0, remaining // 4)]]
+                        if len(json.dumps(selected, ensure_ascii=False).encode("utf-8")) > remaining:
+                            continue
+                    value = json.dumps(selected, ensure_ascii=False)
+                elif isinstance(values[key], str) and key in {
+                    "persistent_goal", "current_task", "last_blocker", "pending_user_info",
+                }:
+                    value = value.encode("utf-8")[:remaining].decode("utf-8", errors="ignore")
+                else:
+                    continue
+            lines.append(prefix + value)
         return redact_secrets("\n".join(lines))
 
     def save(self, storage) -> None:
@@ -184,8 +250,9 @@ class SessionState:
                   "last_created_files", "last_edited_files", "last_deleted_files",
                   "last_tool_results", "last_blocker", "last_run_id", "previous_status",
                   "conversation_steering", "current_plan", "verified_evidence", "durable_execution_id")
+        state = sanitize_payload({k: getattr(self, k) for k in fields})
         storage.add_step(self.last_run_id, "tool", {
-            "type": "session_checkpoint", "state": sanitize_payload({k: getattr(self, k) for k in fields}),
+            "type": "session_checkpoint", "state": _checkpoint_within_bytes(state),
         })
 
     @classmethod
@@ -201,7 +268,7 @@ class SessionState:
         for item in incoming:
             if item not in merged:
                 merged.append(redact_secrets(str(item)[:240]))
-        return merged[-12:]
+        return _tail_within_bytes(merged, 24_000)
 
     @staticmethod
     def _asks_for_more_info(message: str) -> bool:
@@ -255,12 +322,12 @@ class SessionState:
     def record_decision(self, decision: str) -> None:
         cleaned = redact_secrets(" ".join(decision.strip().split())[:300])
         if cleaned and cleaned not in self.architecture_decisions:
-            self.architecture_decisions = (self.architecture_decisions + [cleaned])[-6:]
+            self.architecture_decisions = _tail_within_bytes(self.architecture_decisions + [cleaned], 32_000)
 
     def record_failed_approach(self, approach: str) -> None:
         cleaned = redact_secrets(" ".join(approach.strip().split())[:300])
         if cleaned and cleaned not in self.failed_approaches:
-            self.failed_approaches = (self.failed_approaches + [cleaned])[-6:]
+            self.failed_approaches = _tail_within_bytes(self.failed_approaches + [cleaned], 32_000)
 
     def set_steering(self, guidance: str) -> None:
         cleaned = " ".join(guidance.strip().split())
@@ -286,10 +353,62 @@ def _bounded_checkpoint_value(value, depth: int = 0):
     if isinstance(value, str):
         return redact_secrets(value[:200])
     if isinstance(value, list):
-        return [_bounded_checkpoint_value(item, depth + 1) for item in value[-12:]]
+        return _tail_within_bytes(
+            [_bounded_checkpoint_value(item, depth + 1) for item in value], 48_000,
+        )
     if isinstance(value, dict):
-        return {
-            str(key)[:80]: _bounded_checkpoint_value(item, depth + 1)
-            for key, item in list(value.items())[:8]
-        }
+        result = {}
+        for key, item in value.items():
+            name = str(key)[:80]
+            cleaned = _bounded_checkpoint_value(item, depth + 1)
+            candidate = {**result, name: cleaned}
+            if len(json.dumps(candidate, ensure_ascii=False).encode("utf-8")) > 16_000:
+                break
+            result[name] = cleaned
+        return result
     return value
+
+
+def _tail_within_bytes(values: list, budget: int) -> list:
+    """Keep recent structured facts within a shared byte budget, not an item count."""
+    kept = []
+    used = 0
+    for item in reversed(values):
+        size = len(json.dumps(sanitize_payload(item), ensure_ascii=False).encode("utf-8"))
+        if size > budget:
+            continue
+        if used + size > budget:
+            break
+        kept.append(item)
+        used += size
+    return list(reversed(kept))
+
+
+def _checkpoint_within_bytes(state: dict, budget: int = 128_000) -> dict:
+    """Persist a bounded structured checkpoint with high-value facts first."""
+    priority = (
+        "session_id", "persistent_goal", "current_task", "current_plan",
+        "last_blocker", "recent_corrections", "verified_evidence",
+        "architecture_decisions", "failed_approaches", "next_actions",
+        "pending_user_info", "durable_execution_id", "target_files",
+        "last_created_files", "last_edited_files", "last_deleted_files",
+        "last_tool_results", "previous_status", "conversation_steering",
+        "last_run_id",
+    )
+    saved = {}
+    for key in priority:
+        if key not in state:
+            continue
+        value = state[key]
+        candidate = {**saved, key: value}
+        if len(json.dumps(candidate, ensure_ascii=False).encode("utf-8")) <= budget:
+            saved[key] = value
+            continue
+        remaining = budget - len(json.dumps(saved, ensure_ascii=False).encode("utf-8")) - len(key) - 16
+        if isinstance(value, list) and remaining > 0:
+            compact = _tail_within_bytes(value, remaining)
+            if compact:
+                saved[key] = compact
+        elif isinstance(value, str) and remaining > 0:
+            saved[key] = value.encode("utf-8")[:remaining].decode("utf-8", errors="ignore")
+    return saved

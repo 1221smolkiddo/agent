@@ -21,12 +21,12 @@ def test_resolve_model_profile_uses_named_profile_override() -> None:
     assert profile.max_tokens == 4096
 
 
-def test_fast_profile_caps_tokens() -> None:
+def test_fast_profile_respects_explicit_output_override() -> None:
     profile = resolve_model_profile("fast", default_model="default-model", max_tokens=4096)
 
     assert profile.name == "fast"
     assert profile.model == "default-model"
-    assert profile.max_tokens == 2048
+    assert profile.max_tokens == 4096
 
 
 def test_validate_profile_name_rejects_unknown_profile() -> None:
@@ -76,3 +76,9 @@ def test_create_agent_model_override_wins_over_profile_specific_model(tmp_path: 
     )
 
     assert agent.model_client.model == "explicit-model"
+
+
+def test_profile_without_output_override_uses_provider_default():
+    profile = resolve_model_profile("default", default_model="model")
+    assert profile.max_tokens is None
+    assert profile.request_max_output_tokens is None

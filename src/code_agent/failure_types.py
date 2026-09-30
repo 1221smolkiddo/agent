@@ -7,6 +7,8 @@ available.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -17,7 +19,25 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 MAX_RECOVERY_ATTEMPTS: int = 5
-"""Maximum recovery attempts before stopping and asking the user."""
+"""Local failure streak requiring a new plan, never task termination."""
+
+
+class RunDisposition(str, Enum):
+    SUCCESS = "success"
+    RECOVERABLE = "recoverable"
+    REPLAN_REQUIRED = "replan_required"
+    WAITING = "waiting"
+    TERMINAL = "terminal"
+
+
+class RecoveryEvent(str, Enum):
+    PROVIDER = "provider"
+    EXECUTABLE = "executable"
+    PROTOCOL = "protocol"
+    VERIFICATION = "verification"
+    GUARD = "guard"
+    REPLAN = "replan"
+
 
 LOW_CONFIDENCE_MUTATION_THRESHOLD: float = 0.30
 """Confidence score below which mutating actions are blocked."""
@@ -146,7 +166,7 @@ _CATEGORY_STRATEGY: dict[FailureCategory, RecoveryStrategy] = {
     FailureCategory.PATCH_FAILURE: RecoveryStrategy.GENERATE_NEW_PATCH,
     FailureCategory.FILE_MISSING: RecoveryStrategy.REREAD_FILE,
     FailureCategory.TOOL_FAILURE: RecoveryStrategy.SWITCH_TOOL,
-    FailureCategory.PROVIDER_FAILURE: RecoveryStrategy.STOP,
+    FailureCategory.PROVIDER_FAILURE: RecoveryStrategy.RETRY_WITH_BACKOFF,
     FailureCategory.PERMISSION_DENIED: RecoveryStrategy.ASK_USER,
     FailureCategory.TIMEOUT: RecoveryStrategy.RETRY_WITH_BACKOFF,
     FailureCategory.DATABASE_LOCKED: RecoveryStrategy.RETRY_WITH_BACKOFF,
@@ -186,6 +206,7 @@ class FailureFingerprint:
     action_type: str
     target: str
     category: FailureCategory
+    strategy_digest: str = ""
 
     @classmethod
     def from_action(
@@ -201,7 +222,12 @@ class FailureFingerprint:
             or action_payload.get("symbol", "")
             or ""
         )
-        return cls(action_type=action_type, target=str(target)[:200], category=category)
+        strategy = {key: value for key, value in action_payload.items() if key != "rationale"}
+        digest = hashlib.sha256(json.dumps(strategy, sort_keys=True).encode()).hexdigest()
+        return cls(action_type=action_type,
+                   target="sha256:" + hashlib.sha256(str(target)[:200].encode()).hexdigest(),
+                   category=category,
+                   strategy_digest=digest)
 
 
 # ---------------------------------------------------------------------------

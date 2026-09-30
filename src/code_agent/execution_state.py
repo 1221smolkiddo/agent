@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import hashlib
 import json
 from datetime import datetime, timezone
@@ -12,11 +13,14 @@ from .failure_types import (
     LOW_CONFIDENCE_HARD_THRESHOLD,
     LOW_CONFIDENCE_MUTATION_THRESHOLD,
     MAX_RECOVERY_ATTEMPTS,
+    FailureCategory,
     FailureFingerprint,
+    RecoveryEvent,
+    RunDisposition,
     classify_failure,
     recovery_instruction,
 )
-from .safety import redact_command_for_display, redact_command_output_for_display, redact_secrets
+from .safety import blocked_command_strategy, redact_command_for_display, redact_command_output_for_display, redact_secrets
 from .models import ChatMessage
 from .schema import AgentAction, ToolResult, UpdatePlanAction
 
@@ -28,6 +32,7 @@ class ExecutionPhase(str, Enum):
     VERIFY = "verify"
     RECOVER = "recover"
     FINALIZE = "finalize"
+    WAITING = "waiting"
 
 
 @dataclass(frozen=True)
@@ -69,6 +74,43 @@ class ExecutionState:
     _outcomes: dict[str, list[ActionOutcome]] = field(default_factory=dict)
     _failure_fingerprints: dict[FailureFingerprint, int] = field(default_factory=dict)
     recovery_attempt_count: int = 0
+    disposition: RunDisposition = RunDisposition.RECOVERABLE
+    run_records: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    policy_denials: dict[str, dict[str, Any]] = field(default_factory=dict)
+    recovery_counts: dict[str, int] = field(default_factory=dict)
+    failure_streaks: dict[str, int] = field(default_factory=dict)
+
+    def denied_command(self, action: AgentAction) -> dict[str, Any] | None:
+        if action.type not in {"run_shell", "start_process"}:
+            return None
+        return self.policy_denials.get(blocked_command_strategy(action.command))
+
+    def record_policy_denial(self, action: AgentAction, result: ToolResult) -> int:
+        key = blocked_command_strategy(action.command)
+        entry = self.policy_denials.setdefault(key, {
+            "command": redact_command_for_display(action.command),
+            "policy_class": result.metadata.get("policy_class", "permission"),
+            "reason": redact_secrets(str(result.metadata.get("policy_reason", result.output))),
+            "count": 0,
+            "policy_context": result.metadata.get("policy_context"),
+        })
+        entry["count"] += 1
+        self.phase = ExecutionPhase.RECOVER
+        self.checkpoint("policy_denial")
+        return entry["count"]
+
+    def record_recovery(self, event: RecoveryEvent) -> int:
+        key = event.value
+        self.recovery_counts[key] = self.recovery_counts.get(key, 0) + 1
+        self.failure_streaks[key] = self.failure_streaks.get(key, 0) + 1
+        self.disposition = RunDisposition.RECOVERABLE
+        return self.failure_streaks[key]
+
+    def pause(self, reason: str) -> None:
+        self.phase = ExecutionPhase.WAITING
+        self.disposition = RunDisposition.WAITING
+        self.blockers.append({"kind": "waiting", "detail": reason, "active": True})
+        self.checkpoint("waiting")
 
     @classmethod
     def from_snapshot(
@@ -81,6 +123,7 @@ class ExecutionState:
     ) -> "ExecutionState":
         state = cls(task=task, max_steps=max_steps)
         for name in (
+            "step",
             "workspace_generation",
             "action_count",
             "context_chars",
@@ -109,6 +152,27 @@ class ExecutionState:
             value = snapshot.get(name)
             if isinstance(value, list):
                 setattr(state, name, value.copy())
+        state.policy_denials = deepcopy(snapshot.get("policy_denials", {}))
+        state.run_records = deepcopy(snapshot.get("run_records", {}))
+        for name in ("recovery_counts", "failure_streaks"):
+            value = snapshot.get(name, {})
+            if isinstance(value, dict):
+                setattr(state, name, {
+                    str(key): count for key, count in value.items()
+                    if isinstance(count, int) and count >= 0
+                })
+        for key, outcomes in snapshot.get("action_outcomes", {}).items():
+            state._outcomes[key] = [ActionOutcome(**item) for item in outcomes]
+        for item in snapshot.get("failure_fingerprints", []):
+            target = str(item["target"])
+            if not target.startswith("sha256:"):
+                target = "sha256:" + hashlib.sha256(target[:200].encode()).hexdigest()
+            fp = FailureFingerprint(
+                item["action_type"], target, FailureCategory(item["category"]),
+                item.get("strategy_digest", "")
+            )
+            state._failure_fingerprints[fp] = item["count"]
+        state.recovery_attempt_count = snapshot.get("recovery_attempt_count", 0)
         state.replan_required = bool(snapshot.get("replan_required", False))
         state.replan_reason = str(snapshot.get("replan_reason", ""))
         state.resume_count += 1
@@ -122,6 +186,10 @@ class ExecutionState:
 
     def update_plan(self, action: UpdatePlanAction) -> None:
         self.phase = ExecutionPhase.PLAN
+        self.record_recovery(RecoveryEvent.REPLAN)
+        self.failure_streaks[RecoveryEvent.EXECUTABLE.value] = 0
+        self.failure_streaks[RecoveryEvent.GUARD.value] = 0
+        self.recovery_attempt_count = 0
         normalized: list[dict[str, Any]] = []
         acceptance_blockers: list[dict[str, Any]] = []
         for item in action.steps:
@@ -170,6 +238,8 @@ class ExecutionState:
                 }
             )
             self.plan_history = self.plan_history[-20:]
+        if normalized != self.plan_steps:
+            self.record_evidence(source="plan", summary=action.rationale or "Plan revised from current evidence.")
         self.plan_steps = normalized
         step_checks = [
             criterion
@@ -210,6 +280,7 @@ class ExecutionState:
     def require_replan(self, reason: str) -> None:
         cleaned = " ".join(reason.split())[:500]
         self.phase = ExecutionPhase.RECOVER
+        self.disposition = RunDisposition.REPLAN_REQUIRED
         self.replan_required = True
         self.replan_reason = cleaned
         self.blockers.append({"kind": "replan", "detail": cleaned, "active": True})
@@ -264,6 +335,7 @@ class ExecutionState:
     def strategy_fingerprint(action: AgentAction) -> str:
         """Hash executable action parameters, not rewordable plan prose."""
         payload = action.model_dump(exclude_none=True)
+        payload.pop("rationale", None)
         if isinstance(payload.get("command"), str):
             payload["command"] = " ".join(payload["command"].split())
         encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
@@ -333,13 +405,27 @@ class ExecutionState:
         if len(outcomes) < self.repeated_outcome_limit:
             return None
         recent = outcomes[-self.repeated_outcome_limit :]
-        if len(set(recent)) != 1:
+        if any(item.ok for item in recent):
             return None
-        status = "succeeded" if recent[-1].ok else "failed"
+        status = "failed"
         return (
-            f"Blocked repeated action loop: `{action.type}` produced the same {status} outcome "
+            f"Blocked unchanged failed strategy: this attempt {status} "
             f"{self.repeated_outcome_limit} times without any workspace change. Choose a materially "
-            "different action, inspect new evidence, update the plan, or finalize honestly."
+            "different action after diagnosing the evidence and updating the plan."
+        )
+
+    def observation_already_known(self, action: AgentAction) -> bool:
+        # Only stable workspace discovery is reusable; live process/network reads are not.
+        if action.type not in {
+            "read_file", "list_files", "search", "repo_map", "rank_context",
+            "symbol_index", "dependency_graph", "summarize_code", "inspect_git_diff",
+        }:
+            return False
+        outcomes = self._outcomes.get(self._fingerprint(action), [])
+        recent = outcomes[-self.repeated_outcome_limit:]
+        return (
+            len(recent) == self.repeated_outcome_limit
+            and all(item.ok for item in recent) and len(set(recent)) == 1
         )
 
     def record_action(
@@ -354,10 +440,12 @@ class ExecutionState:
             output_digest=hashlib.sha256(result.output.encode("utf-8")).hexdigest(),
         )
         self._outcomes.setdefault(fingerprint, []).append(outcome)
+        self._outcomes[fingerprint] = self._outcomes[fingerprint][-self.repeated_outcome_limit:]
         self.action_count += 1
         if not result.ok:
             self.phase = ExecutionPhase.RECOVER
             self.recovery_attempt_count += 1
+            self.record_recovery(RecoveryEvent.EXECUTABLE)
             safe_output = (redact_command_output_for_display(action.command, result.output)
                            if isinstance(getattr(action, "command", None), str)
                            else redact_secrets(result.output))
@@ -377,9 +465,16 @@ class ExecutionState:
         else:
             self.recovery_attempt_count = 0
             self._supersede_failed_approach(action)
-        if changed_paths:
+            self.failure_streaks[RecoveryEvent.EXECUTABLE.value] = 0
+            self.record_evidence(source=action.type, summary=result.output[:240])
+        if changed_paths or (result.ok and action.type in {
+            "run_shell", "start_process", "send_process_input", "restart_process",
+            "undo_transaction", "redo_transaction", "restore_snapshot",
+        }):
             self.changed_paths = _dedupe([*self.changed_paths, *changed_paths])
             self.workspace_generation += 1
+            self._outcomes.clear()
+            self._failure_fingerprints.clear()
 
     def record_verification(self, results: list[dict[str, Any]]) -> None:
         if not results:
@@ -400,15 +495,16 @@ class ExecutionState:
         self.verification_records = self.verification_records[-12:]
         failures = [item for item in results if not bool(item.get("ok"))]
         if failures:
+            self.record_recovery(RecoveryEvent.VERIFICATION)
             first = failures[0]
             self.record_evidence(
                 source="verification",
                 summary=f"{first.get('command', 'verification')} failed: {first.get('output', '')}",
                 confidence="high",
             )
-            if self.plan_steps:
-                self.require_replan(f"Verification failed: {first.get('command', 'planned check')}")
+            self.require_replan(f"Verification failed: {first.get('command', 'planned check')}")
         else:
+            self.failure_streaks[RecoveryEvent.VERIFICATION.value] = 0
             for item in results:
                 self.record_evidence(
                     source="verification",
@@ -427,7 +523,8 @@ class ExecutionState:
         if cleaned:
             self.failed_hypotheses = _dedupe([*self.failed_hypotheses, cleaned])[-8:]
 
-    def finalize(self) -> None:
+    def finalize(self, disposition: RunDisposition = RunDisposition.SUCCESS) -> None:
+        self.disposition = disposition
         self.phase = ExecutionPhase.FINALIZE
         self.checkpoint("finalized")
 
@@ -460,10 +557,9 @@ class ExecutionState:
         fp = FailureFingerprint.from_action(action.type, action_payload, category)
         occurrences = self._failure_fingerprints.get(fp, 0)
         effective_occurrences = occurrences if current_recorded else occurrences + 1
-        effective_recoveries = self.recovery_attempt_count if current_recorded else self.recovery_attempt_count + 1
 
-        # Hard stop: too many total recovery attempts
-        if effective_recoveries >= MAX_RECOVERY_ATTEMPTS:
+        # A local streak changes the strategy; it does not end the task.
+        if self.recovery_attempt_count >= MAX_RECOVERY_ATTEMPTS:
             self.require_replan(
                 f"Reached {MAX_RECOVERY_ATTEMPTS} recovery attempts. "
                 "The current approach is not working."
@@ -471,7 +567,7 @@ class ExecutionState:
             return (
                 f"Recovery limit reached ({MAX_RECOVERY_ATTEMPTS} attempts). "
                 "Stop the current approach. Revise the plan, choose a completely "
-                "different strategy, or ask the user how to proceed."
+                "different strategy and continue the task."
             )
 
         # Same fingerprint repeated >= 2 times => force replan
@@ -605,9 +701,28 @@ class ExecutionState:
             for passed in commands
         )
 
-    def snapshot(self) -> dict[str, Any]:
+    def snapshot(self, *, include_records: bool = True) -> dict[str, Any]:
         return {
             "type": "execution_state",
+            "disposition": self.disposition.value,
+            "run_records": {
+                name: [{key: deepcopy(value) for key, value in record.items()
+                        if key != "execution_state"} for record in records]
+                for name, records in self.run_records.items()
+            } if include_records else {},
+            "policy_denials": deepcopy(self.policy_denials),
+            "recovery_counts": self.recovery_counts.copy(),
+            "failure_streaks": self.failure_streaks.copy(),
+            "recovery_attempt_count": self.recovery_attempt_count,
+            "action_outcomes": {
+                key: [{"ok": item.ok, "output_digest": item.output_digest} for item in values]
+                for key, values in self._outcomes.items()
+            },
+            "failure_fingerprints": [
+                {"action_type": fp.action_type, "target": fp.target,
+                 "category": fp.category.value, "strategy_digest": fp.strategy_digest, "count": count}
+                for fp, count in self._failure_fingerprints.items()
+            ],
             "phase": self.phase.value,
             "step": self.step,
             "max_steps": self.max_steps,
@@ -640,7 +755,7 @@ class ExecutionState:
 
     def _fingerprint(self, action: AgentAction) -> str:
         payload = json.dumps(
-            action.model_dump(exclude_none=True),
+            action.model_dump(exclude_none=True, exclude={"rationale"}),
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -670,8 +785,9 @@ class ExecutionState:
         if self.evidence_records:
             score += min(0.2, len(self.evidence_records) * 0.02)
             reasons.append(f"{len(self.evidence_records)} evidence records")
-        passed = sum(item.get("status") == "passed" for item in self.verification_records)
-        failed = sum(item.get("status") != "passed" for item in self.verification_records)
+        latest = {item["purpose"]: item for item in self.verification_records}
+        passed = sum(item.get("status") == "passed" for item in latest.values())
+        failed = sum(item.get("status") != "passed" for item in latest.values())
         score += min(0.35, passed * 0.12)
         score -= min(0.5, failed * 0.25)
         if self.replan_required:

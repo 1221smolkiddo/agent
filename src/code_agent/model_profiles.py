@@ -12,9 +12,13 @@ class ModelProfile:
     name: ModelProfileName
     model: str
     temperature: float
-    max_tokens: int
     purpose: str
+    max_tokens: int | None = None
     context_window_tokens: int | None = None
+
+    @property
+    def request_max_output_tokens(self) -> int | None:
+        return self.max_tokens
 
 
 PROFILE_PURPOSES: dict[ModelProfileName, str] = {
@@ -42,7 +46,7 @@ def resolve_model_profile(
     profile: str | None,
     *,
     default_model: str,
-    max_tokens: int,
+    max_tokens: int | None = None,
     planner_model: str | None = None,
     coder_model: str | None = None,
     reviewer_model: str | None = None,
@@ -63,12 +67,12 @@ def resolve_model_profile(
         "reviewer": 0.1,
         "fast": 0.2,
     }
-    token_by_profile: dict[ModelProfileName, int] = {
+    token_by_profile: dict[ModelProfileName, int | None] = {
         "default": max_tokens,
         "planner": max_tokens,
         "coder": max_tokens,
         "reviewer": max_tokens,
-        "fast": min(max_tokens, 2048),
+        "fast": max_tokens,
     }
     return ModelProfile(
         name=name,

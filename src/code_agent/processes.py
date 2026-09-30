@@ -257,7 +257,7 @@ def terminate_process_tree(process: subprocess.Popen[Any], *, grace_seconds: flo
             )
             process.wait(timeout=min(2.0, grace_seconds))
             return
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, SystemError, subprocess.TimeoutExpired):
             try:
                 subprocess.run(
                     ["taskkill", "/F", "/T", "/PID", str(process.pid)],
@@ -301,7 +301,7 @@ def terminate_pid_tree(pid: int, *, grace_seconds: float = 5.0) -> None:
             while timeout is None or time.monotonic() < deadline:
                 try:
                     os.kill(self.pid, 0)
-                except OSError:
+                except (OSError, SystemError):
                     return
                 time.sleep(0.05)
             raise subprocess.TimeoutExpired(str(self.pid), timeout)

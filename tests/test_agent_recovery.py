@@ -18,7 +18,6 @@ from code_agent.schema import (
 )
 from code_agent.storage import AgentStorage
 from code_agent.tools import ToolRegistry
-from unittest.mock import patch
 
 
 class FakeModel:
@@ -190,6 +189,7 @@ def test_agent_blocks_repeated_tool_loop_and_requires_new_strategy(tmp_path: Pat
             '{"type":"read_file","path":"missing.py"}',
             '{"type":"read_file","path":"missing.py"}',
             '{"type":"list_files","path":"."}',
+            '{"type":"update_plan","steps":[{"step":"Locate the file","status":"completed"}]}',
             '{"type":"final","message":"Could not find the requested file."}',
         ]
     )
@@ -209,62 +209,49 @@ def test_agent_blocks_repeated_tool_loop_and_requires_new_strategy(tmp_path: Pat
     assert result.message == "Could not find the requested file."
     assert tools.calls == 3
     assert any(item.get("type") == "action_loop" for item in result.failed_actions)
-    assert "Blocked repeated action loop" in model.messages_seen[3][-1]["content"]
+    assert "Blocked unchanged failed strategy" in model.messages_seen[3][-1]["content"]
     assert result.execution_state["phase"] == "finalize"
 
 
-def test_run_87_pattern_stops_after_one_redundant_context_recovery(tmp_path: Path) -> None:
+def test_redundant_automatic_context_redirects_without_failure(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "app.py").write_text("value = 1\n", encoding="utf-8")
-    model = FakeModel(
-        [
-            '{"type":"read_memory","max_chars":8000}',
-            '{"type":"repo_map","max_files":60}',
-            # This must never be consumed; the second redundant discovery action finalizes.
-            '{"type":"read_memory","max_chars":8000}',
-        ]
-    )
+    model = FakeModel([
+        '{"type":"read_memory","max_chars":8000}',
+        '{"type":"repo_map","max_files":60}',
+        '{"type":"read_memory","max_chars":8000}',
+        '{"type":"final","message":"context inspected"}',
+    ])
     agent = make_real_tool_agent(tmp_path, model)
-
-    result = agent.run_detailed("inspect this project and identify its industry readiness gaps")
-
-    assert result.blocked is True
-    assert "already supplied" in result.message
-    assert len(model.messages_seen) == 2
-    assert [item["type"] for item in result.failed_actions] == [
-        "redundant_context",
-        "redundant_context",
-    ]
-    assert "Do not request it again" in model.messages_seen[1][-1]["content"]
+    result = agent.run_detailed("inspect this project and identify its readiness gaps")
+    assert result.message == "context inspected"
+    assert not result.blocked
+    assert len(model.messages_seen) == 4
+    assert result.failed_actions == []
+    assert "observation_already_known" in model.messages_seen[1][-1]["content"]
+    assert result.execution_state["recovery_counts"].get("executable", 0) == 0
 
 
-def test_second_distinct_action_loop_finalizes_without_more_model_calls(tmp_path: Path) -> None:
-    model = FakeModel(
-        [
-            '{"type":"read_file","path":"missing.py"}',
-            '{"type":"read_file","path":"missing.py"}',
-            '{"type":"read_file","path":"missing.py"}',
-            '{"type":"list_files","path":"."}',
-            '{"type":"list_files","path":"."}',
-            '{"type":"list_files","path":"."}',
-            '{"type":"final","message":"must not be reached"}',
-        ]
-    )
-    agent = CodingAgent(
-        cwd=tmp_path,
-        dry_run=False,
-        max_steps=8,
-        max_failures=8,
-        model_client=model,
-        tools=RecoveringTools(tmp_path),  # type: ignore[arg-type]
-        storage=AgentStorage(tmp_path / "agent.db"),
-    )
-
+def test_two_distinct_repeated_action_situations_continue(tmp_path: Path) -> None:
+    model = FakeModel([
+        '{"type":"read_file","path":"missing.py"}',
+        '{"type":"read_file","path":"missing.py"}',
+        '{"type":"read_file","path":"missing.py"}',
+        '{"type":"list_files","path":"."}',
+        '{"type":"list_files","path":"."}',
+        '{"type":"list_files","path":"."}',
+        '{"type":"update_plan","steps":[{"step":"Inspect files","status":"completed"}]}',
+        '{"type":"final","message":"inspection complete"}',
+    ])
+    agent = make_agent(tmp_path, model, RecoveringTools(tmp_path))
+    agent.max_steps = 10
+    agent.max_failures = 1
     result = agent.run_detailed("inspect this project")
-
-    assert result.blocked is True
-    assert len(model.messages_seen) == 6
-    assert sum(item.get("type") == "action_loop" for item in result.failed_actions) == 2
+    assert not result.blocked
+    assert result.message == "inspection complete"
+    assert len(model.messages_seen) == 8
+    assert sum(item.get("type") == "action_loop" for item in result.failed_actions) == 1
+    assert "observation_already_known" in model.messages_seen[6][-1]["content"]
 
 
 def test_model_operation_timeout_does_not_execute_action(tmp_path: Path) -> None:
@@ -332,6 +319,7 @@ def test_agent_enforces_plan_completion_before_success_claim(tmp_path: Path) -> 
             '{"type":"final","message":"Updated app.py."}',
             '{"type":"update_plan","steps":['
             '{"step":"Update app","status":"completed"}],"checks":[]}',
+            '{"type":"run_shell","command":"python -m pytest"}',
             '{"type":"final","message":"Updated app.py."}',
         ]
     )
@@ -339,10 +327,12 @@ def test_agent_enforces_plan_completion_before_success_claim(tmp_path: Path) -> 
     tools.results["read_file"] = ToolResult(ok=True, output="evidence")
     
     agent = make_agent(tmp_path, model, tools)
+    agent.max_steps = 6
     
     result = agent.run_detailed("update this project app")
 
-    assert result.message == "Updated app.py."
+    assert result.message.startswith("Updated app.py.")
+    assert result.verification_results[-1]["ok"] is True
     assert any("unfinished steps" in str(item.get("output")) for item in result.failed_actions)
     assert len(result.plan_updates) == 2
     assert result.execution_state["plan_steps"] == [
@@ -508,7 +498,8 @@ def test_agent_records_plan_updates_without_calling_tools(tmp_path: Path) -> Non
     result = agent.run_detailed("update this project planner")
     stored_steps = agent.storage.run_steps_payloads(result.run_id)
 
-    assert result.message == "plan checkpointed"
+    assert result.blocked
+    assert result.disposition.value == "waiting"
     assert result.plan_updates == [
         {
             "type": "plan_updated",
@@ -558,9 +549,10 @@ def test_agent_rejects_plan_with_multiple_in_progress_steps(tmp_path: Path) -> N
     tools = RecoveringTools()
     agent = make_agent(tmp_path, model, tools)
 
-    result = agent.run("update this project planner")
+    result = agent.run_detailed("update this project planner")
 
-    assert result == "corrected"
+    assert result.blocked
+    assert result.disposition.value == "waiting"
     assert tools.calls == 0
     assert "parse_failure" in model.messages_seen[1][-1]["content"]
     assert "Only one plan step can be in_progress" in model.messages_seen[1][-1]["content"]
@@ -583,9 +575,10 @@ def test_agent_rejects_plan_with_unsafe_target_file(tmp_path: Path) -> None:
     tools = RecoveringTools()
     agent = make_agent(tmp_path, model, tools)
 
-    result = agent.run("update this project planner")
+    result = agent.run_detailed("update this project planner")
 
-    assert result == "corrected"
+    assert result.blocked
+    assert result.disposition.value == "waiting"
     assert tools.calls == 0
     assert "workspace-relative paths" in model.messages_seen[1][-1]["content"]
 
@@ -664,9 +657,11 @@ def test_agent_rejects_created_claim_without_any_mutation(tmp_path: Path) -> Non
     tools = RecoveringTools()
     agent = make_agent(tmp_path, model, tools)
 
-    result = agent.run("create a notes.md file in this project")
+    result = agent.run_detailed("create a notes.md file in this project")
 
-    assert result == "I did not create notes.md because no write action was run."
+    assert result.blocked
+    assert result.disposition.value == "waiting"
+    assert sum(r.get("type") == "false_completion" for r in result.failed_actions) == 2
     assert tools.calls == 0
     assert "no verified file mutation" in model.messages_seen[1][-1]["content"]
 
@@ -719,7 +714,8 @@ def test_agent_rejects_write_success_when_file_is_not_on_disk(tmp_path: Path) ->
 
     result = agent.run_detailed("create notes.md in this project")
 
-    assert result.message == "I could not verify notes.md was written."
+    assert result.blocked
+    assert result.disposition.value == "waiting"
     assert result.changed_paths == []
     assert result.mutation_records[0]["ok"] is False
     assert result.mutation_records[0]["exists_after"] is False
@@ -751,7 +747,8 @@ def test_agent_rejects_edit_success_when_content_did_not_change(tmp_path: Path) 
 
     result = agent.run_detailed("update src/app.py in this project")
 
-    assert result.message == "I could not verify src/app.py changed."
+    assert result.blocked
+    assert result.disposition.value == "waiting"
     assert result.changed_paths == []
     assert result.mutation_records[0]["ok"] is False
     assert result.mutation_records[0]["exists_after"] is True
@@ -802,9 +799,11 @@ def test_agent_rejects_deleted_claim_without_delete_file(tmp_path: Path) -> None
     tools = RecoveringTools()
     agent = make_agent(tmp_path, model, tools)
 
-    result = agent.run("remove hello_world.py")
+    result = agent.run_detailed("remove hello_world.py")
 
-    assert result == "I did not remove hello_world.py because no delete action ran."
+    assert result.blocked
+    assert result.disposition.value == "waiting"
+    assert sum(r.get("type") == "false_completion" for r in result.failed_actions) == 2
     assert "no verified file mutation" in model.messages_seen[1][-1]["content"]
 
 
@@ -874,8 +873,7 @@ testpaths = ["tests"]
     assert "Automatic focused verification passed" in tool_payload
 
 
-@patch("code_agent.execution_state.ExecutionState.low_confidence_blocker", return_value=None)
-def test_agent_recovers_after_failed_automatic_verification(_, tmp_path: Path) -> None:
+def test_agent_recovers_after_failed_automatic_verification(tmp_path: Path) -> None:
     (tmp_path / "tests").mkdir()
     (tmp_path / "uv.lock").write_text("", encoding="utf-8")
     (tmp_path / "pyproject.toml").write_text(
@@ -891,7 +889,9 @@ testpaths = ["tests"]
     model = FakeModel(
         [
             '{"type":"write_file","path":"src/app.py","content":"print(\\"hi\\")"}',
+            '{"type":"update_plan","steps":[{"step":"Repair greeting","status":"in_progress"}],"rationale":"Use hello to match the failing test"}',
             '{"type":"edit_file","path":"src/app.py","find":"hi","replace":"hello"}',
+            '{"type":"update_plan","steps":[{"step":"Repair greeting","status":"completed"}]}',
             '{"type":"final","message":"fixed src/app.py"}',
         ]
     )
@@ -940,6 +940,9 @@ testpaths = ["tests"]
     ]
     assert '"recovery_context_pack"' in model.messages_seen[1][-1]["content"]
 
+
+    assert result.execution_state["recovery_counts"]["verification"] == 1
+    assert result.execution_state["recovery_counts"].get("executable", 0) == 0
 
 def test_agent_appends_verification_outcomes_to_final_answer(tmp_path: Path) -> None:
     model = FakeModel(
@@ -1098,7 +1101,8 @@ def test_agent_runs_automatic_context_preflight_for_workspace_task(tmp_path: Pat
     result = agent.run_detailed("fix the failing calculator tests in this project")
     first_model_context = "\n".join(message["content"] for message in model.messages_seen[0])
 
-    assert result.message == "context gathered"
+    assert result.blocked
+    assert result.disposition.value == "waiting"
     assert [record["action"] for record in result.context_records] == [
         "read_memory",
         "repo_map",

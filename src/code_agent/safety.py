@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 import shlex
@@ -97,7 +98,7 @@ SHELL_CONTROL_PATTERNS = [
 
 ARBITRARY_CODE_PATTERNS = [
     re.compile(r"(?i)\bpython(?:3|3\.\d+)?\s+-c\b"),
-    re.compile(r"(?i)\bpy\s+-\d+(?:\.\d+)?\s+-c\b"),
+    re.compile(r"(?i)\bpy\s+(?:-\d+(?:\.\d+)?\s+)?-c\b"),
     re.compile(r"(?i)\bnode\s+-e\b"),
     re.compile(r"(?i)\bpowershell\b.*\b(?:-encodedcommand|-enc|-command)\b"),
     re.compile(r"(?i)\bpwsh\b.*\b(?:-encodedcommand|-enc|-command)\b"),
@@ -578,6 +579,8 @@ def _looks_like_development_process(lowered: str) -> bool:
     ]
     if any(token in lowered for token in tokens):
         return True
+    if re.fullmatch(r"(?:python|python3|py)\s+-m\s+http\.server(?:\s+\d{1,5})?", lowered):
+        return True
     return bool(
         re.fullmatch(
             r"(?:python(?:3|3\.\d+)?|py(?:\s+-\d+(?:\.\d+)?)?|node|ruby|perl)\s+"
@@ -613,3 +616,58 @@ def _first_token(command: str) -> str:
     except ValueError:
         parts = command.split()
     return parts[0].lower() if parts else ""
+
+
+def blocked_command_strategy(command: str) -> str:
+    """Opaque strategy identity shared by foreground and managed command actions."""
+    try:
+        parts = [part.strip("\"'") for part in shlex.split(command, posix=False)]
+    except ValueError:
+        parts = command.split()
+    if parts and parts[0].lower() in {"python", "python3", "py"}:
+        parts[0] = "python"
+    if len(parts) >= 3 and parts[1:3] == ["-m", "http.server"]:
+        parts = parts[:3]  # Changing the port does not resolve a server policy denial.
+    return hashlib.sha256(json.dumps(parts, ensure_ascii=False).encode()).hexdigest()
+
+
+def unknown_command_approval_eligible(command: str, workspace: Path) -> bool:
+    """Conservative escalation gate; approval never replaces sandbox authorization."""
+    if classify_shell_command(command).category != "unknown":
+        return False
+    if any(c in command for c in "\n\r$%~") or redact_secrets(command) != command:
+        return False
+    try:
+        parts = shlex.split(command, posix=False)
+    except ValueError:
+        return False
+    if not parts:
+        return False
+    executable = parts[0].strip("\"'").replace("\\", "/").rsplit("/", 1)[-1].lower().removesuffix(".exe")
+    # Interpreter/wrapper and sensitive administration commands need a designed class.
+    if re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", executable):
+        return False
+    if executable in {
+        "python", "python3", "py", "node", "ruby", "perl", "bash", "sh",
+        "zsh", "cmd", "powershell", "pwsh", "env", "printenv", "sudo", "su",
+        "ssh", "scp", "sftp", "reg", "runas", "rm", "del", "erase", "rmdir",
+        "remove-item", "invoke-expression", "iex", "eval", "exec", "chmod", "chown",
+        "dd", "unlink", "truncate", "format", "mkfs", "gpg", "aws", "az", "gcloud",
+        "security", "keychain", "set-item", "export", "uv", "npx", "npm", "pnpm",
+        "yarn", "bun", "cargo", "go", "dotnet", "xargs", "find", "make",
+    }:
+        return False
+    for raw in parts:
+        token = raw.strip("\"'").split("=", 1)[-1].strip("\"'")
+        if re.search(r"(?i)(authorization|password|passwd|api[-_]?key|credential|secret|token)", token):
+            return False
+        components = token.replace("\\", "/").split("/")
+        protected = {"..", ".ssh", ".aws", ".azure", ".gnupg", ".git"}
+        if any(part.lower() in protected for part in components) or is_sensitive_path(workspace / token, workspace):
+            return False
+        if token.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", token):
+            try:
+                Path(token).resolve().relative_to(workspace.resolve())
+            except (ValueError, OSError):
+                return False
+    return True

@@ -252,10 +252,16 @@ def test_agent_telemetry_work_reports_and_logs_omit_credential_values(tmp_path, 
                 "Synthetic historical parser lesson. " + payload,
             ),))
     (tmp_path / "payload.py").write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / "test_payload.py").write_text(
+        "from pathlib import Path\ndef test_payload():\n"
+        "    assert Path('payload.py').read_text(encoding='utf-8') == 'value = 2\\n'\n",
+        encoding="utf-8",
+    )
     service = ExperienceMemoryService(ExperienceMemoryConfig(enabled=True, api_key="sk-test-secret-value"),
                                       tmp_path, provider=Provider(MemoryStatus.OK))
     model = ScriptedModel([
         '{"type":"write_file","path":"payload.py","content":"value = 2\\n"}',
+        '{"type":"run_shell","command":"python -m pytest test_payload.py -q"}',
         '{"type":"final","message":"Updated the synthetic parser fixture."}',
     ])
     storage = AgentStorage(tmp_path / "runs.db")
@@ -269,7 +275,8 @@ def test_agent_telemetry_work_reports_and_logs_omit_credential_values(tmp_path, 
             storage.get_work_report(result.run_id)) + caplog.text
         safe = marker not in surfaces
         assert safe, "Telemetry/work report/log boundary retained credential material (values omitted)."
-        assert len(model.messages_seen) == 2  # No eligibility classification model call.
+        assert len(model.messages_seen) == 3  # Write, verification, final; no eligibility model call.
+        assert not result.blocked and result.verification_results[-1]["ok"]
     finally:
         tools.close()
 

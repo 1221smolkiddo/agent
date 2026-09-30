@@ -247,3 +247,145 @@ def test_stream_complete_retries_on_402(monkeypatch):
     assert chunks == ["Stream", "ed!"]
     assert mock_completions.call_count == 2
     assert mock_completions.requested_tokens == [4096, 748]
+
+
+def test_uncapped_request_omits_max_tokens_and_keeps_context_reserve(monkeypatch):
+    client = OpenAICompatibleChatClient(
+        api_key="test", base_url="test", model="test",
+        max_tokens=None, response_reserve_tokens=1024, context_window_tokens=8192,
+    )
+    calls = []
+    def create(**kwargs):
+        calls.append(kwargs)
+        return MockResponse("done")
+    monkeypatch.setattr(client._client.chat.completions, "create", create)
+    assert client.complete([{"role": "user", "content": "continue project"}]) == "done"
+    assert "max_tokens" not in calls[0]
+    assert client.request_max_output_tokens is None
+    assert client.response_reserve_tokens == 1024
+
+
+def test_uncapped_credit_retry_uses_provider_affordability(monkeypatch):
+    client = OpenAICompatibleChatClient(
+        api_key="test", base_url="test", model="test",
+        request_max_output_tokens=None, credit_retry_count=1,
+    )
+    mock = MockCompletions([make_402_error(700), MockResponse("done")])
+    monkeypatch.setattr(client, "_client", MockClient(mock))
+    assert client.complete([{"role": "user", "content": "work"}]) == "done"
+    assert mock.requested_tokens == [None, 700]
+
+
+def test_uncapped_credit_retry_without_provider_hint_stops_safely(monkeypatch):
+    client = OpenAICompatibleChatClient(api_key="test", base_url="test", model="test")
+    mock = MockCompletions([make_402_error(None)])
+    monkeypatch.setattr(client, "_client", MockClient(mock))
+    with pytest.raises(InsufficientCreditsError, match="affordable output limit"):
+        client.complete([{"role": "user", "content": "work"}])
+    assert mock.call_count == 1
+
+
+def test_each_retry_receives_fresh_full_timeout_after_slow_failure(monkeypatch):
+    client = OpenAICompatibleChatClient(
+        api_key="test", base_url="test", model="test",
+        retry_base_delay_seconds=0,
+    )
+    clock = [0.0]
+    monkeypatch.setattr("code_agent.models.time.monotonic", lambda: clock[0])
+    calls = []
+    def create(**kwargs):
+        calls.append(kwargs["timeout"])
+        if len(calls) == 1:
+            clock[0] += 13
+            raise make_500_error()
+        clock[0] += 2
+        return MockResponse("recovered")
+    monkeypatch.setattr(client._client.chat.completions, "create", create)
+    assert client.complete_with_timeout([], 12.5) == "recovered"
+    assert calls == [12.5, 12.5]
+
+
+def test_fallback_receives_fresh_timeout_after_primary_failure():
+    from code_agent.models import FallbackModelClient
+    calls = []
+    class Client:
+        def __init__(self, model, fail):
+            self.model = model
+            self.fail = fail
+        def complete_with_timeout(self, messages, timeout_seconds):
+            calls.append((self.model, timeout_seconds))
+            if self.fail:
+                raise make_500_error()
+            return "recovered"
+        def drain_usage_records(self):
+            return []
+    chain = FallbackModelClient([Client("first", True), Client("second", False)])
+    assert chain.complete_with_timeout([], 180) == "recovered"
+    assert calls == [("first", 180), ("second", 180)]
+
+
+def test_cancelled_retry_does_not_start_another_provider_attempt(monkeypatch):
+    from code_agent.models import ModelCancelledError
+
+    client = OpenAICompatibleChatClient(
+        api_key="test", base_url="test", model="test",
+        retry_base_delay_seconds=1,
+    )
+    calls = []
+    def create(**kwargs):
+        calls.append(kwargs)
+        client.cancel()
+        raise make_500_error()
+    monkeypatch.setattr(client._client.chat.completions, "create", create)
+    with pytest.raises(ModelCancelledError):
+        client.complete([{"role": "user", "content": "work"}])
+    assert len(calls) == 1
+
+
+def test_uncapped_stream_omits_max_tokens(monkeypatch):
+    client = OpenAICompatibleChatClient(api_key="test", base_url="test", model="test")
+    calls = []
+    def create(**kwargs):
+        calls.append(kwargs)
+        return iter([MockResponse("streamed")])
+    monkeypatch.setattr(client._client.chat.completions, "create", create)
+    chunks = []
+    assert client.stream_complete([], chunks.append) == "streamed"
+    assert "max_tokens" not in calls[0]
+
+
+def test_late_provider_response_is_discarded_per_attempt(monkeypatch):
+    client = OpenAICompatibleChatClient(
+        api_key="test", base_url="test", model="test",
+        transient_retry_count=0,
+    )
+    clock = [0.0]
+    monkeypatch.setattr("code_agent.models.time.monotonic", lambda: clock[0])
+    def create(**kwargs):
+        clock[0] += 181
+        return MockResponse("late")
+    monkeypatch.setattr(client._client.chat.completions, "create", create)
+    with pytest.raises(TimeoutError, match="late response discarded"):
+        client.complete_with_timeout([], 180)
+
+
+def test_explicit_response_reserve_is_not_silently_clamped():
+    client = OpenAICompatibleChatClient(
+        api_key="test", base_url="test", model="test",
+        context_window_tokens=2048, response_reserve_tokens=1000,
+    )
+    assert client.response_reserve_tokens == 1000
+    assert client.request_max_output_tokens is None
+
+
+def test_uncapped_input_still_cannot_exceed_response_reserve(monkeypatch):
+    from code_agent.context_budget import ContextBudgetExceeded
+    client = OpenAICompatibleChatClient(
+        api_key="test", base_url="test", model="test",
+        context_window_tokens=2048, response_reserve_tokens=1000,
+    )
+    calls = []
+    monkeypatch.setattr(client._client.chat.completions, "create", lambda **kwargs: calls.append(kwargs))
+    with pytest.raises(ContextBudgetExceeded):
+        client.complete([{"role": "system", "content": "x" * 1800}])
+    assert calls == []

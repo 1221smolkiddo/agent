@@ -45,7 +45,8 @@ from .sandbox import (
 )
 from .sandbox_security import SandboxIsolationError, resolve_sandbox_policy
 from .session import SessionState
-from .context_budget import bound_messages, safe_content, ContextBudgetExceeded
+from .context_budget import bound_messages, safe_content, ContextBudgetExceeded, estimate_tokens
+from .prompts import system_prompt
 from .storage import AgentStorage
 from .status import StatusReporter, analyze_workspace
 from .models import classify_model_error, safe_model_error
@@ -172,6 +173,8 @@ def main() -> None:
             if command_result.exit_requested:
                 print_panel("System", "bye")
                 return
+            if command_result.base_cwd != base_cwd:
+                settings = Settings.for_workspace(command_result.base_cwd)
             base_cwd = command_result.base_cwd
             cwd = command_result.cwd
             model = command_result.model
@@ -197,7 +200,11 @@ def main() -> None:
                 reporter = StatusReporter()
                 reporter.thinking(1)
                 with active_shortcuts(client, reporter):
-                    response = run_lightweight_chat(task_with_context(user_input, transcript, session_state), client)
+                    response = run_lightweight_chat(task_with_context(
+                        user_input, transcript, session_state,
+                        window_tokens=getattr(client, "context_window_tokens", 65_536),
+                        response_reserve_tokens=getattr(client, "response_reserve_tokens", 4096),
+                    ), client)
                 reporter.done()
             except InteractiveExitRequested:
                 if reporter:
@@ -228,7 +235,13 @@ def main() -> None:
                 continue
             print_response("Agent47", response)
             transcript.append((redact_secrets(user_input), safe_content(response)))
-            transcript = transcript[-8:]
+            transcript = _recent_transcript(
+                transcript,
+                max(8_000, 2 * (
+                    getattr(client, "context_window_tokens", 65_536)
+                    - getattr(client, "response_reserve_tokens", 4096)
+                )),
+            )
             continue
 
         permission_policy.reset_task()
@@ -247,6 +260,7 @@ def main() -> None:
                 reporter=reporter,
                 stream_model=stream_model,
                 require_process_isolation=sandbox_enabled,
+            interactive_shell=True,
             )
             with active_shortcuts(agent, reporter):
                 transcript = run_interactive_turn(user_input, agent, transcript, session_state)
@@ -902,6 +916,7 @@ def run_resume_command(
             reporter=reporter,
             stream_model=stream_model,
             require_process_isolation=sandbox_enabled,
+            interactive_shell=True,
             execution_state_snapshot=latest_execution_state(prior_steps),
             resumed_from_run_id=run_id,
         )
@@ -911,7 +926,8 @@ def run_resume_command(
     result = agent.run_detailed(task)
     print_work_report_panel(result)
     if not should_show_work_report(result):
-        print_response("Agent47", result.message)
+        from .terminal_ui import normal_result_message
+        print_response("Agent47", normal_result_message(result.message, blocked=result.blocked))
     if session_state is not None:
         session_state.update(f"resume run {run_id}", result)
 
@@ -1719,54 +1735,95 @@ def run_interactive_turn(
     transcript: list[tuple[str, str]],
     session_state: SessionState,
 ) -> list[tuple[str, str]]:
-    task = task_with_context(user_input, transcript, session_state,
-                             max_chars=min(10_000, max(2048, (getattr(agent, "context_window_tokens", 65_536) - getattr(agent, "reserved_output_tokens", 4096)) // 4)))
+    model_window = getattr(agent, "context_window_tokens", 65_536)
+    response_reserve = getattr(agent, "reserved_output_tokens", 4096)
+    # The agent adds system instructions, workspace evidence, and tool context
+    # after this wrapper. Allocate a model-relative share to the session.
+    session_budget = max(1024, int((model_window - response_reserve) * 0.35))
+    if hasattr(agent, "cwd"):
+        # Pinned system guidance grows with supported tools/platform instructions.
+        # Keep the session share within the remaining hard input budget.
+        system_cost = estimate_tokens([{"role": "system", "content": system_prompt(
+            agent.cwd, getattr(agent, "dry_run", True),
+        )}])
+        available = model_window - response_reserve - max(128, int(model_window * 0.10))
+        hard = int(available * getattr(agent, "context_hard_compact_ratio", 0.85))
+        session_budget = max(1024, min(session_budget, hard - system_cost - 128))
+    task = task_with_context(
+        user_input, transcript, session_state,
+        window_tokens=session_budget + response_reserve,
+        response_reserve_tokens=response_reserve,
+        max_chars=getattr(agent, "context_max_chars", None),
+    )
     result = agent.run_detailed(task)
     if is_model_failure_result(result):
         print_model_failure_card(result)
     else:
         print_work_report_panel(result)
     if not should_show_work_report(result) and not is_model_failure_result(result):
-        print_response("Agent47", result.message)
+        from .terminal_ui import normal_result_message
+        print_response("Agent47", normal_result_message(result.message, blocked=result.blocked))
     session_state.update(user_input, result)
     storage = getattr(agent, "storage", None)
     if storage is not None:
         session_state.save(storage)
     transcript.append((redact_secrets(user_input), safe_content(result.message)))
-    return transcript[-8:]
+    return _recent_transcript(transcript, max(8_000, 2 * (model_window - response_reserve)))
 
 
 def task_with_transcript(user_input: str, transcript: list[tuple[str, str]]) -> str:
     if not transcript:
         return user_input
 
-    lines = [
-        user_input,
-        "",
-        "Recent interactive transcript for reference:",
-    ]
-    for index, (user, assistant) in enumerate(transcript[-6:], start=1):
-        lines.append(f"Turn {index} user: {user}")
-        lines.append(f"Turn {index} Agent47: {assistant}")
-    return "\n".join(lines)
+    messages = [{"role": "system", "content": ""}, {"role": "user", "content": user_input}]
+    messages.extend({
+        "role": "user",
+        "content": (
+            "Recent interactive transcript for reference:\n"
+            f"Turn {index} user: {user}\nTurn {index} Agent47: {assistant}"
+        ),
+    } for index, (user, assistant) in enumerate(transcript, start=1))
+    bounded, _ = bound_messages(messages, window_tokens=65_536, output_tokens=4096)
+    return "\n\n".join(item["content"] for item in bounded if item["content"])
+
+
+def _recent_transcript(transcript: list[tuple[str, str]], byte_budget: int) -> list[tuple[str, str]]:
+    """Keep only recent conversation that can plausibly fit the active model."""
+    kept = []
+    used = 0
+    for user, assistant in reversed(transcript):
+        size = len(user.encode("utf-8")) + len(assistant.encode("utf-8")) + 64
+        if size > byte_budget or used + size > byte_budget:
+            break
+        kept.append((user, assistant))
+        used += size
+    return list(reversed(kept))
 
 
 def task_with_context(
     user_input: str,
     transcript: list[tuple[str, str]],
     session_state: SessionState,
-    *, max_chars: int = 20_000,
+    *, max_chars: int | None = None, window_tokens: int = 65_536,
+    response_reserve_tokens: int = 4096,
 ) -> str:
-    pinned = {"session": session_state.render()}
+    available = max(1, window_tokens - response_reserve_tokens)
+    # Keep durable facts ahead of conversational detail; let token compaction
+    # choose recent turns from the full in-process history.
+    checkpoint_budget = max(512, available // 4)
+    pinned = {"session": session_state.render(max_tokens=checkpoint_budget)}
     messages = [{"role": "system", "content": ""}, {"role": "user", "content": user_input}]
     messages.extend({"role": "user", "content": _format_transcript([turn])} for turn in transcript)
-    bounded, _ = bound_messages(messages, max_chars=max_chars, checkpoint=pinned)
+    bounded, _ = bound_messages(
+        messages, max_chars=max_chars, window_tokens=window_tokens,
+        output_tokens=response_reserve_tokens, checkpoint=pinned,
+    )
     return "\n\n".join(m["content"] for m in bounded if m["content"])
 
 
 def _format_transcript(transcript: list[tuple[str, str]]) -> str:
     lines = ["Recent interactive transcript for reference:"]
-    for index, (user, assistant) in enumerate(transcript[-6:], start=1):
+    for index, (user, assistant) in enumerate(transcript, start=1):
         lines.append(f"Turn {index} user: {user}")
         lines.append(f"Turn {index} Agent47: {assistant}")
     return "\n".join(lines)

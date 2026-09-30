@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import replace
 import re
+import threading
 import time
 from typing import Any, Literal, Protocol, TypeVar
 
@@ -21,6 +22,10 @@ T = TypeVar("T")
 
 class InsufficientCreditsError(RuntimeError):
     """Raised when the provider returns 402 and retries with reduced tokens are exhausted."""
+
+
+class ModelCancelledError(RuntimeError):
+    """A user cancelled the model chain; no retry or fallback may continue."""
 
 
 ModelErrorKind = Literal[
@@ -73,6 +78,7 @@ class ModelProviderConfig:
     default_headers: dict[str, str] | None = None
     include_stream_usage: bool = True
     context_window_tokens: int = 65_536
+    response_reserve_tokens: int | None = None
     timeout_seconds: float = 180.0
     input_cost_per_million: float | None = None
     output_cost_per_million: float | None = None
@@ -127,7 +133,9 @@ class OpenAICompatibleChatClient:
     api_key: str
     base_url: str
     model: str
-    max_tokens: int = 4096
+    max_tokens: int | None = None
+    response_reserve_tokens: int | None = None
+    request_max_output_tokens: int | None = None
     temperature: float = 0.2
     default_headers: dict[str, str] | None = None
     provider_name: str = "openai-compatible"
@@ -148,7 +156,19 @@ class OpenAICompatibleChatClient:
             raise ValueError("Model retry counts must be zero or greater.")
         if self.retry_base_delay_seconds < 0 or self.retry_max_delay_seconds < 0:
             raise ValueError("Model retry delays must be zero or greater.")
+        if self.request_max_output_tokens is not None:
+            if self.max_tokens is not None and self.max_tokens != self.request_max_output_tokens:
+                raise ValueError("Conflicting model output limits.")
+            self.max_tokens = self.request_max_output_tokens
+        if self.max_tokens is not None and self.max_tokens < 1:
+            raise ValueError("Model output limit must be positive.")
+        self.request_max_output_tokens = self.max_tokens
+        if self.response_reserve_tokens is None:
+            self.response_reserve_tokens = min(4096, max(128, self.context_window_tokens // 4))
+        if self.response_reserve_tokens <= 0:
+            raise ValueError("Model response reserve must be positive.")
         self._usage_records: list[ModelUsageRecord] = []
+        self._cancelled = threading.Event()
         self._client = OpenAI(
             api_key=self.api_key,
             base_url=self.base_url,
@@ -163,16 +183,17 @@ class OpenAICompatibleChatClient:
         return self.complete_with_timeout(messages, self.timeout_seconds)
 
     def complete_with_timeout(self, messages: list[ChatMessage], timeout_seconds: float) -> str:
-        messages, _ = bound_messages(messages, max_chars=self.context_window_tokens,
-                                     window_tokens=self.context_window_tokens, output_tokens=self.max_tokens)
-        def _make_request(current_max_tokens: int, remaining_seconds: float) -> str:
+        messages, _ = bound_messages(messages, max_chars=None,
+                                     window_tokens=self.context_window_tokens, output_tokens=self.response_reserve_tokens)
+        def _make_request(current_max_tokens: int | None, attempt_seconds: float) -> str:
             request: dict[str, Any] = {
                 "model": self.model,
                 "messages": [{**message, "content": redact_secrets(message["content"])} for message in messages],
                 "temperature": self.temperature,
-                "max_tokens": current_max_tokens,
-                "timeout": remaining_seconds,
+                "timeout": attempt_seconds,
             }
+            if current_max_tokens is not None:
+                request["max_tokens"] = current_max_tokens
             if self.extra_body:
                 request["extra_body"] = self.extra_body
             response = self._client.chat.completions.create(**request)  # type: ignore[arg-type]
@@ -198,28 +219,29 @@ class OpenAICompatibleChatClient:
         on_token: Callable[[str], None],
         timeout_seconds: float,
     ) -> str:
-        messages, _ = bound_messages(messages, max_chars=self.context_window_tokens,
-                                     window_tokens=self.context_window_tokens, output_tokens=self.max_tokens)
-        def _make_request(current_max_tokens: int, remaining_seconds: float) -> str:
+        messages, _ = bound_messages(messages, max_chars=None,
+                                     window_tokens=self.context_window_tokens, output_tokens=self.response_reserve_tokens)
+        def _make_request(current_max_tokens: int | None, attempt_seconds: float) -> str:
             chunks: list[str] = []
             request: dict[str, Any] = {
                 "model": self.model,
                 "messages": [{**message, "content": redact_secrets(message["content"])} for message in messages],
                 "temperature": self.temperature,
-                "max_tokens": current_max_tokens,
                 "stream": True,
-                "timeout": remaining_seconds,
+                "timeout": attempt_seconds,
             }
             if self.include_stream_usage:
                 request["stream_options"] = {"include_usage": True}
+            if current_max_tokens is not None:
+                request["max_tokens"] = current_max_tokens
             if self.extra_body:
                 request["extra_body"] = self.extra_body
-            stream_deadline = time.monotonic() + remaining_seconds
+            stream_deadline = time.monotonic() + attempt_seconds
             stream = self._client.chat.completions.create(**request)  # type: ignore[arg-type]
             try:
                 for event in stream:
                     if time.monotonic() >= stream_deadline:
-                        raise TimeoutError("Model stream exceeded its turn deadline.")
+                        raise TimeoutError("Model stream exceeded its attempt deadline.")
                     usage = getattr(event, "usage", None)
                     if usage is not None:
                         self._record_success(_usage_from_object(usage))
@@ -251,6 +273,7 @@ class OpenAICompatibleChatClient:
         return records
 
     def cancel(self, reason: str = "user stop") -> int:
+        self._cancelled.set()
         close = getattr(self._client, "close", None)
         if close is None:
             return 0
@@ -262,35 +285,44 @@ class OpenAICompatibleChatClient:
 
     def _call_with_retry(
         self,
-        make_request: Callable[[int, float], T],
+        make_request: Callable[[int | None, float], T],
         *,
         timeout_seconds: float,
     ) -> T:
         if timeout_seconds <= 0:
-            raise TimeoutError("Model turn deadline expired before the request started.")
-        deadline = time.monotonic() + timeout_seconds
+            raise TimeoutError("Model attempt timeout must be positive.")
         current_tokens = self.max_tokens
         credit_retries = 0
         transient_retries = 0
         while True:
+            if self._cancelled.is_set():
+                raise ModelCancelledError("Model request cancelled.")
             try:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError(
-                        f"Model turn exceeded its {timeout_seconds:g}s absolute deadline."
-                    )
-                result = make_request(current_tokens, remaining)
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("Model response arrived after its turn deadline.")
+                # Every bounded provider attempt gets a fresh timeout. Retry count
+                # and backoff remain bounded, with no overall logical-turn timer.
+                attempt_started = time.monotonic()
+                result = make_request(current_tokens, timeout_seconds)
+                if self._cancelled.is_set():
+                    raise ModelCancelledError("Model request cancelled.")
+                if time.monotonic() - attempt_started >= timeout_seconds:
+                    raise TimeoutError("Model attempt timed out; late response discarded.")
                 return result
             except Exception as exc:
+                if self._cancelled.is_set():
+                    raise ModelCancelledError("Model request cancelled.") from exc
                 classified = classify_model_error(exc)
                 if classified.kind == "credits" and classified.retryable:
                     if credit_retries >= self.credit_retry_count:
                         raise InsufficientCreditsError("Exhausted credit retries.") from exc
                     credit_retries += 1
                     affordable = _parse_affordable_tokens(str(exc))
-                    current_tokens = affordable if affordable is not None else current_tokens // 2
+                    if affordable is not None:
+                        current_tokens = min(current_tokens, affordable) if current_tokens else affordable
+                    elif current_tokens is not None:
+                        current_tokens //= 2
+                    else:
+                        # No known affordable cap: do not invent a provider capacity.
+                        raise InsufficientCreditsError("Provider did not report an affordable output limit.") from exc
                     if current_tokens < self.min_viable_tokens:
                         raise InsufficientCreditsError(
                             f"Insufficient credits: the provider cannot afford even "
@@ -308,17 +340,12 @@ class OpenAICompatibleChatClient:
                     self.retry_max_delay_seconds,
                     self.retry_base_delay_seconds * (2 ** (transient_retries - 1)),
                 )
-                remaining = deadline - time.monotonic()
-                if remaining <= delay:
-                    raise TimeoutError(
-                        f"Model turn exceeded its {timeout_seconds:g}s absolute deadline."
-                    ) from exc
                 self._record_failure(
                     f"{classified.kind} provider failure "
                     f"(retry {transient_retries}/{self.transient_retry_count} in {delay:g}s)"
                 )
-                if delay > 0:
-                    time.sleep(delay)
+                if delay > 0 and self._cancelled.wait(delay):
+                    raise ModelCancelledError("Model request cancelled.")
 
     def _record_success(self, usage: dict[str, int | None]) -> None:
         self._usage_records.append(
@@ -372,7 +399,7 @@ class FallbackModelClient:
         return self._try_clients(lambda client: client.complete(messages))
 
     def complete_with_timeout(self, messages: list[ChatMessage], timeout_seconds: float) -> str:
-        return self._try_clients_with_deadline(messages, timeout_seconds, stream_callback=None)
+        return self._try_clients_with_attempt_timeouts(messages, timeout_seconds, stream_callback=None)
 
     def stream_complete(
         self,
@@ -387,31 +414,27 @@ class FallbackModelClient:
         on_token: Callable[[str], None],
         timeout_seconds: float,
     ) -> str:
-        return self._try_clients_with_deadline(messages, timeout_seconds, stream_callback=on_token)
+        return self._try_clients_with_attempt_timeouts(messages, timeout_seconds, stream_callback=on_token)
 
-    def _try_clients_with_deadline(
+    def _try_clients_with_attempt_timeouts(
         self,
         messages: list[ChatMessage],
         timeout_seconds: float,
         *,
         stream_callback: Callable[[str], None] | None,
     ) -> str:
-        deadline = time.monotonic() + timeout_seconds
+        if timeout_seconds <= 0:
+            raise TimeoutError("Model attempt timeout must be positive.")
 
         def call(client: UsageTrackingModelClient) -> str:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError(
-                    f"Model turn exceeded its {timeout_seconds:g}s absolute deadline."
-                )
             if stream_callback is not None:
                 method = getattr(client, "stream_complete_with_timeout", None)
                 if method is not None:
-                    return method(messages, stream_callback, remaining)
+                    return method(messages, stream_callback, timeout_seconds)
                 return client.stream_complete(messages, stream_callback)
             method = getattr(client, "complete_with_timeout", None)
             if method is not None:
-                return method(messages, remaining)
+                return method(messages, timeout_seconds)
             return client.complete(messages)
 
         return self._try_clients(call)
@@ -499,6 +522,7 @@ def create_openai_compatible_client(
         base_url=provider.base_url,
         model=profile.model,
         max_tokens=profile.max_tokens,
+        response_reserve_tokens=provider.response_reserve_tokens,
         temperature=profile.temperature,
         default_headers=provider.default_headers,
         provider_name=provider.name,
@@ -527,7 +551,7 @@ def create_fallback_client(
             fallback_profile = replace(
                 profile,
                 model=fallback.model,
-                max_tokens=fallback.max_tokens or profile.max_tokens,
+                max_tokens=fallback.max_tokens if fallback.max_tokens is not None else profile.max_tokens,
             )
             clients.append(create_openai_compatible_client(fallback.provider, fallback_profile))
         else:
@@ -561,6 +585,8 @@ def classify_model_error(exc: Exception) -> ClassifiedModelError:
     lowered = message.lower()
     status_code = getattr(exc, "status_code", None)
 
+    if isinstance(exc, ModelCancelledError):
+        return ClassifiedModelError("unknown", retryable=False, fallbackable=False, message=message)
     if isinstance(exc, InsufficientCreditsError) or status_code == 402 or "insufficient credits" in lowered:
         return ClassifiedModelError("credits", retryable=True, fallbackable=True, message=message)
     if isinstance(exc, openai.RateLimitError) or status_code == 429 or "rate limit" in lowered:

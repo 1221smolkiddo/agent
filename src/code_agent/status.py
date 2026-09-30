@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import os
 import re
 import sys
 import time
@@ -243,26 +244,29 @@ class StatusReporter:
         result.metadata = sanitize_payload(result.metadata)
         if isinstance(action, (RunShellAction, StartProcessAction)):
             self._finish_command(action.command, result, elapsed_ms)
+        if result.metadata.get("policy_denied"):
+            console.print(Text("Blocked command:", style="bold red"))
+            console.print(Text(redact_command_for_display(str(result.metadata.get("blocked_command", "")))))
+            console.print(Text("Reason:", style="bold"))
+            console.print(Text(redact_secrets(str(result.metadata.get("policy_reason", "Permission required.")))))
+            return
         transaction = result.metadata.get("transaction")
         if isinstance(transaction, dict) and transaction.get("id"):
             style = "bold green" if result.ok else "bold red"
             console.print(
-                Text("TRANSACTION", style=style)
-                + Text(
-                    f"   {transaction['id']}  {transaction.get('state', 'unknown')}  "
-                    f"files={len(transaction.get('paths', []))}"
-                )
+                Text("File update", style=style)
+                + Text(f"   {transaction.get('state', 'unknown')}"),
             )
         if action.type != "run_shell":
             process = result.metadata.get("process")
             if isinstance(process, dict) and process.get("process_id"):
                 status = process.get("status") or ("accepted" if result.ok else "failed")
                 console.print(
-                    Text("PROCESS", style="bold green" if result.ok else "bold red")
-                    + Text(f"   {process['process_id']}  {status}")
+                    Text("Background process", style="bold green" if result.ok else "bold red")
+                    + Text(f"   {status}")
                 )
             return
-        diagnostics = result.metadata.get("diagnostics")
+        diagnostics = sanitize_payload(result.metadata.get("diagnostics"))
         if not isinstance(diagnostics, dict):
             return
         items = diagnostics.get("diagnostics", [])
@@ -276,6 +280,11 @@ class StatusReporter:
             count_detail = (
                 f"  errors={counts.get('error', 0)} warnings={counts.get('warning', 0)}"
             )
+        if not os.environ.get("AGENT47_DEBUG"):
+            console.print(
+                Text("Verification issues", style="bold red") + Text(count_detail)
+            )
+            return
         console.print(
             Text("DIAGNOSTICS", style="bold red") + Text(f"   {summary}{count_detail}")
         )
@@ -297,7 +306,7 @@ class StatusReporter:
         self._commands.append(CommandDisplay(command=display))
         self._commands = self._commands[-8:]
         self._expanded = False
-        if not self._interactive:
+        if not self._interactive and os.environ.get("AGENT47_DEBUG"):
             console.print(Text(f"RUN: {display}"))
         self._update()
 
@@ -317,7 +326,13 @@ class StatusReporter:
              if re.search(r"\b\d+\s+(?:passed|failed|skipped|errors?)\b", line, re.I)),
             lines[-1] if lines else ("Completed" if ok else "FAILED"),
         )
-        return redact_secrets(summary[:180])
+        cleaned = redact_secrets(summary[:180])
+        from .terminal_ui import contains_internal_protocol, contains_technical_failure
+        if contains_internal_protocol(cleaned) or contains_technical_failure(output):
+            return "Command completed" if ok else "Command failed; details are in history"
+        if cleaned.lstrip().startswith(("{", "[")) and '"type"' in cleaned:
+            return "Command completed" if ok else "Command failed; details are in history"
+        return cleaned
 
     def _finish_command(self, command: str, result: ToolResult, elapsed_ms: float) -> None:
         display = redact_command_for_display(command)
@@ -336,7 +351,7 @@ class StatusReporter:
         entry.duration_ms = elapsed_ms
         symbol = "!" if entry.status == "cancelled" else ("✓" if result.ok else "✗")
         if self._interactive:
-            console.print(Text(f"{symbol} {entry.command}\n  {entry.summary}", style="green" if result.ok else "red"))
+            console.print(Text(f"{symbol} Command {entry.status}\n  {entry.summary}", style="green" if result.ok else "red"))
         else:
             label = "PASS" if result.ok else ("CANCELLED" if entry.status == "cancelled" else "FAIL")
             console.print(Text(f"{label}: {entry.summary}"))
@@ -346,7 +361,7 @@ class StatusReporter:
         entry = self._commands[-1]
         symbol = "›" if entry.status == "running" else ("✓" if entry.status == "passed" else "✗")
         width = max(12, console.width - 4)
-        command = Text(f"{symbol} {entry.command}", style="cyan")
+        command = Text(f"{symbol} {entry.command if self._expanded else 'Running command'}", style="cyan")
         command.truncate(width, overflow="ellipsis")
         lines = [command, Text(f"  {entry.summary}", style="dim")]
         if self._expanded and entry.output:
@@ -473,7 +488,9 @@ def _semantic_stage(action: AgentAction) -> tuple[str, str]:
             RecoverTransactionsAction,
         ),
     ):
-        return "Recovering", f"Executed {action.type}"
+        return "Recovering", "Restoring project state"
+    if action.type == "make_directory":
+        return "Creating Project Structure", "Creating directory"
     if isinstance(action, RunShellAction):
         if any(w in action.command.lower() for w in ["test", "pytest", "lint", "check"]):
             return "Running Verification", "Command execution"
@@ -481,12 +498,12 @@ def _semantic_stage(action: AgentAction) -> tuple[str, str]:
     if isinstance(action, StartProcessAction):
         return "Starting Process", "Managed command started"
     if isinstance(action, (StopProcessAction, RestartProcessAction, SendProcessInputAction)):
-        return "Managing Process", f"Executed {action.type} for {action.process_id}"
+        return "Managing Process", "Updating background process"
     if isinstance(
         action,
         (ListProcessesAction, InspectProcessAction, ReadProcessLogsAction, ProcessEventsAction),
     ):
-        return "Monitoring Process", f"Inspected {getattr(action, 'process_id', 'jobs')}"
+        return "Monitoring Process", "Checking background process"
     if isinstance(
         action,
         (
@@ -517,7 +534,7 @@ def _semantic_stage(action: AgentAction) -> tuple[str, str]:
         return "Understanding Request", "Web search"
     if isinstance(action, (DetectVerificationAction, SuggestVerificationAction)):
         return "Inspecting Project", "Checked verification commands"
-    return "Working", f"Executed {action.type}"
+    return "Working", "Updating project"
 
 
 def _print_terminal_diagnostic(item: dict[str, object]) -> None:

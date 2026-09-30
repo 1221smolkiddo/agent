@@ -1100,8 +1100,8 @@ def run(
     ),
 ) -> None:
     """Run the coding agent on a task."""
-    settings = Settings()
     workspace = cwd.resolve()
+    settings = Settings.for_workspace(workspace)
     try:
         sandbox_policy = resolve_sandbox_policy(
             workspace,
@@ -1337,7 +1337,7 @@ def sandbox_health_command(
     ),
 ) -> None:
     """Show sandbox backend availability and isolation guarantees."""
-    settings = Settings()
+    settings = Settings.for_workspace(cwd.resolve())
     try:
         policy = resolve_sandbox_policy(
             cwd.resolve(),
@@ -1352,7 +1352,7 @@ def sandbox_health_command(
 
 
 def _workspace_container(cwd: Path, backend: Optional[str]) -> ContainerManager:
-    settings = Settings()
+    settings = Settings.for_workspace(cwd.resolve())
     policy = resolve_sandbox_policy(
         cwd.resolve(),
         backend=backend or settings.sandbox_backend,
@@ -1496,8 +1496,8 @@ def run_json(
             code="invalid_approval_mode",
         )
         raise typer.Exit(code=2)
-    settings = Settings()
     workspace = cwd.resolve()
+    settings = Settings.for_workspace(workspace)
     agent = None
     try:
         sandbox_policy = resolve_sandbox_policy(
@@ -1628,6 +1628,7 @@ def resume(
         raise typer.Exit(code=1)
 
     workspace = (cwd or Path(run_row["cwd"])).resolve()
+    settings = Settings.for_workspace(workspace)
     try:
         sandbox_policy = resolve_sandbox_policy(
             workspace,

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from collections.abc import Callable
 import warnings
+import sqlite3
 
 from .agent import CodingAgent
 from .experience_memory import ExperienceMemoryService
@@ -49,6 +50,7 @@ def create_agent(
     shell_network_policy: str | None = None,
     sandbox_backend: str | None = None,
     require_process_isolation: bool = False,
+    interactive_shell: bool = False,
     execution_state_snapshot: dict[str, object] | None = None,
     resumed_from_run_id: int | None = None,
     durable_execution_id: str | None = None,
@@ -56,8 +58,8 @@ def create_agent(
 ) -> CodingAgent:
     if not settings.fallback_model_list:
         warnings.warn(
-            "Agent47 has no fallback model configured. A transient provider failure will stop "
-            "the run. Set AGENT_FALLBACK_MODELS to enable provider handoff.",
+            "Agent47 has no fallback model configured. A transient provider failure can interrupt "
+            "and pause the run. Set AGENT_FALLBACK_MODELS to enable provider handoff.",
             RuntimeWarning,
             stacklevel=2,
         )
@@ -82,7 +84,7 @@ def create_agent(
         resolve_model_profile(
             profile or settings.agent_profile,
             default_model=default_model,
-            max_tokens=settings.agent_max_tokens,
+            max_tokens=settings.request_max_output_tokens,
             planner_model=None if model or selected_preset else settings.agent_planner_model,
             coder_model=None if model or selected_preset else settings.agent_coder_model,
             reviewer_model=None if model or selected_preset else settings.agent_reviewer_model,
@@ -97,6 +99,7 @@ def create_agent(
         if registered_default_model
         else DEFAULT_CAPABILITIES.stream_usage,
         registered_default_model.runtime if registered_default_model else None,
+        registered_default_model,
     )
     provider.context_window_tokens = resolve_context_window(
         selected_profile, registered_default_model, settings,
@@ -108,7 +111,11 @@ def create_agent(
     )
     client = create_fallback_client(provider, selected_profile, fallback_specs)
     storage = AgentStorage(settings.agent_db_path)
-    index_cache = RepoIndexCache(storage.db_path)
+    try:
+        index_cache = RepoIndexCache(workspace / ".code-agent" / "repo-index.db")
+    except (sqlite3.Error, OSError):
+        # Derived indexing is optional; authoritative task/history storage remains usable.
+        index_cache = None
     sandbox_policy = resolve_sandbox_policy(
         workspace,
         backend=sandbox_backend or settings.sandbox_backend,
@@ -123,6 +130,7 @@ def create_agent(
         workspace=workspace,
         dry_run=dry_run,
         approval_callback=approval_callback,
+        interactive_shell=interactive_shell,
         shell_network_policy=shell_network_policy or settings.shell_network_policy,
         index_cache=index_cache,
         background_index=True,
@@ -140,7 +148,7 @@ def create_agent(
             resolve_model_profile(
                 "planner",
                 default_model=default_model,
-                max_tokens=settings.agent_max_tokens,
+                max_tokens=settings.request_max_output_tokens,
                 planner_model=(
                     None if model or selected_preset else settings.agent_planner_model
                 ),
@@ -185,7 +193,7 @@ def create_agent(
         reviewer_profile = resolve_model_profile(
             "reviewer",
             default_model=default_model,
-            max_tokens=settings.agent_max_tokens,
+            max_tokens=settings.request_max_output_tokens,
             reviewer_model=None if model or selected_preset else settings.agent_reviewer_model,
         )
         reviewer_profile = apply_runtime_defaults(
@@ -225,8 +233,8 @@ def create_agent(
             + [spec.provider.context_window_tokens for spec in fallback_specs]
         ),
         reserved_output_tokens=max(
-            [selected_profile.max_tokens]
-            + [spec.max_tokens or selected_profile.max_tokens for spec in fallback_specs]
+            [provider.response_reserve_tokens]
+            + [spec.provider.response_reserve_tokens for spec in fallback_specs]
         ),
         context_compact_ratio=settings.agent_context_compact_ratio,
         context_hard_compact_ratio=settings.agent_context_hard_compact_ratio,
@@ -271,7 +279,7 @@ def create_chat_client(
         resolve_model_profile(
             profile or settings.agent_profile,
             default_model=default_model,
-            max_tokens=min(settings.agent_max_tokens, 1024),
+            max_tokens=settings.request_max_output_tokens,
         ),
         registered_default_model.runtime if registered_default_model else None,
     )
@@ -282,6 +290,7 @@ def create_chat_client(
         if registered_default_model
         else DEFAULT_CAPABILITIES.stream_usage,
         registered_default_model.runtime if registered_default_model else None,
+        registered_default_model,
     )
     provider_config.context_window_tokens = resolve_context_window(selected_profile, registered_default_model, settings)
     return create_openai_compatible_client(provider_config, selected_profile)
@@ -292,11 +301,15 @@ def model_provider_config(
     provider: str | None,
     include_stream_usage: bool,
     runtime: ModelRuntimeDefaults | None = None,
+    registered=None,
 ) -> ModelProviderConfig:
     runtime = runtime or ModelRuntimeDefaults()
     resolved_provider_name = settings.provider_name_for(provider)
     return ModelProviderConfig(
         context_window_tokens=settings.agent_context_window_tokens or 65_536,
+        response_reserve_tokens=response_reserve_tokens(
+            settings, registered,
+        ),
         api_key=settings.model_api_key_for(provider),
         base_url=settings.model_base_url_for(provider),
         name=resolved_provider_name,
@@ -331,6 +344,7 @@ def fallback_model_specs(
             provider,
             registered.capabilities.stream_usage if registered else DEFAULT_CAPABILITIES.stream_usage,
             registered.runtime if registered else None,
+            registered,
         )
         provider_config.context_window_tokens = resolve_context_window(None, registered, settings)
         specs.append(
@@ -346,7 +360,10 @@ def fallback_model_specs(
 def apply_runtime_defaults(profile: ModelProfile, runtime: ModelRuntimeDefaults | None) -> ModelProfile:
     if runtime is None:
         return profile
-    max_tokens = min(profile.max_tokens, runtime.max_tokens) if runtime.max_tokens else profile.max_tokens
+    if profile.max_tokens is not None and runtime.max_tokens is not None:
+        max_tokens = min(profile.max_tokens, runtime.max_tokens)
+    else:
+        max_tokens = profile.max_tokens if profile.max_tokens is not None else runtime.max_tokens
     temperature = runtime.temperature if runtime.temperature is not None else profile.temperature
     return profile.__class__(
         name=profile.name,
@@ -354,7 +371,9 @@ def apply_runtime_defaults(profile: ModelProfile, runtime: ModelRuntimeDefaults 
         temperature=temperature,
         max_tokens=max_tokens,
         purpose=profile.purpose,
+        context_window_tokens=profile.context_window_tokens,
     )
+
 
 def resolve_context_window(profile, registered, settings: Settings) -> int:
     """Prefer explicit profile and registry capacities, then operator override."""
@@ -364,3 +383,13 @@ def resolve_context_window(profile, registered, settings: Settings) -> int:
         or settings.agent_context_window_tokens
         or 65_536
     )
+
+def response_reserve_tokens(settings: Settings, registered) -> int:
+    """Context safety margin, independent from the provider request cap."""
+    metadata = getattr(registered, "response_reserve_tokens", None)
+    if metadata is not None:
+        return metadata
+    if settings.agent_response_reserve_tokens is not None:
+        return settings.agent_response_reserve_tokens
+    window = resolve_context_window(None, registered, settings)
+    return min(4096, max(128, window // 4))

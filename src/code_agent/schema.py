@@ -114,6 +114,11 @@ class ReadFileAction(BaseModel):
     path: str
 
 
+class MakeDirectoryAction(BaseModel):
+    type: Literal["make_directory"]
+    path: str = Field(min_length=1)
+
+
 class WriteFileAction(BaseModel):
     type: Literal["write_file"]
     path: str
@@ -400,6 +405,7 @@ AgentAction = Union[
     ListFilesAction,
     ReadFileAction,
     WriteFileAction,
+    MakeDirectoryAction,
     EditFileAction,
     ApplyPatchAction,
     DeleteFileAction,

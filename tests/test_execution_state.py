@@ -15,7 +15,7 @@ def test_execution_state_blocks_repeated_identical_outcomes() -> None:
     state.record_action(action, result, [])
     state.record_action(action, result, [])
 
-    assert "Blocked repeated action loop" in str(state.repeated_action_detail(action))
+    assert "Blocked unchanged failed strategy" in str(state.repeated_action_detail(action))
     assert state.phase is ExecutionPhase.RECOVER
     assert state.failed_hypotheses == ["read_file: missing file"]
 
@@ -23,7 +23,7 @@ def test_execution_state_blocks_repeated_identical_outcomes() -> None:
 def test_workspace_change_resets_action_loop_generation() -> None:
     state = ExecutionState(task="update app.py", max_steps=10)
     action = ReadFileAction(type="read_file", path="app.py")
-    result = ToolResult(ok=True, output="old")
+    result = ToolResult(ok=False, output="missing file")
     state.record_action(action, result, [])
     state.record_action(action, result, [])
     assert state.repeated_action_detail(action) is not None

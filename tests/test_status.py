@@ -181,3 +181,48 @@ def test_task_with_transcript_includes_context_for_normal_followup() -> None:
 
 def test_task_with_transcript_returns_user_input_without_transcript() -> None:
     assert task_with_transcript("inspect this project", []) == "inspect this project"
+
+
+def test_normal_command_summary_hides_internal_action_names_and_secrets() -> None:
+    from code_agent.status import StatusReporter
+
+    assert StatusReporter._command_summary(
+        "failed_strategy: read_file {\"type\": \"read_file\"} API_KEY=private-value",
+        False,
+    ) == "Command failed; details are in history"
+    assert StatusReporter._command_summary("3 passed", True) == "3 passed"
+
+
+def test_semantic_stage_does_not_show_protocol_identifiers() -> None:
+    action = RepoMapAction(type="repo_map")
+    stage, detail = _semantic_stage(action)
+    assert stage == "Inspecting Project"
+    assert "repo_map" not in detail
+
+
+def test_debug_diagnostics_keep_detail_and_redact_secrets(monkeypatch):
+    import io
+    from rich.console import Console
+    import code_agent.status as status
+    from code_agent.schema import ToolResult
+
+    output = io.StringIO()
+    monkeypatch.setattr(status, "console", Console(file=output, width=160))
+    action = RunShellAction(type="run_shell", command="pytest tests/routing.py")
+    result = ToolResult(ok=False, metadata={"diagnostics": {
+        "summary": "read_file failed API_KEY=private-value",
+        "counts": {"error": 1},
+        "diagnostics": [{"path": "src/routing.py", "message": "failed_strategy API_KEY=private-value"}],
+    }})
+    reporter = status.StatusReporter()
+    monkeypatch.delenv("AGENT47_DEBUG", raising=False)
+    reporter.tool_result(action, result, elapsed_ms=10)
+    normal = output.getvalue()
+    assert "Verification issues" in normal
+    assert "read_file" not in normal and "failed_strategy" not in normal
+    monkeypatch.setenv("AGENT47_DEBUG", "1")
+    reporter.tool_result(action, result, elapsed_ms=10)
+    debug = output.getvalue()
+    assert "read_file" in debug and "src/routing.py" in debug
+    assert "failed_strategy" in debug
+    assert "private-value" not in debug

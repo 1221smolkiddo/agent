@@ -106,7 +106,7 @@ def run_doctor(
     include_performance: bool = False,
 ) -> DoctorReport:
     workspace = (cwd or Path.cwd()).resolve()
-    config = settings or Settings()
+    config = settings or Settings.for_workspace(workspace)
     checks = [
         # ── Runtime ──
         _check_python_version(),

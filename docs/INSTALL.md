@@ -189,13 +189,14 @@ AGENT_MODEL_PRESET=
 AGENT_MODEL=qwen/qwen3-coder
 AGENT_PROFILE=default
 AGENT_FALLBACK_MODELS=
-AGENT_MAX_TOKENS=4096
-AGENT_MODEL_TIMEOUT_SECONDS=60
+AGENT_REQUEST_MAX_OUTPUT_TOKENS=
+AGENT_RESPONSE_RESERVE_TOKENS=
+AGENT_MODEL_TIMEOUT_SECONDS=180
 AGENT_MODEL_RETRY_COUNT=2
 AGENT_MODEL_RETRY_BASE_SECONDS=0.5
 AGENT_MODEL_RETRY_MAX_SECONDS=4
 AGENT_MAX_FAILURES=3
-AGENT_CONTEXT_MAX_CHARS=60000
+AGENT_CONTEXT_MAX_CHARS=
 AGENT_DB_PATH=.code-agent/agent.db
 AGENT_STREAM=true
 AGENT_REVIEWER_PASS=true
@@ -206,7 +207,38 @@ AGENT_CONTAINER_WORKSPACE=/workspace
 AGENT_CONTAINER_REUSE=true
 ```
 
-The model retry count is bounded from 0-10. The context budget must be at least 8,000 characters.
+The model retry count is bounded from 0-10. The timeout is per provider attempt;
+fallbacks receive fresh windows. Leave the output limit unset to use the provider/model
+default. The response reserve protects context independently and defaults to a
+conservative 4,096 tokens. Model token capacity governs normal context compaction;
+the optional character limit is a secondary operator override. Agent47 reads only the
+current workspace .env; process variables take precedence. An alternate file requires
+an explicit Settings.for_workspace(workspace, env_file=...) selection.
+
+## Persistent session context
+
+Interactive requests pin the latest instruction, then add a structured session checkpoint
+before recent conversation. The checkpoint keeps the project goal, active plan, blockers,
+latest corrections, verified evidence, decisions, relevant failed approaches and next actions.
+Repository context and system instructions are added by the agent; files remain authoritative.
+
+Session context uses a share of the active model token capacity rather than a fixed character
+or turn count. Soft/hard compaction remains token based (defaults 0.75/0.85). Numeric registered
+capacity takes precedence over AGENT_CONTEXT_WINDOW_TOKENS; unknown models use a conservative
+65,536-token fallback. The current estimator counts UTF-8 bytes conservatively rather than
+using a provider tokenizer, so usable context may be smaller than the advertised model window.
+
+Checkpoints use a shared 128 KB storage budget and contain sanitized structured facts.
+They exclude raw transcripts, diffs and private model reasoning. Recent conversation is
+kept within a model-relative budget in memory; checkpoint restoration carries continuity
+across restarts. Lower priority facts may be omitted when the budget is exhausted.
+
+Normal terminal output describes work stages and verification summaries. Use /history,
+output expansion, /debug for recent errors, or AGENT47_DEBUG=1 for sanitized command and
+diagnostic details. Approval prompts continue to show the concrete command or affected path.
+
+Unattended network access remains deny by default. Interactive ask mode is not implemented;
+allow still requires an explicit trusted configuration.
 
 ## Transaction Recovery
 
@@ -354,3 +386,76 @@ uv run code-agent evals --live --limit 3 --trials 3 --save-report
 - **Docker CLI found but daemon unavailable:** start the runtime and rerun `sandbox health`.
 - **Strict doctor warns about memory:** project memory is optional until the repository needs stable facts.
 - **Tests are slow:** run focused files during iteration and use `release-smoke` or CI for the complete gate.
+
+
+## Workspace execution hotfix behavior
+
+Repository indexing uses `.code-agent/repo-index.db`, a derived, rebuildable cache.
+Execution/history stays in the configured agent database (normally `.code-agent/agent.db`).
+Old index rows in an existing agent database are not migrated. The separate cache uses
+WAL, a bounded busy timeout, and explicit write transactions. Background refresh errors
+are contained and retried with a bounded delay. A failed cache read/write falls back to
+repository scanning; completed file mutations do not depend on cache invalidation.
+
+The execution prompt identifies the native host platform. Use structured listing and
+file mutation tools for setup; file writes create parent directories. `make_directory`
+creates a requested empty directory, requires mutation approval, respects dry-run and
+workspace boundaries, and blocks credential/VCS directories. It is scaffolding and is
+not a transactional file edit with an inverse patch. Shell commands remain for project
+verification, package tooling, git and supported backend operations.
+
+For autonomous filesystem implementation requests, a final promise or proceed question
+is rejected. Empty placeholder files and directories cannot satisfy implementation.
+Completion checks current artifact hashes, meaningful content, plan/acceptance gates,
+and relevant successful verification recorded after the latest changes. Explicit empty
+file/directory requests remain supported. Missing required private input and observed
+permission/policy denials use the existing saved waiting state; resume after supplying
+input or enabling the appropriate permission. Interactive Ctrl+C saves a resumable pause;
+explicit stop/exit remains terminal. Neither accepts late responses or triggers retention.
+
+Normal terminal reports label waiting runs **Paused** and explicit terminal stops **Stopped**.
+Adapter exception classes, traceback text, action identifiers and raw action JSON stay
+out of normal results. Sanitized detail remains available in debug/history or explicit
+expanded output. Approval prompts continue to show the concrete command and paths.
+
+These completion checks are conservative deterministic guards. They cannot establish
+that a test/build command covers every requested behavior or replace review. The
+qualification workflow uses a scripted planner with real structured file tools and
+native pytest verification; it is not evidence of live model quality or browser layout.
+
+
+## Interactive command policy and cancellation
+
+`python -m http.server [port]`, `py -m http.server [port]`, and
+`python3 -m http.server [port]` are development processes. Shell requests for development
+commands route through managed process startup with explicit approval, configured
+sandbox/network restrictions, workspace checks, persisted logs and process lifecycle.
+The server's bind address is determined by the approved command; its default is not
+restricted to loopback by this classification. The default `AGENT_SHELL_NETWORK=deny`
+blocks development servers and potentially network-capable unknown commands before
+approval. Set it to `allow` only when that network access is intentional; the selected
+sandbox network policy still applies.
+
+Interactive runs may request approval for a merely unclassified command. The prompt
+shows the complete sanitized command. Interpreter wrappers, inline code, destructive
+operations, credential access, workspace escapes, and configured sandbox denials do not
+use this escalation. Unattended runs continue to block unclassified commands. Approval
+is for one action; unknown commands are never automatically approved or task-approved.
+
+A denied command strategy is recorded separately from execution failures. The planner
+receives an unavailable-strategy instruction. A second equivalent proposal pauses before
+another execution or approval prompt. Whitespace, Python aliases, foreground/background
+action changes and HTTP-server port changes do not evade this check. Plan changes and
+ordinary repository activity do not reset policy denials. Eight policy-denied command
+strategies in one run also pause, even if the planner continually changes commands/plans. Effective sandbox/network policy
+changes can invalidate old denials; approval still applies. Strategy matching is
+conservative and is not a general proof that two arbitrary commands behave equivalently.
+
+Progress is saved with the sanitized blocked command and reason. Use `/resume <run-id>`
+with guidance to choose another strategy. An interactive resume allows a fresh explicit
+approval attempt; another denial pauses immediately. Resume does not override hard blocks.
+Ctrl+C cancels supported provider clients, prevents further retries/replans, cancels managed
+child work through the existing supervisor, checkpoints progress, and returns to the prompt.
+SDK cancellation is best effort; late responses are discarded. The existing supervisor's
+cancellation scope includes managed workspace processes, so Ctrl+C can also stop a server
+started earlier in that workspace.

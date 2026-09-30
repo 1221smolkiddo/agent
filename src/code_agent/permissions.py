@@ -9,6 +9,7 @@ from rich.prompt import Prompt
 
 from .diff_launcher import extract_unified_diff, launch_diff_viewer
 from .terminal_ui import console
+from .safety import redact_command_for_display
 
 MAX_PERMISSION_DETAIL_CHARS = 6000
 MAX_PERMISSION_DETAIL_LINES = 120
@@ -166,7 +167,14 @@ def confirm_permission(
     text = Text()
     text.append(f"{label}\n\n", style="bold")
 
-    preview = _format_permission_preview(detail)
+    preview_detail = detail
+    if action in {"run_shell", "start_process"}:
+        command_line = next((line for line in detail.splitlines() if line.startswith("Command: ")), None)
+        if command_line is not None:
+            text.append("Command:\n", style="bold")
+            text.append(redact_command_for_display(command_line.removeprefix("Command: ")) + "\n\n")
+            preview_detail = "\n".join(line for line in detail.splitlines() if line != command_line)
+    preview = _format_permission_preview(preview_detail)
     if preview:
         text.append("Preview:\n", style="muted")
         text.append(f"{preview}\n", style="default")

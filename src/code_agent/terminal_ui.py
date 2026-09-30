@@ -207,7 +207,7 @@ def print_work_report_panel(result: AgentRunResult) -> None:
     sections: list[object] = []
     
     if result.message:
-        sections.append(_render_markdown(result.message, max_chars=4000))
+        sections.append(_render_markdown(normal_result_message(result.message, blocked=result.blocked), max_chars=4000))
 
     if created_paths or modified_paths or deleted_paths:
         changes = Table(show_header=True, header_style="bold cyan", box=box.SIMPLE, padding=(0, 2), expand=True)
@@ -225,12 +225,12 @@ def print_work_report_panel(result: AgentRunResult) -> None:
         verification = Table(show_header=True, header_style="bold cyan", box=box.SIMPLE, padding=(0, 2), expand=True)
         verification.add_column("Check", overflow="fold")
         verification.add_column("Status", no_wrap=True)
-        verification.add_column("Command", overflow="fold")
         for v in result.verification_results:
-            label = v.get("purpose") or v.get("command") or v.get("name") or "verification"
+            label = v.get("purpose") or v.get("name") or "Verification"
+            label = normal_result_message(str(label), blocked=not v.get("ok"))
             status_word = "Passed" if v.get("ok") else "Failed"
             status_text = Text(status_word, style="green" if v.get("ok") else "red")
-            verification.add_row(str(label), status_text, str(v.get("command") or ""))
+            verification.add_row(str(label), status_text)
         sections.extend([Text("Verification", style="bold underline"), verification])
 
     process_items = _process_items(result)
@@ -242,20 +242,29 @@ def print_work_report_panel(result: AgentRunResult) -> None:
             padding=(0, 2),
             expand=True,
         )
-        processes.add_column("Process", overflow="fold")
-        processes.add_column("Action", no_wrap=True)
+        processes.add_column("Activity", no_wrap=True)
         processes.add_column("Status", no_wrap=True)
         processes.add_column("Details", overflow="fold")
         for item in process_items:
-            processes.add_row(item["id"], item["action"], item["status"], item["detail"].strip())
+            action = str(item["action"])
+            activity = {
+                "start_process": "Started", "stop_process": "Stopped",
+                "restart_process": "Restarted", "send_process_input": "Updated",
+            }.get(action, "Managed")
+            detail = ", ".join(
+                part.strip() for part in str(item["detail"]).strip(" ()").split(",")
+                if part.strip().startswith(("port=", "ready="))
+            )
+            processes.add_row(activity, item["status"], detail)
         sections.extend([Text("Managed Processes", style="bold underline"), processes])
 
-    title = f"Finished Work (Run #{result.run_id})"
+    disposition = getattr(result, "disposition", "success")
+    title = "Stopped" if disposition == "terminal" else "Paused" if result.blocked else "Finished Work"
     duration = getattr(result, "duration", None)
     if duration is not None:
         title += f" [{duration}s]"
 
-    print_renderable_panel(title, Group(*_with_spacers(sections)), style="green")
+    print_renderable_panel(title, Group(*_with_spacers(sections)), style="yellow" if result.blocked else "green")
 
 def print_error_card(title: str, lines: list[tuple[str, str]], suggestions: list[str]) -> None:
     text = Text()
@@ -301,7 +310,7 @@ def print_response(author: str, body: str, *, author_style: str = "bold cyan") -
         return
     console.print()
     console.print(Text(author, style=author_style))
-    console.print(_render_markdown(str(body)))
+    console.print(_render_markdown(normal_result_message(str(body))))
     console.print()
 
 
@@ -523,3 +532,58 @@ def print_suggestions_panel(query: str, suggestions: list[object]) -> None:
 
     print_renderable_panel("Unknown Command", text, style="red")
 
+
+
+def normal_result_message(message: str, *, blocked: bool = False) -> str:
+    """Keep protocol failure details in history/debug, not normal terminal output."""
+    import json
+
+    safe = redact_secrets(message)
+    try:
+        parsed = json.loads(safe)
+    except ValueError:
+        parsed = None
+    if isinstance(parsed, dict) and "type" in parsed:
+        return "The model returned an internal action instead of a user-facing response."
+    if contains_technical_failure(safe):
+        return "I could not complete this operation. Use /debug or /history for technical details."
+    if contains_internal_protocol(safe):
+        if "action_loop" in safe:
+            return "I stopped after repeated actions without progress. Review the task or try a new approach."
+        if "failed_strategy" in safe:
+            return "I stopped because the attempted approach had already failed."
+        return "I could not complete this step. Use /debug or /history for technical details."
+    if blocked and "{" in safe and '"type"' in safe:
+        return "The task stopped before completion. Use /debug or /history for technical details."
+    return safe
+
+
+def contains_technical_failure(message: str) -> bool:
+    import re
+
+    return bool(re.search(
+        r"Traceback \(most recent call last\)|Exception in thread|Adapter failed|"
+        r"\b(?:FileNotFoundError|OperationalError|PermissionError|RuntimeError|OSError)\b",
+        message, re.I,
+    ))
+
+
+def contains_internal_protocol(message: str) -> bool:
+    """Recognize protocol identifiers without hiding ordinary prose or source paths."""
+    import re
+    from typing import get_args
+    from .schema import AgentAction
+
+    identifiers = {
+        "action_loop", "failed_strategy", "model_dump", "execution_state",
+        "state_payload", "fingerprint", "reasoning_details",
+    }
+    for action in get_args(AgentAction):
+        identifiers.update(
+            value for value in get_args(action.model_fields["type"].annotation)
+            if "_" in value
+        )
+    return bool(
+        re.search(r"\b(?:" + "|".join(sorted(identifiers)) + r")\b", message)
+        or re.search(r'["\']type["\']\s*:', message)
+    )
